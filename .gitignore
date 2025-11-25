@@ -1,2 +1,10 @@
 .sdd/cache/*
 .build/*
+.DS_Store
+*.xcodeproj
+*.xcworkspace
+xcuserdata/
+DerivedData/
+.swiftpm/
+Package.resolved
+

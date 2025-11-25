@@ -8,3 +8,4 @@ DerivedData/
 .swiftpm/
 Package.resolved
 
+.sdd/runs/*

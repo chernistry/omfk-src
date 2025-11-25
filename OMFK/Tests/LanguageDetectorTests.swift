@@ -42,4 +42,36 @@ final class LanguageDetectorTests: XCTestCase {
         let result = await detector.detect("")
         XCTAssertNil(result)
     }
+    
+    // MARK: - Word Validation Tests
+    
+    func testValidEnglishWord() async throws {
+        let isValid = await detector.isValidWord("hello", in: .english)
+        XCTAssertTrue(isValid)
+    }
+    
+    func testInvalidEnglishWord() async throws {
+        let isValid = await detector.isValidWord("ghbdtn", in: .english)
+        XCTAssertFalse(isValid)
+    }
+    
+    func testValidRussianWord() async throws {
+        let isValid = await detector.isValidWord("привет", in: .russian)
+        XCTAssertTrue(isValid)
+    }
+    
+    func testInvalidRussianWord() async throws {
+        let isValid = await detector.isValidWord("ghbdtn", in: .russian)
+        XCTAssertFalse(isValid)
+    }
+    
+    func testValidHebrewWord() async throws {
+        let isValid = await detector.isValidWord("שלום", in: .hebrew)
+        XCTAssertTrue(isValid)
+    }
+    
+    func testEmptyWordValidation() async throws {
+        let isValid = await detector.isValidWord("", in: .english)
+        XCTAssertFalse(isValid)
+    }
 }

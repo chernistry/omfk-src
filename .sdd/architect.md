@@ -42,6 +42,7 @@
   - Accessibility permission requested and handled gracefully
 2. **Accurate language detection for RU/EN/HE** (DoD: "Language detection working for RU/EN/HE on 3-10 word chunks", ">90% accuracy")
   - NLLanguageRecognizer with languageHints
+  - NSSpellChecker for word validation (dictionary lookup)
   - Character-set fallback for short text (<3 words)
   - Confidence threshold >0.6
 3. **Real-time layout correction** (DoD: "Automatic text correction replaces wrong-layout text in real-time", "<50ms detection + correction")

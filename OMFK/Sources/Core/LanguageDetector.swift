@@ -1,5 +1,6 @@
 import Foundation
 import NaturalLanguage
+import AppKit
 
 enum Language: String, CaseIterable {
     case russian = "ru"
@@ -17,6 +18,7 @@ enum Language: String, CaseIterable {
 
 actor LanguageDetector {
     private let recognizer = NLLanguageRecognizer()
+    private let spellChecker = NSSpellChecker.shared
     
     init() {
         recognizer.languageHints = [
@@ -48,6 +50,16 @@ actor LanguageDetector {
         
         // Fallback to character set
         return detectByCharacterSet(text)
+    }
+    
+    func isValidWord(_ word: String, in language: Language) -> Bool {
+        guard !word.isEmpty else { return false }
+        spellChecker.setLanguage(language.rawValue)
+        let range = spellChecker.checkSpelling(
+            of: word,
+            startingAt: 0
+        )
+        return range.location == NSNotFound
     }
     
     private func detectByCharacterSet(_ text: String) -> Language? {

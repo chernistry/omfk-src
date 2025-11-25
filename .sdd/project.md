@@ -14,7 +14,7 @@ Build a native macOS menu bar utility that automatically detects the language be
 - **Testing**: XCTest for unit and integration tests
 ## Scope
 - Real-time keyboard input monitoring system-wide
-- Language detection for RU/EN/HE with custom heuristics layer
+- Language detection for RU/EN/HE with custom heuristics layer + NSSpellChecker word validation
 - Automatic wrong-layout correction with undo capability
 - Menu bar app with status icon and popover UI
 - Settings panel for configuration (hotkeys, per-app rules, sensitivity)
@@ -28,6 +28,7 @@ Build a native macOS menu bar utility that automatically detects the language be
 - [ ] Menu bar app launches and displays status icon
 - [ ] Global keyboard event monitoring active with proper permissions
 - [ ] Language detection working for RU/EN/HE on 3-10 word chunks
+- [ ] NSSpellChecker validates words in detected language; converts layout if invalid
 - [ ] Layout mapping tables implemented for RU↔EN and HE↔EN
 - [ ] Automatic text correction replaces wrong-layout text in real-time
 - [ ] Manual correction hotkey converts last typed fragment

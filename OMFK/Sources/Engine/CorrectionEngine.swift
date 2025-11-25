@@ -33,21 +33,31 @@ actor CorrectionEngine {
         let detectedLang = await detector.detect(text)
         guard let detected = detectedLang else { return nil }
         
-        // If expected layout is set and doesn't match detected, correct it
+        // Hybrid algorithm: validate word in detected language
+        let isValid = await detector.isValidWord(text, in: detected)
+        
+        if !isValid {
+            // Word not found in detected language dictionary, try converting
+            let targetLangs: [Language] = detected == .russian ? [.english] :
+                                          detected == .hebrew ? [.english] :
+                                          [.russian, .hebrew]
+            
+            for target in targetLangs {
+                if let converted = LayoutMapper.convert(text, from: detected, to: target) {
+                    let convertedValid = await detector.isValidWord(converted, in: target)
+                    if convertedValid {
+                        addToHistory(original: text, corrected: converted, from: detected, to: target)
+                        return converted
+                    }
+                }
+            }
+        }
+        
+        // Fallback: if expected layout is set and doesn't match detected, correct it
         if let expected = expectedLayout, expected != detected {
             let corrected = LayoutMapper.convert(text, from: detected, to: expected)
             if let result = corrected {
                 addToHistory(original: text, corrected: result, from: detected, to: expected)
-            }
-            return corrected
-        }
-        
-        // Auto-detect wrong layout: if text looks like gibberish, try converting
-        let targetLang = await settings.preferredLanguage
-        if detected != targetLang {
-            let corrected = LayoutMapper.convert(text, from: detected, to: targetLang)
-            if let result = corrected {
-                addToHistory(original: text, corrected: result, from: detected, to: targetLang)
             }
             return corrected
         }

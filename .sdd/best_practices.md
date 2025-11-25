@@ -2,7 +2,7 @@
 ## 1. TL;DR
 - **Swift 6 concurrency**: Use actors for event processing, async language detection; avoid blocking main thread (<50ms requirement)
 - **CGEventTap over NSEvent**: Required for event modification/cancellation; handle timeout/disable events with auto-restart
-- **NLLanguageRecognizer + heuristics**: Set languageHints to [.russian, .english, .hebrew]; add character-set fallback for 1-2 word inputs
+- **NLLanguageRecognizer + NSSpellChecker**: Set languageHints to [.russian, .english, .hebrew]; validate words with NSSpellChecker.rangeOfMisspelledWord(); convert layout if word invalid in detected language
 - **MenuBarExtra (SwiftUI)**: Replaces NSStatusItem custom views; simpler lifecycle, better Sequoia compatibility
 - **Layout mapping tables**: Hardcode RU↔EN, HE↔EN character maps; O(1) lookup, no external deps
 - **Permissions**: Request Accessibility + Input Monitoring explicitly; graceful degradation if denied
@@ -277,8 +277,9 @@ Core functionality for identifying RU/EN/HE text. Mitigates risk: "Language dete
 ### Decisions
 1. **Set languageHints**: `[.russian: 0.33, .english: 0.33, .hebrew: 0.34]` to constrain detection to target languages.
 2. **Confidence threshold**: Reject results <0.6; use character-set fallback for short text.
-3. **Character-set fallback**: If text <3 words, check Unicode ranges (Cyrillic U+0400-04FF, Hebrew U+0590-05FF, Latin U+0000-007F).
-4. **Cache results**: Store last 100 detected phrases (3-10 words) with LRU eviction.
+3. **NSSpellChecker validation**: Check if detected text is valid word in detected language; if not, try converting layout and re-check.
+4. **Character-set fallback**: If text <3 words, check Unicode ranges (Cyrillic U+0400-04FF, Hebrew U+0590-05FF, Latin U+0000-007F).
+5. **Cache results**: Store last 100 detected phrases (3-10 words) with LRU eviction.
 **Alternatives rejected**:
 - No hints: NLLanguageRecognizer may guess wrong for similar scripts (e.g., Serbian vs Russian).
 - Server-based detection: Adds latency, privacy risk, cost.
@@ -314,6 +315,19 @@ extension LanguageDetector {
            }
        }
        return (lang, conf)
+   }
+   
+   func isValidWord(_ word: String, language: NLLanguage) -> Bool {
+       let checker = NSSpellChecker.shared
+       let range = NSRange(location: 0, length: word.utf16.count)
+       let misspelled = checker.rangeOfMisspelledWord(
+           in: word,
+           range: range,
+           startingAt: 0,
+           wrap: false,
+           language: language.rawValue
+       )
+       return misspelled.location == NSNotFound
    }
 }
 ```

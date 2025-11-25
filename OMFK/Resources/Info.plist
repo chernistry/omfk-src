@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>O.M.F.K</string>
+    <key>CFBundleDisplayName</key>
+    <string>O.M.F.K</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.chernistry.omfk</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0.0</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>14.0</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>NSHumanReadableCopyright</key>
+    <string>Copyright © 2025 Chernistry. All rights reserved.</string>
+    
+    <!-- Privacy Declarations -->
+    <key>NSPrivacyAccessedAPITypes</key>
+    <array>
+        <dict>
+            <key>NSPrivacyAccessedAPIType</key>
+            <string>NSPrivacyAccessedAPICategorySystemBootTime</string>
+            <key>NSPrivacyAccessedAPITypeReasons</key>
+            <array>
+                <string>35F9.1</string>
+            </array>
+        </dict>
+    </array>
+    
+    <!-- Accessibility Permission -->
+    <key>NSAppleEventsUsageDescription</key>
+    <string>O.M.F.K needs accessibility access to monitor keyboard input and automatically correct text typed in the wrong layout.</string>
+    
+    <!-- Input Monitoring Permission -->
+    <key>NSInputMonitoringUsageDescription</key>
+    <string>O.M.F.K monitors keyboard input to detect and correct text typed in the wrong language layout.</string>
+</dict>
+</plist>

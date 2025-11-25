@@ -1,6 +1,7 @@
 import Foundation
 import AppKit
 import CoreGraphics
+import Carbon
 import os.log
 
 @MainActor
@@ -17,9 +18,9 @@ final class EventMonitor {
     }
     
     func start() async {
-        guard await checkAccessibility() else {
+        guard checkAccessibility() else {
             logger.error("Accessibility permission denied")
-            await requestAccessibility()
+            requestAccessibility()
             return
         }
         
@@ -43,7 +44,7 @@ final class EventMonitor {
         
         self.eventTap = tap
         self.runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-        CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
+        CFRunLoopAddSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
         
         logger.info("Event monitor started")
@@ -125,25 +126,30 @@ final class EventMonitor {
         }
     }
     
-    private func checkAccessibility() async -> Bool {
+    private func checkAccessibility() -> Bool {
         return AXIsProcessTrusted()
     }
     
-    private func requestAccessibility() async {
-        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
+    private func requestAccessibility() {
+        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         AXIsProcessTrustedWithOptions(options)
     }
 }
 
 extension CGEvent {
     var keyboardEventCharacters: String? {
-        guard let source = CGEventCreateSourceFromEvent(self) else { return nil }
         let keyboard = TISCopyCurrentKeyboardInputSource().takeRetainedValue()
         var length = 0
         var chars = [UniChar](repeating: 0, count: 4)
         
+        guard let layoutData = TISGetInputSourceProperty(keyboard, kTISPropertyUnicodeKeyLayoutData) else {
+            return nil
+        }
+        
+        let layout = unsafeBitCast(layoutData, to: UnsafePointer<UCKeyboardLayout>.self)
+        
         if UCKeyTranslate(
-            unsafeBitCast(TISGetInputSourceProperty(keyboard, kTISPropertyUnicodeKeyLayoutData), to: UnsafePointer<UCKeyboardLayout>.self),
+            layout,
             UInt16(getIntegerValueField(.keyboardEventKeycode)),
             UInt16(kUCKeyActionDown),
             0,

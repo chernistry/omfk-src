@@ -37,7 +37,7 @@ actor CorrectionEngine {
         if let expected = expectedLayout, expected != detected {
             let corrected = LayoutMapper.convert(text, from: detected, to: expected)
             if let result = corrected {
-                await addToHistory(original: text, corrected: result, from: detected, to: expected)
+                addToHistory(original: text, corrected: result, from: detected, to: expected)
             }
             return corrected
         }
@@ -47,7 +47,7 @@ actor CorrectionEngine {
         if detected != targetLang {
             let corrected = LayoutMapper.convert(text, from: detected, to: targetLang)
             if let result = corrected {
-                await addToHistory(original: text, corrected: result, from: detected, to: targetLang)
+                addToHistory(original: text, corrected: result, from: detected, to: targetLang)
             }
             return corrected
         }

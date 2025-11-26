@@ -74,27 +74,50 @@ actor CorrectionEngine {
         }
         
         // Check if the decision implies a layout correction
-        if decision.layoutHypothesis == .ruFromEnLayout {
-            if let corrected = LayoutMapper.convert(text, from: .english, to: .russian) {
-                logger.info("✅ VALID CONVERSION FOUND! (Ensemble)")
-                let result = await applyCorrection(original: text, corrected: corrected, from: .english, to: .russian, hypothesis: decision.layoutHypothesis)
-                // Record as accepted
-                let ctx = ProfileContext(token: text, lastLanguage: lastLang)
-                await profile.record(context: ctx, outcome: .accepted, hypothesis: decision.layoutHypothesis)
-                return result
-            }
-        } else if decision.layoutHypothesis == .heFromEnLayout {
-            if let corrected = LayoutMapper.convert(text, from: .english, to: .hebrew) {
-                logger.info("✅ VALID CONVERSION FOUND! (Ensemble)")
-                let result = await applyCorrection(original: text, corrected: corrected, from: .english, to: .hebrew, hypothesis: decision.layoutHypothesis)
-                // Record as accepted
-                let ctx = ProfileContext(token: text, lastLanguage: lastLang)
-                await profile.record(context: ctx, outcome: .accepted, hypothesis: decision.layoutHypothesis)
-                return result
-            }
+        let needsCorrection: Bool
+        let sourceLayout: Language
+        
+        switch decision.layoutHypothesis {
+        case .ru, .en, .he:
+            // Text is already in correct layout
+            needsCorrection = false
+            sourceLayout = decision.language
+        case .ruFromEnLayout:
+            needsCorrection = true
+            sourceLayout = .english
+        case .heFromEnLayout:
+            needsCorrection = true
+            sourceLayout = .english
+        case .enFromRuLayout:
+            needsCorrection = true
+            sourceLayout = .russian
+        case .enFromHeLayout:
+            needsCorrection = true
+            sourceLayout = .hebrew
+        case .heFromRuLayout:
+            needsCorrection = true
+            sourceLayout = .russian
+        case .ruFromHeLayout:
+            needsCorrection = true
+            sourceLayout = .hebrew
         }
         
-        logger.info("ℹ️ No correction needed or found")
+        guard needsCorrection else {
+            logger.info("ℹ️ No correction needed - text is in correct layout")
+            return nil
+        }
+        
+        // Attempt conversion
+        if let corrected = LayoutMapper.convert(text, from: sourceLayout, to: decision.language) {
+            logger.info("✅ VALID CONVERSION FOUND! (Ensemble)")
+            let result = await applyCorrection(original: text, corrected: corrected, from: sourceLayout, to: decision.language, hypothesis: decision.layoutHypothesis)
+            // Record as accepted
+            let ctx = ProfileContext(token: text, lastLanguage: lastLang)
+            await profile.record(context: ctx, outcome: .accepted, hypothesis: decision.layoutHypothesis)
+            return result
+        }
+        
+        logger.info("ℹ️ No correction found")
         return nil
     }
     
@@ -134,9 +157,9 @@ actor CorrectionEngine {
         
         let from: Language
         switch decision.layoutHypothesis {
-        case .ru, .enFromRuLayout: from = .russian
+        case .ru, .enFromRuLayout, .heFromRuLayout: from = .russian
         case .en, .ruFromEnLayout, .heFromEnLayout: from = .english
-        case .he, .enFromHeLayout: from = .hebrew
+        case .he, .enFromHeLayout, .ruFromHeLayout: from = .hebrew
         }
         
         logger.info("✅ Inferred source language: \(from.rawValue, privacy: .public)")

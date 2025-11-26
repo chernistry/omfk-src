@@ -48,7 +48,8 @@
 3. **Real-time layout correction** (DoD: "Automatic text correction replaces wrong-layout text in real-time", "<50ms detection + correction")
   - Complete layout mapping coverage for RU/EN/HE, including:
     - RU↔EN, HE↔EN direct character mapping tables
-    - a well-defined path for RU↔HE conversions (either direct tables or composition via EN that preserves reversibility)
+    - RU↔HE conversions via composition (RU→EN→HE and HE→EN→RU) that preserves reversibility
+    - All layout hypotheses: `.ru`, `.en`, `.he`, `.ruFromEnLayout`, `.heFromEnLayout`, `.enFromRuLayout`, `.enFromHeLayout`, `.heFromRuLayout`, `.ruFromHeLayout`
   - Async language detection (non-blocking)
   - Text replacement via CGEvent posting
 4. **Menu bar app with settings/history** (DoD: "Menu bar app launches and displays status icon", "Settings UI", "History view displays last 20+ corrections")

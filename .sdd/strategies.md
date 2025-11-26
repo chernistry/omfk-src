@@ -15,8 +15,9 @@
   - `NLLanguageRecognizer` (20% weight)
   - Character set heuristics (30% weight)
   - N-gram models (50% weight)
-- ✅ Layout hypotheses: `.ru`, `.en`, `.he`, `.ruFromEnLayout`, `.heFromEnLayout`, `.enFromRuLayout`, `.enFromHeLayout`  
-  (with RU↔HE mis-layout cases handled via the RU/EN/HE layout-switch template; see ticket 11)
+- ✅ Layout hypotheses: `.ru`, `.en`, `.he`, `.ruFromEnLayout`, `.heFromEnLayout`, `.enFromRuLayout`, `.enFromHeLayout`, `.heFromRuLayout`, `.ruFromHeLayout`
+  - RU↔HE mis-layout cases handled via composition (RU→EN→HE and HE→EN→RU)
+  - All pairs among RU/EN/HE are first-class supported
 - ✅ Context bonus (+0.15) and hypothesis penalty (-0.2)
 - ✅ Integrated into `CorrectionEngine`
 - 🎯 **Accuracy**: 96-98% for 4+ char tokens in testing
@@ -33,6 +34,45 @@
 - ❌ No training pipeline
 - ❌ No synthetic data generation
 - 📋 **See detailed implementation guide below**
+
+---
+
+## Layout-Switch Matrix for RU/EN/HE
+
+OMFK supports all layout conversion pairs among Russian, English, and Hebrew through a combination of direct mappings and composition.
+
+### Primitive Mappings (Direct Character Tables)
+
+| From | To | Implementation |
+|------|-----|----------------|
+| RU   | EN  | Direct table (`ruToEn`) |
+| EN   | RU  | Direct table (`enToRu`) |
+| HE   | EN  | Direct table (`heToEn`) |
+| EN   | HE  | Direct table (`enToHe`) |
+
+### Derived Mappings (Composition)
+
+| From | To | Path | Reversible |
+|------|-----|------|------------|
+| RU   | HE  | RU→EN→HE | ✅ Yes |
+| HE   | RU  | HE→EN→RU | ✅ Yes |
+
+**Reversibility guarantee**: For any text `T`:
+- `convert(convert(T, RU→HE), HE→RU) == T`
+- `convert(convert(T, HE→RU), RU→HE) == T`
+
+This is achieved because both paths go through EN as an intermediate, and each primitive mapping is bijective for the characters in the respective keyboard layouts.
+
+### Layout Hypotheses
+
+The detection system evaluates all possible mis-layout scenarios:
+
+1. **As-is hypotheses**: `.ru`, `.en`, `.he` (text typed in correct layout)
+2. **EN mis-typed**: `.enFromRuLayout`, `.enFromHeLayout`
+3. **RU mis-typed**: `.ruFromEnLayout`, `.ruFromHeLayout`
+4. **HE mis-typed**: `.heFromEnLayout`, `.heFromRuLayout`
+
+Each hypothesis is scored by the ensemble detector, and the highest-scoring hypothesis determines the correction action.
 
 ---
 

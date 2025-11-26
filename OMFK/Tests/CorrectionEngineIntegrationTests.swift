@@ -58,7 +58,7 @@ final class CorrectionEngineIntegrationTests: XCTestCase {
     
     func testContextAwareness() async throws {
         // First correction establishes Russian context
-        let first = await engine.correctText("ghbdtn", context: nil)
+        let first = await engine.correctText("ghbdtn", expectedLayout: nil)
         XCTAssertEqual(first, "привет")
         
         // Ambiguous token "ytn" has low confidence (not enough signal for "нет")

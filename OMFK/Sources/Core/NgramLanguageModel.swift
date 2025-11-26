@@ -9,12 +9,14 @@ enum LanguageHypothesis: String, CaseIterable, Sendable {
     case enFromHeLayout   // English typed on Hebrew layout
     case ruFromEnLayout   // Russian typed on English layout
     case heFromEnLayout   // Hebrew typed on English layout
+    case heFromRuLayout   // Hebrew typed on Russian layout (via RU→EN→HE)
+    case ruFromHeLayout   // Russian typed on Hebrew layout (via HE→EN→RU)
     
     var targetLanguage: Language {
         switch self {
-        case .ru, .ruFromEnLayout: return .russian
+        case .ru, .ruFromEnLayout, .ruFromHeLayout: return .russian
         case .en, .enFromRuLayout, .enFromHeLayout: return .english
-        case .he, .heFromEnLayout: return .hebrew
+        case .he, .heFromEnLayout, .heFromRuLayout: return .hebrew
         }
     }
 }

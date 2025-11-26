@@ -33,6 +33,16 @@ struct LayoutMapper {
         case (.english, .russian): map = enToRu
         case (.hebrew, .english): map = heToEn
         case (.english, .hebrew): map = enToHe
+        case (.russian, .hebrew):
+            // RU→HE via composition: RU→EN→HE
+            guard let intermediate = convert(text, from: .russian, to: .english),
+                  let result = convert(intermediate, from: .english, to: .hebrew) else { return nil }
+            return result
+        case (.hebrew, .russian):
+            // HE→RU via composition: HE→EN→RU
+            guard let intermediate = convert(text, from: .hebrew, to: .english),
+                  let result = convert(intermediate, from: .english, to: .russian) else { return nil }
+            return result
         default: return nil
         }
         

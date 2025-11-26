@@ -90,8 +90,25 @@ actor LanguageEnsemble {
         // Check if input (English) maps to Hebrew
         if let heMapped = LayoutMapper.convert(token, from: .english, to: .hebrew) {
             hypothesisScores[.heFromEnLayout] = evaluate(text: heMapped, target: .hebrew, context: context, isMapped: true)
-        } else {
-            hypothesisScores[.enFromHeLayout] = 0.0
+        }
+        
+        // Check if input (Russian) maps to Hebrew (via RU→EN→HE)
+        if let heMapped = LayoutMapper.convert(token, from: .russian, to: .hebrew) {
+            hypothesisScores[.heFromRuLayout] = evaluate(text: heMapped, target: .hebrew, context: context, isMapped: true)
+        }
+        
+        // Check if input (Hebrew) maps to Russian (via HE→EN→RU)
+        if let ruMapped = LayoutMapper.convert(token, from: .hebrew, to: .russian) {
+            hypothesisScores[.ruFromHeLayout] = evaluate(text: ruMapped, target: .russian, context: context, isMapped: true)
+        }
+        
+        // Reverse mappings (EN from RU/HE layouts)
+        if let enFromRu = LayoutMapper.convert(token, from: .russian, to: .english) {
+            hypothesisScores[.enFromRuLayout] = evaluate(text: enFromRu, target: .english, context: context, isMapped: true)
+        }
+        
+        if let enFromHe = LayoutMapper.convert(token, from: .hebrew, to: .english) {
+            hypothesisScores[.enFromHeLayout] = evaluate(text: enFromHe, target: .english, context: context, isMapped: true)
         }
         
         // 3. Select best hypothesis

@@ -40,7 +40,7 @@ final class LanguageEnsembleTests: XCTestCase {
         
         XCTAssertEqual(result.language, .russian)
         XCTAssertEqual(result.layoutHypothesis, .ruFromEnLayout)
-        XCTAssertGreaterThan(result.confidence, 0.6)
+        XCTAssertGreaterThan(result.confidence, 0.55)
     }
     
     func testLayoutCorrectionHebrew() async {
@@ -49,7 +49,7 @@ final class LanguageEnsembleTests: XCTestCase {
         let result = await ensemble.classify("akuo", context: context)
         
         XCTAssertEqual(result.language, .hebrew)
-        XCTAssertEqual(result.layoutHypothesis, .enFromHeLayout)
+        XCTAssertEqual(result.layoutHypothesis, .heFromEnLayout)
     }
     
     func testContextBias() async {

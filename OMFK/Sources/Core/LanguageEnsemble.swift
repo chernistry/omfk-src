@@ -97,8 +97,6 @@ actor LanguageEnsemble {
         // 3. Select best hypothesis
         let best = hypothesisScores.max(by: { $0.value < $1.value })?.key ?? .en
         
-        print("DEBUG: Scores: \(hypothesisScores)")
-        
         // 4. Calculate confidence
         // Simple margin-based confidence
         let sortedScores = hypothesisScores.values.sorted(by: >)

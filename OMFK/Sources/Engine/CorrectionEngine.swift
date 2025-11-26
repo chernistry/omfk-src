@@ -3,7 +3,7 @@ import AppKit
 import os.log
 
 actor CorrectionEngine {
-    private let detector = LanguageDetector()
+    private let ensemble = LanguageEnsemble()
     private let settings: SettingsManager
     private var history: [CorrectionRecord] = []
     private let logger = Logger.engine
@@ -48,49 +48,44 @@ actor CorrectionEngine {
             logger.info("Expected layout: \(expected.rawValue, privacy: .public)")
         }
         
-        let detectedLang = await detector.detect(text)
-        guard let detected = detectedLang else {
-            logger.warning("❌ Language detection failed for: '\(text, privacy: .public)'")
-            return nil
+        // Use last correction target as context
+        var lastLang: Language? = nil
+        if let lastRecord = history.first {
+            lastLang = lastRecord.toLang
         }
+        let context = EnsembleContext(lastLanguage: lastLang)
         
-        logger.info("✅ Detected language: \(detected.rawValue, privacy: .public)")
+        let decision = await ensemble.classify(text, context: context)
+        logger.info("✅ Decision: \(decision.language.rawValue, privacy: .public) (Hypothesis: \(decision.layoutHypothesis.rawValue, privacy: .public), Conf: \(decision.confidence))")
         
-        // Hybrid algorithm: always try conversions to find better matches
-        // (NSSpellChecker is too liberal for Cyrillic, may accept gibberish)
-        let targetLangs: [Language] = detected == .russian ? [.english] :
-                                      detected == .hebrew ? [.english] :
-                                      [.russian, .hebrew]
-
-        logger.info("Trying conversions to: \(targetLangs.map { $0.rawValue }.joined(separator: ", "), privacy: .public)")
-
-        for target in targetLangs {
-            if let converted = LayoutMapper.convert(text, from: detected, to: target) {
-                logger.info("🔄 Trying conversion: \(detected.rawValue, privacy: .public) → \(target.rawValue, privacy: .public): '\(text, privacy: .public)' → '\(converted, privacy: .public)'")
-                
-                let convertedValid = await detector.isValidWord(converted, in: target)
-                logger.info("📖 Converted word '\(converted, privacy: .public)' valid in \(target.rawValue, privacy: .public): \(convertedValid ? "YES" : "NO")")
-                
-                if convertedValid {
-                    logger.info("✅ VALID CONVERSION FOUND!")
-                    addToHistory(original: text, corrected: converted, from: detected, to: target)
-                    
-                    // If auto-switch is enabled, switch the actual input source to the target language.
-                    if await settings.autoSwitchLayout {
-                        logger.info("🔄 Auto-switch enabled - switching input source to \(target.rawValue, privacy: .public)")
-                        await MainActor.run {
-                            InputSourceManager.shared.switchTo(language: target)
-                        }
-                    }
-                    return converted
-                }
-            } else {
-                logger.debug("⚠️ Conversion failed: \(detected.rawValue, privacy: .public) → \(target.rawValue, privacy: .public)")
+        // Check if the decision implies a layout correction
+        if decision.layoutHypothesis == .ruFromEnLayout {
+            if let corrected = LayoutMapper.convert(text, from: .english, to: .russian) {
+                logger.info("✅ VALID CONVERSION FOUND! (Ensemble)")
+                return await applyCorrection(original: text, corrected: corrected, from: .english, to: .russian)
+            }
+        } else if decision.layoutHypothesis == .heFromEnLayout {
+            if let corrected = LayoutMapper.convert(text, from: .english, to: .hebrew) {
+                logger.info("✅ VALID CONVERSION FOUND! (Ensemble)")
+                return await applyCorrection(original: text, corrected: corrected, from: .english, to: .hebrew)
             }
         }
         
-        logger.info("ℹ️ No valid conversions found")
+        logger.info("ℹ️ No correction needed or found")
         return nil
+    }
+    
+    private func applyCorrection(original: String, corrected: String, from: Language, to: Language) async -> String {
+        addToHistory(original: original, corrected: corrected, from: from, to: to)
+        
+        // If auto-switch is enabled, switch the actual input source to the target language.
+        if await settings.autoSwitchLayout {
+            logger.info("🔄 Auto-switch enabled - switching input source to \(to.rawValue, privacy: .public)")
+            await MainActor.run {
+                InputSourceManager.shared.switchTo(language: to)
+            }
+        }
+        return corrected
     }
     
     func getHistory() async -> [CorrectionRecord] {
@@ -110,13 +105,18 @@ actor CorrectionEngine {
             return nil
         }
         
-        let detected = await detector.detect(text)
-        guard let from = detected else {
-            logger.warning("❌ Cannot detect language for manual correction")
-            return nil
+        // For manual correction, we try to detect the SOURCE language and flip it.
+        // We use ensemble to guess the most likely interpretation, then infer source.
+        let decision = await ensemble.classify(text, context: EnsembleContext())
+        
+        let from: Language
+        switch decision.layoutHypothesis {
+        case .ru, .enFromRuLayout: from = .russian
+        case .en, .ruFromEnLayout, .heFromEnLayout: from = .english
+        case .he, .enFromHeLayout: from = .hebrew
         }
         
-        logger.info("✅ Detected language: \(from.rawValue, privacy: .public)")
+        logger.info("✅ Inferred source language: \(from.rawValue, privacy: .public)")
         
         // Try all possible conversions
         let targets: [Language] = Language.allCases.filter { $0 != from }

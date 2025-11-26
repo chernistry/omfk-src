@@ -22,6 +22,20 @@ struct SettingsView: View {
                     }
                 }
                 
+                Section("Hotkey") {
+                    Toggle("Enable manual correction hotkey", isOn: $settings.hotkeyEnabled)
+                    
+                    HStack {
+                        Text("Hotkey:")
+                        Text(keyCodeToString(settings.hotkeyKeyCode))
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Text("(Left Alt by default)")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                
                 Section("Excluded Apps") {
                     if settings.excludedApps.isEmpty {
                         Text("No excluded apps")
@@ -61,5 +75,15 @@ struct SettingsView: View {
         }
         .padding()
         .frame(width: 500, height: 600)
+    }
+    
+    private func keyCodeToString(_ keyCode: UInt16) -> String {
+        switch keyCode {
+        case 58: return "Left Alt"
+        case 61: return "Right Alt"
+        case 59: return "Left Ctrl"
+        case 62: return "Right Ctrl"
+        default: return "Key \(keyCode)"
+        }
     }
 }

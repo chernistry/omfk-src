@@ -1,6 +1,7 @@
 import Foundation
 import NaturalLanguage
 import AppKit
+import os.log
 
 enum Language: String, CaseIterable {
     case russian = "ru"
@@ -19,6 +20,7 @@ enum Language: String, CaseIterable {
 actor LanguageDetector {
     private let recognizer = NLLanguageRecognizer()
     private let spellChecker = NSSpellChecker.shared
+    private let logger = Logger.detection
     
     init() {
         recognizer.languageHints = [
@@ -31,15 +33,20 @@ actor LanguageDetector {
     func detect(_ text: String) async -> Language? {
         guard !text.isEmpty else { return nil }
         
+        logger.debug("Detecting language for: '\(text, privacy: .public)'")
+        
         // Fast path: character set heuristics for short text
         if text.count < 3 {
-            return detectByCharacterSet(text)
+            let result = detectByCharacterSet(text)
+            logger.debug("Short text detection: \(result?.rawValue ?? "nil", privacy: .public)")
+            return result
         }
         
         recognizer.reset()
         recognizer.processString(text)
         
         if let dominant = recognizer.dominantLanguage {
+            logger.debug("NLLanguageRecognizer detected: \(dominant.rawValue, privacy: .public)")
             switch dominant {
             case .russian: return .russian
             case .english: return .english
@@ -49,7 +56,9 @@ actor LanguageDetector {
         }
         
         // Fallback to character set
-        return detectByCharacterSet(text)
+        let result = detectByCharacterSet(text)
+        logger.debug("Fallback character set detection: \(result?.rawValue ?? "nil", privacy: .public)")
+        return result
     }
     
     func isValidWord(_ word: String, in language: Language) -> Bool {
@@ -59,7 +68,9 @@ actor LanguageDetector {
             of: word,
             startingAt: 0
         )
-        return range.location == NSNotFound
+        let isValid = range.location == NSNotFound
+        logger.debug("Spell check '\(word, privacy: .public)' in \(language.rawValue, privacy: .public): \(isValid, privacy: .public)")
+        return isValid
     }
     
     private func detectByCharacterSet(_ text: String) -> Language? {

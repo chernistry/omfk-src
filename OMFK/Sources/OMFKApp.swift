@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import os.log
 
 @main
 struct OMFKApp: App {
@@ -19,6 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var correctionEngine: CorrectionEngine?
     
     func applicationDidFinishLaunching(_ notification: Notification) {
+        Logger.app.info("OMFK application did finish launching")
         NSApp.setActivationPolicy(.accessory)
         
         let settings = SettingsManager.shared
@@ -29,6 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.eventMonitor = monitor
         
         Task {
+            Logger.app.info("Starting EventMonitor from AppDelegate")
             await monitor.start()
         }
     }

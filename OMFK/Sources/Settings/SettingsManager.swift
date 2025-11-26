@@ -20,6 +20,14 @@ final class SettingsManager: ObservableObject {
         didSet { UserDefaults.standard.set(autoSwitchLayout, forKey: "autoSwitchLayout") }
     }
     
+    @Published var hotkeyEnabled: Bool {
+        didSet { UserDefaults.standard.set(hotkeyEnabled, forKey: "hotkeyEnabled") }
+    }
+    
+    @Published var hotkeyKeyCode: UInt16 {
+        didSet { UserDefaults.standard.set(hotkeyKeyCode, forKey: "hotkeyKeyCode") }
+    }
+    
     private init() {
         self.isEnabled = UserDefaults.standard.object(forKey: "isEnabled") as? Bool ?? true
         
@@ -30,6 +38,8 @@ final class SettingsManager: ObservableObject {
         self.excludedApps = Set(apps)
         
         self.autoSwitchLayout = UserDefaults.standard.object(forKey: "autoSwitchLayout") as? Bool ?? false
+        self.hotkeyEnabled = UserDefaults.standard.object(forKey: "hotkeyEnabled") as? Bool ?? true
+        self.hotkeyKeyCode = UInt16(UserDefaults.standard.integer(forKey: "hotkeyKeyCode") != 0 ? UserDefaults.standard.integer(forKey: "hotkeyKeyCode") : 58) // 58 = left Alt
     }
     
     func isExcluded(bundleId: String) -> Bool {

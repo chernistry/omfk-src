@@ -5,7 +5,7 @@ Spec version: v1.0 / strategies.md#strategy-2
 ## Context
 - Strategy 2 in `.sdd/strategies.md` describes combining:
   - `NLLanguageRecognizer` (restricted to RU/EN/HE),
-  - explicit layout hypotheses (as-is, EN→RU, EN→HE),
+  - explicit layout hypotheses (as-is, EN→RU, EN→HE, and RU↔HE via the layout-switch template from ticket 11),
   - char-set heuristics and weak spellchecker signals,
   - short context (`lastLang`).
 - Architecture: `.sdd/architect.md` — LanguageDetector component and DoD for language detection accuracy and latency.
@@ -17,7 +17,7 @@ This ticket builds a **LanguageEnsemble** that wraps Apple’s `NLLanguageRecogn
 - Implement a `LanguageEnsemble` actor (or similar) that:
   - holds a single `NLLanguageRecognizer` configured with RU/EN/HE hints;
   - for each token of length ≥3:
-    - evaluates multiple hypotheses (`h0`: as-is, `h1`: EN→RU, `h2`: EN→HE, etc.);
+    - evaluates multiple hypotheses (`h0`: as-is, `h1`: EN→RU, `h2`: EN→HE, and additional RU↔HE hypotheses defined by the layout-switch template from ticket 11);
     - obtains per-hypothesis language probabilities from `NLLanguageRecognizer`;
     - combines them with:
       - character-set heuristics,
@@ -50,6 +50,7 @@ Acceptance criteria:
 3. **Implement hypothesis evaluation**
    - For each token ≥3 chars:
      - produce `h0`, `h1`, `h2` strings via layout mapping functions (existing or new).
+     - where applicable, also evaluate RU↔HE mis-layout variants using the RU/EN/HE layout-switch template from ticket 11.
      - run recognizer on each, capturing probabilities for RU/EN/HE.
    - Apply heuristics:
      - if ≥80% Cyrillic characters → strong RU bias;
@@ -82,10 +83,11 @@ Acceptance criteria:
   - Mitigation: rely on layout hypotheses + heuristics; treat recognizer output as one signal among several.
 - Risk: extra latency from multiple hypotheses.
   - Mitigation: restrict to 2–3 hypotheses; benchmark latency and adjust.
+ - Risk: RU↔HE mis-layout cases are underrepresented in test data.
+   - Mitigation: add explicit RU-on-HE and HE-on-RU scenarios to ensemble tests and tune thresholds with UserLanguageProfile.
 
 ## Dependencies
 - Upstream:
   - `.sdd/strategies.md` Strategy 2.
 - Downstream:
   - Ticket 13 (ensemble + n-gram fusion and integration into EventMonitor pipeline).
-

@@ -15,7 +15,8 @@
   - `NLLanguageRecognizer` (20% weight)
   - Character set heuristics (30% weight)
   - N-gram models (50% weight)
-- ✅ Layout hypotheses: `.ru`, `.en`, `.he`, `.ruFromEnLayout`, `.heFromEnLayout`
+- ✅ Layout hypotheses: `.ru`, `.en`, `.he`, `.ruFromEnLayout`, `.heFromEnLayout`, `.enFromRuLayout`, `.enFromHeLayout`  
+  (with RU↔HE mis-layout cases handled via the RU/EN/HE layout-switch template; see ticket 11)
 - ✅ Context bonus (+0.15) and hypothesis penalty (-0.2)
 - ✅ Integrated into `CorrectionEngine`
 - 🎯 **Accuracy**: 96-98% for 4+ char tokens in testing

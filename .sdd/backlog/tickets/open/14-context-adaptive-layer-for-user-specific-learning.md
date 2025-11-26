@@ -6,6 +6,7 @@ Spec version: v1.0 / strategies.md#strategy-4
 - Strategy 4 describes a **meta-layer** above any base detector:
   - uses sentence context, user’s history, and results of real corrections (accepted/reverted);
   - goal: reduce false positives and provide self-learning without retraining ML models.
+  - must learn from all RU/EN/HE layout combinations, including RU↔HE, not only EN↔{RU,HE}.
 - Architect spec: `.sdd/architect.md` — mentions event history and settings; this ticket extends that with adaptive behaviour.
 - Tickets 10–13 introduce new detectors and pipeline.
 
@@ -70,4 +71,3 @@ Acceptance criteria:
   - 13-integrate-ngram-and-ensemble-into-language-detector-pipeline.md
 - Downstream:
   - 15-validation-and-benchmarking-of-new-detection-pipeline.md
-

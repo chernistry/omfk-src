@@ -8,7 +8,7 @@ Spec version: v1.0 / strategies.md#strategy-1-2
   - `LanguageEnsemble` wrapping `NLLanguageRecognizer` + layout hypotheses.
 - `.sdd/architect.md` defines `LanguageDetector`, `EventMonitor`, `LayoutMapper`, and their responsibilities.
 
-This ticket wires the new detectors into the **runtime pipeline** so OMFK uses them for real-time decisions.
+This ticket wires the new detectors into the **runtime pipeline** so OMFK uses them for real-time decisions, including all RU/EN/HE layout combinations (EN↔RU, EN↔HE, and RU↔HE via the layout-switch template from ticket 11).
 
 ## Objective & Definition of Done
 - Replace or augment the existing language/layout detection code so that:
@@ -53,6 +53,7 @@ Acceptance criteria:
    - For key sequences representing:
      - typical RU/EN/HE words in correct layout;
      - classic “ghbdtn” / “руддщ” / Hebrew mixed cases;
+     - RU words typed on HE layout and HE words typed on RU layout (RU↔HE via the layout-switch template);
      - ambiguous short tokens.
    - Assert:
      - correct final layout decision;
@@ -80,4 +81,3 @@ Acceptance criteria:
   - 12-ensemble-with-nllanguagerecognizer-and-layout-hypotheses.md
 - Downstream:
   - 14-context-adaptive-layer-for-user-specific-learning.md
-

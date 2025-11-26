@@ -29,7 +29,7 @@ Build a native macOS menu bar utility that automatically detects the language be
 - [ ] Global keyboard event monitoring active with proper permissions
 - [ ] Language detection working for RU/EN/HE on 3-10 word chunks
 - [ ] NSSpellChecker validates words in detected language; converts layout if invalid
-- [ ] Layout mapping tables implemented for RU↔EN and HE↔EN
+- [ ] Layout mapping supports all pairs among RU/EN/HE (RU↔EN, HE↔EN, and RU↔HE, either via direct tables or via composition without loss of information)
 - [ ] Automatic text correction replaces wrong-layout text in real-time
 - [ ] Manual correction hotkey converts last typed fragment
 - [ ] Toggle auto-correction hotkey implemented
@@ -39,7 +39,7 @@ Build a native macOS menu bar utility that automatically detects the language be
 - [ ] Hebrew RTL rendering correct in UI and correction logic
 - [ ] No noticeable input lag (<50ms detection + correction)
 - [ ] Unit tests cover language detection accuracy (>90% for clear text)
-- [ ] Integration tests validate RU↔EN, HE↔EN, and mixed-text scenarios
+- [ ] Integration tests validate RU↔EN, HE↔EN, RU↔HE, and mixed-text scenarios
 - [ ] App properly requests and handles Accessibility/Input Monitoring permissions
 - [ ] Bundle identifier set to com.chernistry.omfk
 - [ ] App name displays as "O.M.F.K" in UI, "Oh My Fucking Keyboard" in About

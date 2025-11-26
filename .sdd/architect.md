@@ -46,7 +46,9 @@
   - Character-set fallback for short text (<3 words)
   - Confidence threshold >0.6
 3. **Real-time layout correction** (DoD: "Automatic text correction replaces wrong-layout text in real-time", "<50ms detection + correction")
-  - Hardcoded RU↔EN, HE↔EN character mapping tables
+  - Complete layout mapping coverage for RU/EN/HE, including:
+    - RU↔EN, HE↔EN direct character mapping tables
+    - a well-defined path for RU↔HE conversions (either direct tables or composition via EN that preserves reversibility)
   - Async language detection (non-blocking)
   - Text replacement via CGEvent posting
 4. **Menu bar app with settings/history** (DoD: "Menu bar app launches and displays status icon", "Settings UI", "History view displays last 20+ corrections")

@@ -17,6 +17,7 @@ Spec version: v1.0 / strategies.md#validation
 ## Objective & Definition of Done
 - Validate the new detection pipeline against:
   - synthetic and real-world corpora (RU/EN/HE + mixed);
+  - all layout combinations (EN↔RU, EN↔HE, RU↔HE) as defined by the layout-switch template from ticket 11;
   - latency and memory constraints.
 - Provide a short report/checklist in `IMPLEMENTATION_STATUS.md` or `DEBUGGING.md` summarising results and remaining gaps.
 
@@ -27,7 +28,11 @@ Acceptance criteria:
     - average and p95 latency per token,
     - memory footprint changes.
 - Accuracy evaluation:
-  - metrics computed on a labelled corpus (correct layout vs wrong layout).
+  - metrics computed on a labelled corpus (correct layout vs wrong layout) covering:
+    - EN typed on RU layout,
+    - EN typed on HE layout,
+    - RU typed on HE layout, HE typed on RU layout (RU↔HE cases),
+    - mixed and boundary cases.
   - confusion matrix and key percentages (accuracy, false positive rate) for:
     - 2–3 chars,
     - 4–6 chars,
@@ -82,4 +87,3 @@ Acceptance criteria:
   - 12-ensemble-with-nllanguagerecognizer-and-layout-hypotheses.md
   - 13-integrate-ngram-and-ensemble-into-language-detector-pipeline.md
   - 14-context-adaptive-layer-for-user-specific-learning.md
-

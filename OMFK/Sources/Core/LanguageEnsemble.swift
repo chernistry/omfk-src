@@ -81,23 +81,23 @@ actor LanguageEnsemble {
         hypothesisScores[.he] = evaluate(text: token, target: .hebrew, context: context, isMapped: false)
         
         // 2. Evaluate "Layout Mapped" hypotheses
-        
-        // EN -> RU (e.g. "ghbdtn" -> "привет")
+        // Layout corrections
+        // Check if input (English) maps to Russian
         if let ruMapped = LayoutMapper.convert(token, from: .english, to: .russian) {
-            hypothesisScores[.enFromRuLayout] = evaluate(text: ruMapped, target: .russian, context: context, isMapped: true)
-        } else {
-            hypothesisScores[.enFromRuLayout] = 0.0
+             hypothesisScores[.ruFromEnLayout] = evaluate(text: ruMapped, target: .russian, context: context, isMapped: true)
         }
         
-        // EN -> HE (e.g. "akuo" -> "שלום")
+        // Check if input (English) maps to Hebrew
         if let heMapped = LayoutMapper.convert(token, from: .english, to: .hebrew) {
-            hypothesisScores[.enFromHeLayout] = evaluate(text: heMapped, target: .hebrew, context: context, isMapped: true)
+            hypothesisScores[.heFromEnLayout] = evaluate(text: heMapped, target: .hebrew, context: context, isMapped: true)
         } else {
             hypothesisScores[.enFromHeLayout] = 0.0
         }
         
         // 3. Select best hypothesis
         let best = hypothesisScores.max(by: { $0.value < $1.value })?.key ?? .en
+        
+        print("DEBUG: Scores: \(hypothesisScores)")
         
         // 4. Calculate confidence
         // Simple margin-based confidence

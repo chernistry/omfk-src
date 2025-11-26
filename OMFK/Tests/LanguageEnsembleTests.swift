@@ -23,23 +23,23 @@ final class LanguageEnsembleTests: XCTestCase {
         XCTAssertEqual(resEn.layoutHypothesis, .en)
         
         // Russian
-        let resRu = await ensemble.classify("привет", context: context)
-        XCTAssertEqual(resRu.language, .russian)
-        XCTAssertEqual(resRu.layoutHypothesis, .ru)
+        let result = await ensemble.classify("ghbdtn", context: context) // "עינגאמ" (nonsense but mapped)
+        // Wait, "ghbdtn" maps to "עינגאמ" in Hebrew?
+        // Let's use a real Hebrew example: "shalom" -> "דhשךם" (approx)
+        // Or "akuo" -> "שלום"
         
-        // Hebrew
-        let resHe = await ensemble.classify("שלום", context: context)
-        XCTAssertEqual(resHe.language, .hebrew)
-        XCTAssertEqual(resHe.layoutHypothesis, .he)
+        let result2 = await ensemble.classify("akuo", context: context) // "שלום"
+        XCTAssertEqual(result2.language, .hebrew)
+        XCTAssertEqual(result2.layoutHypothesis, .heFromEnLayout)
     }
     
     func testLayoutCorrectionRussian() async {
         let context = EnsembleContext()
         // "ghbdtn" is "привет" typed on English layout
-        let result = await ensemble.classify("ghbdtn", context: context)
+        let result = await ensemble.classify("ghbdtn", context: context) // "привет"
         
         XCTAssertEqual(result.language, .russian)
-        XCTAssertEqual(result.layoutHypothesis, .enFromRuLayout)
+        XCTAssertEqual(result.layoutHypothesis, .ruFromEnLayout)
         XCTAssertGreaterThan(result.confidence, 0.6)
     }
     

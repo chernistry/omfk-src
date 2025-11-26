@@ -4,6 +4,7 @@ import os.log
 
 actor CorrectionEngine {
     private let ensemble = LanguageEnsemble()
+    private let profile = UserLanguageProfile()
     private let settings: SettingsManager
     private var history: [CorrectionRecord] = []
     private let logger = Logger.engine
@@ -58,16 +59,38 @@ actor CorrectionEngine {
         let decision = await ensemble.classify(text, context: context)
         logger.info("✅ Decision: \(decision.language.rawValue, privacy: .public) (Hypothesis: \(decision.layoutHypothesis.rawValue, privacy: .public), Conf: \(decision.confidence))")
         
+        // Adjust confidence based on user profile
+        let adjustedConfidence = await profile.adjustThreshold(
+            for: text,
+            lastLanguage: lastLang,
+            baseConfidence: decision.confidence
+        )
+        logger.info("📊 Adjusted confidence: \(decision.confidence) → \(adjustedConfidence)")
+        
+        // Only apply correction if adjusted confidence is high enough
+        guard adjustedConfidence > 0.6 else {
+            logger.info("⏭️ Skipping correction (confidence too low after adjustment)")
+            return nil
+        }
+        
         // Check if the decision implies a layout correction
         if decision.layoutHypothesis == .ruFromEnLayout {
             if let corrected = LayoutMapper.convert(text, from: .english, to: .russian) {
                 logger.info("✅ VALID CONVERSION FOUND! (Ensemble)")
-                return await applyCorrection(original: text, corrected: corrected, from: .english, to: .russian)
+                let result = await applyCorrection(original: text, corrected: corrected, from: .english, to: .russian, hypothesis: decision.layoutHypothesis)
+                // Record as accepted
+                let ctx = ProfileContext(token: text, lastLanguage: lastLang)
+                await profile.record(context: ctx, outcome: .accepted, hypothesis: decision.layoutHypothesis)
+                return result
             }
         } else if decision.layoutHypothesis == .heFromEnLayout {
             if let corrected = LayoutMapper.convert(text, from: .english, to: .hebrew) {
                 logger.info("✅ VALID CONVERSION FOUND! (Ensemble)")
-                return await applyCorrection(original: text, corrected: corrected, from: .english, to: .hebrew)
+                let result = await applyCorrection(original: text, corrected: corrected, from: .english, to: .hebrew, hypothesis: decision.layoutHypothesis)
+                // Record as accepted
+                let ctx = ProfileContext(token: text, lastLanguage: lastLang)
+                await profile.record(context: ctx, outcome: .accepted, hypothesis: decision.layoutHypothesis)
+                return result
             }
         }
         
@@ -75,7 +98,7 @@ actor CorrectionEngine {
         return nil
     }
     
-    private func applyCorrection(original: String, corrected: String, from: Language, to: Language) async -> String {
+    private func applyCorrection(original: String, corrected: String, from: Language, to: Language, hypothesis: LanguageHypothesis) async -> String {
         addToHistory(original: original, corrected: corrected, from: from, to: to)
         
         // If auto-switch is enabled, switch the actual input source to the target language.

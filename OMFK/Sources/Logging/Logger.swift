@@ -8,4 +8,5 @@ extension Logger {
     static let events = Logger(subsystem: "com.chernistry.omfk", category: "events")
     static let inputSource = Logger(subsystem: "com.chernistry.omfk", category: "inputSource")
     static let hotkey = Logger(subsystem: "com.chernistry.omfk", category: "hotkey")
+    static let profile = Logger(subsystem: "com.chernistry.omfk", category: "profile")
 }

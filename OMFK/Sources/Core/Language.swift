@@ -1,7 +1,7 @@
 import Foundation
 import NaturalLanguage
 
-public enum Language: String, CaseIterable, Sendable {
+public enum Language: String, CaseIterable, Sendable, Codable {
     case english = "en"
     case russian = "ru"
     case hebrew = "he"

@@ -246,3 +246,37 @@ If something doesn't work:
 - [ ] Auto-switch changes layout
 - [ ] Exclusions prevent corrections
 - [ ] Logs are comprehensive and clear
+
+## N-gram Training Tooling
+
+### Overview
+Ticket 11 introduced offline tooling to generate trigram language models for layout-aware detection.
+
+### Components
+- **Script**: `Tools/NgramTrainer/train_ngrams.py` (Python 3)
+- **Corpora**: `Tools/NgramTrainer/corpora/*.txt` (Sample corpora for RU/EN/HE)
+- **Models**: `OMFK/Sources/Resources/*.json` (Generated trigram models)
+
+### Regenerating Models
+To update the models used by the app:
+
+```bash
+cd Tools/NgramTrainer
+# Train Russian
+python3 train_ngrams.py --lang ru --input corpora/ru_sample.txt --output ../../OMFK/Sources/Resources/ru_trigrams.json
+# Train English
+python3 train_ngrams.py --lang en --input corpora/en_sample.txt --output ../../OMFK/Sources/Resources/en_trigrams.json
+# Train Hebrew
+python3 train_ngrams.py --lang he --input corpora/he_sample.txt --output ../../OMFK/Sources/Resources/he_trigrams.json
+```
+
+### Corpus Format
+- UTF-8 text file
+- One phrase per line
+- Normalized automatically (lowercase, letters only) during training
+
+### Model Format
+JSON file containing:
+- Metadata (lang, version, smoothing params)
+- Trigram log-probabilities
+- Target size: ~10-50KB for sample models, scalable to ~1MB for production.

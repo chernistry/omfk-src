@@ -81,8 +81,7 @@ struct NgramLanguageModel: Sendable {
         #if SWIFT_PACKAGE
         guard let url = Bundle.module.url(
             forResource: "\(lang)_trigrams",
-            withExtension: "json",
-            subdirectory: "LanguageModels"
+            withExtension: "json"
         ) else {
             throw ModelError.resourceNotFound(lang)
         }

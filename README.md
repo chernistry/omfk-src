@@ -41,6 +41,40 @@ open Package.swift
 swift test
 ```
 
+## Debugging
+
+The app includes comprehensive logging for debugging. To run with live logs:
+
+```bash
+./run_with_logs.sh
+```
+
+Or view logs separately:
+
+```bash
+./view_logs.sh
+```
+
+See [DEBUGGING.md](DEBUGGING.md) for detailed debugging guide.
+
+### Log Categories
+
+- **app** - Application lifecycle
+- **engine** - Correction logic and decisions
+- **detection** - Language detection with character analysis
+- **events** - Keyboard event capture (every key press)
+- **inputSource** - Layout switching
+- **hotkey** - Hotkey detection and manual correction
+
+### Quick Diagnostics
+
+Check if event capture is working:
+```bash
+log stream --predicate 'subsystem == "com.chernistry.omfk" AND category == "events"' --level debug
+```
+
+Then type something - you should see logs for every key press.
+
 ## Architecture
 
 ```

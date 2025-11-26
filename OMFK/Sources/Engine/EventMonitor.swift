@@ -11,22 +11,28 @@ final class EventMonitor {
     private var runLoopSource: CFRunLoopSource?
     private var buffer: String = ""
     private var lastEventTime: Date = .distantPast
-    private let logger = Logger(subsystem: "com.chernistry.omfk", category: "EventMonitor")
+    private let logger = Logger.events
     private let settings: SettingsManager
     
     init(engine: CorrectionEngine) {
         self.engine = engine
         self.settings = SettingsManager.shared
+        logger.info("EventMonitor initialized")
     }
     
     func start() async {
+        logger.info("=== EventMonitor start() called ===")
+        logger.info("Settings - enabled: \(self.settings.isEnabled), autoSwitch: \(self.settings.autoSwitchLayout), hotkeyEnabled: \(self.settings.hotkeyEnabled), hotkeyKeyCode: \(self.settings.hotkeyKeyCode)")
+        
         guard checkAccessibility() else {
-            logger.error("Accessibility permission denied")
+            logger.error("❌ Accessibility permission denied - cannot create event tap")
             requestAccessibility()
             return
         }
+        logger.info("✅ Accessibility permission granted")
         
         let eventMask = (1 << CGEventType.keyDown.rawValue)
+        logger.info("Creating event tap with mask: \(eventMask)")
         
         guard let tap = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
@@ -40,16 +46,19 @@ final class EventMonitor {
             },
             userInfo: Unmanaged.passUnretained(self).toOpaque()
         ) else {
-            logger.error("Failed to create event tap")
+            logger.error("❌ CRITICAL: Failed to create event tap - check permissions")
             return
         }
+        
+        logger.info("✅ Event tap created successfully")
         
         self.eventTap = tap
         self.runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
         CFRunLoopAddSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
         
-        logger.info("Event monitor started")
+        logger.info("✅ Event monitor started and enabled - waiting for keyboard events...")
+        logger.info("=== EventMonitor is now active ===")
     }
     
     func stop() {
@@ -70,7 +79,7 @@ final class EventMonitor {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
             if let tap = eventTap {
                 CGEvent.tapEnable(tap: tap, enable: true)
-                logger.info("Event tap re-enabled after timeout/disable")
+                logger.warning("⚠️ Event tap was disabled (timeout/user input), re-enabling...")
             }
             return Unmanaged.passUnretained(event)
         }
@@ -80,10 +89,13 @@ final class EventMonitor {
         }
         
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+        let flags = event.flags
+        
+        logger.debug("🔵 KEY EVENT: keyCode=\(keyCode), flags=\(flags.rawValue)")
         
         // Check for hotkey (left Alt by default, keyCode 58)
         if settings.hotkeyEnabled && keyCode == Int64(settings.hotkeyKeyCode) {
-            logger.info("Hotkey pressed, triggering manual correction")
+            logger.info("🔥 HOTKEY DETECTED (keyCode \(keyCode)) - triggering manual correction")
             Task { @MainActor in
                 await handleHotkeyPress()
             }
@@ -91,9 +103,10 @@ final class EventMonitor {
         }
         
         let now = Date()
-        if now.timeIntervalSince(lastEventTime) > 2.0 {
+        let timeSinceLastEvent = now.timeIntervalSince(lastEventTime)
+        if timeSinceLastEvent > 2.0 {
             if !buffer.isEmpty {
-                logger.debug("Buffer cleared due to timeout: '\(self.buffer, privacy: .public)'")
+                logger.info("⏱️ Buffer timeout (\(String(format: "%.1f", timeSinceLastEvent))s) - clearing buffer: '\(self.buffer, privacy: .public)'")
             }
             buffer = ""
         }
@@ -101,15 +114,17 @@ final class EventMonitor {
         
         if let chars = event.keyboardEventCharacters {
             buffer.append(chars)
-            logger.debug("Key pressed: '\(chars, privacy: .public)', buffer: '\(self.buffer, privacy: .public)'")
+            logger.info("⌨️ Typed: '\(chars, privacy: .public)' | Buffer: '\(self.buffer, privacy: .public)' (len=\(self.buffer.count))")
             
             // Process on word boundaries
             if chars.rangeOfCharacter(from: .whitespacesAndNewlines) != nil {
-                logger.info("Word boundary detected, processing buffer")
+                logger.info("📍 Word boundary detected (space/newline) - processing buffer")
                 Task { @MainActor in
                     await processBuffer()
                 }
             }
+        } else {
+            logger.debug("⚠️ No characters extracted from keyCode \(keyCode)")
         }
         
         return Unmanaged.passUnretained(event)
@@ -118,53 +133,63 @@ final class EventMonitor {
     private func processBuffer() async {
         let text = buffer.trimmingCharacters(in: .whitespacesAndNewlines)
         guard text.count >= 3 else {
-            logger.debug("Buffer too short, skipping: '\(text, privacy: .public)'")
+            logger.debug("⏭️ Buffer too short (\(text.count) chars), skipping: '\(text, privacy: .public)'")
             return
         }
         
-        logger.info("Processing buffer: '\(text, privacy: .public)'")
+        logger.info("🔍 Processing buffer: '\(text, privacy: .public)' (len=\(text.count))")
         
         let bundleId = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
-        logger.info("Frontmost app: \(bundleId ?? "unknown", privacy: .public)")
+        logger.info("📱 Frontmost app: \(bundleId ?? "unknown", privacy: .public)")
         
         guard await engine.shouldCorrect(for: bundleId) else {
-            logger.info("Correction disabled for this app")
+            logger.info("🚫 Correction disabled for app: \(bundleId ?? "unknown", privacy: .public)")
             return
         }
+        
+        logger.info("✅ Correction enabled for this app - proceeding...")
 
         // If auto-switch is enabled, treat the preferred language as the expected layout.
         // This makes the engine more decisive about converting words into the user's primary layout.
         let expectedLayout: Language? = settings.autoSwitchLayout ? settings.preferredLanguage : nil
+        if let expected = expectedLayout {
+            logger.info("🎯 Auto-switch enabled, expected layout: \(expected.rawValue, privacy: .public)")
+        }
 
         if let corrected = await engine.correctText(text, expectedLayout: expectedLayout) {
-            logger.info("Correction found: '\(text, privacy: .public)' -> '\(corrected, privacy: .public)'")
+            logger.info("✅ CORRECTION APPLIED: '\(text, privacy: .public)' → '\(corrected, privacy: .public)'")
             await replaceText(with: corrected, originalLength: text.count)
         } else {
-            logger.info("No correction needed")
+            logger.info("ℹ️ No correction needed for: '\(text, privacy: .public)'")
         }
         
         buffer = ""
+        logger.debug("🧹 Buffer cleared")
     }
     
     private func handleHotkeyPress() async {
+        logger.info("🔥 === HOTKEY PRESSED - Manual Correction Mode ===")
+        
         // Prefer current selection if any, otherwise fall back to last word
         let text = await getSelectedOrLastWord()
         guard !text.isEmpty else {
-            logger.warning("No text to correct")
+            logger.warning("⚠️ No text to correct (selection empty, buffer empty)")
             return
         }
         
-        logger.info("Manual correction for: '\(text, privacy: .public)'")
+        logger.info("📝 Text for manual correction: '\(text, privacy: .public)' (len=\(text.count))")
         
         if let corrected = await engine.correctLastWord(text) {
-            logger.info("Manual correction: '\(text, privacy: .public)' -> '\(corrected, privacy: .public)'")
+            logger.info("✅ MANUAL CORRECTION: '\(text, privacy: .public)' → '\(corrected, privacy: .public)'")
             await replaceText(with: corrected, originalLength: text.count)
         } else {
-            logger.warning("Manual correction failed")
+            logger.warning("❌ Manual correction failed for: '\(text, privacy: .public)'")
         }
     }
     
     private func getSelectedOrLastWord() async -> String {
+        logger.debug("🔍 Attempting to get selected text or last word...")
+        
         // 1. Try current selection via Cmd+C
         let pb = NSPasteboard.general
         pb.clearContents()
@@ -175,15 +200,19 @@ final class EventMonitor {
 
         try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
         if let selected = pb.string(forType: .string), !selected.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            logger.info("Using selected text for hotkey correction")
-            return selected.trimmingCharacters(in: .whitespacesAndNewlines)
+            let trimmed = selected.trimmingCharacters(in: .whitespacesAndNewlines)
+            logger.info("✅ Using selected text: '\(trimmed, privacy: .public)'")
+            return trimmed
         }
 
         // 2. Fall back to buffer if available
         let text = buffer.trimmingCharacters(in: .whitespacesAndNewlines)
         if !text.isEmpty {
+            logger.info("✅ Using buffer text: '\(text, privacy: .public)'")
             return text
         }
+        
+        logger.debug("⚠️ No selection or buffer, trying word selection...")
         
         // 3. Fallback: select word backward and copy
         // Cmd+Shift+Left to select word
@@ -198,10 +227,18 @@ final class EventMonitor {
         cmdC2?.post(tap: .cghidEventTap)
         
         try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
-        return pb.string(forType: .string) ?? ""
+        let result = pb.string(forType: .string) ?? ""
+        if !result.isEmpty {
+            logger.info("✅ Selected word backward: '\(result, privacy: .public)'")
+        } else {
+            logger.warning("❌ Failed to get any text")
+        }
+        return result
     }
     
     private func replaceText(with newText: String, originalLength: Int) async {
+        logger.info("🔄 Replacing text: deleting \(originalLength) chars, typing '\(newText, privacy: .public)'")
+        
         // Delete original text
         for _ in 0..<originalLength {
             let deleteEvent = CGEvent(keyboardEventSource: nil, virtualKey: 0x33, keyDown: true) // Delete key
@@ -215,6 +252,8 @@ final class EventMonitor {
                 event.post(tap: .cghidEventTap)
             }
         }
+        
+        logger.info("✅ Text replacement complete")
     }
     
     private func checkAccessibility() -> Bool {
@@ -229,30 +268,18 @@ final class EventMonitor {
 
 extension CGEvent {
     var keyboardEventCharacters: String? {
-        let keyboard = TISCopyCurrentKeyboardInputSource().takeRetainedValue()
-        var length = 0
-        var chars = [UniChar](repeating: 0, count: 4)
-        
-        guard let layoutData = TISGetInputSourceProperty(keyboard, kTISPropertyUnicodeKeyLayoutData) else {
+        // Convert CGEvent to NSEvent to access characters property
+        guard let nsEvent = NSEvent(cgEvent: self) else {
             return nil
         }
         
-        let layout = unsafeBitCast(layoutData, to: UnsafePointer<UCKeyboardLayout>.self)
+        let chars = nsEvent.characters
         
-        if UCKeyTranslate(
-            layout,
-            UInt16(getIntegerValueField(.keyboardEventKeycode)),
-            UInt16(kUCKeyActionDown),
-            0,
-            UInt32(LMGetKbdType()),
-            UInt32(kUCKeyTranslateNoDeadKeysMask),
-            nil,
-            4,
-            &length,
-            &chars
-        ) == noErr {
-            return String(utf16CodeUnits: chars, count: length)
+        // Filter out non-printable characters
+        guard let chars = chars, !chars.isEmpty else {
+            return nil
         }
-        return nil
+        
+        return chars
     }
 }

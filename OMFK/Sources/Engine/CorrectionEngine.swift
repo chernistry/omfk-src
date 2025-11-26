@@ -22,65 +22,97 @@ actor CorrectionEngine {
     }
     
     func shouldCorrect(for bundleId: String?) async -> Bool {
-        guard await settings.isEnabled else { return false }
-        if let id = bundleId, await settings.isExcluded(bundleId: id) {
+        let enabled = await settings.isEnabled
+        logger.debug("shouldCorrect check: enabled=\(enabled), bundleId=\(bundleId ?? "nil", privacy: .public)")
+        
+        guard enabled else {
+            logger.info("❌ Correction globally disabled")
             return false
         }
+        
+        if let id = bundleId, await settings.isExcluded(bundleId: id) {
+            logger.info("❌ App excluded: \(id, privacy: .public)")
+            return false
+        }
+        
+        logger.debug("✅ Correction allowed")
         return true
     }
     
     func correctText(_ text: String, expectedLayout: Language?) async -> String? {
         guard !text.isEmpty else { return nil }
         
-        logger.info("Correcting text: '\(text, privacy: .public)'")
+        logger.info("🔍 === CORRECTION ATTEMPT ===")
+        logger.info("Input: '\(text, privacy: .public)' (len=\(text.count))")
+        if let expected = expectedLayout {
+            logger.info("Expected layout: \(expected.rawValue, privacy: .public)")
+        }
         
         let detectedLang = await detector.detect(text)
         guard let detected = detectedLang else {
-            logger.warning("Failed to detect language for: '\(text, privacy: .public)'")
+            logger.warning("❌ Language detection failed for: '\(text, privacy: .public)'")
             return nil
         }
         
-        logger.info("Detected language: \(detected.rawValue, privacy: .public)")
+        logger.info("✅ Detected language: \(detected.rawValue, privacy: .public)")
         
         // Hybrid algorithm: validate word in detected language
         let isValid = await detector.isValidWord(text, in: detected)
-        logger.info("Word '\(text, privacy: .public)' valid in \(detected.rawValue, privacy: .public): \(isValid, privacy: .public)")
+        logger.info("📖 Word '\(text, privacy: .public)' valid in \(detected.rawValue, privacy: .public): \(isValid ? "YES" : "NO")")
         
         if !isValid {
+            logger.info("🔄 Word invalid in detected language - trying conversions...")
+            
             // Word not found in detected language dictionary, try converting
             let targetLangs: [Language] = detected == .russian ? [.english] :
                                           detected == .hebrew ? [.english] :
                                           [.russian, .hebrew]
 
+            logger.info("Target languages for conversion: \(targetLangs.map { $0.rawValue }.joined(separator: ", "), privacy: .public)")
+
             for target in targetLangs {
                 if let converted = LayoutMapper.convert(text, from: detected, to: target) {
+                    logger.info("🔄 Trying conversion: \(detected.rawValue, privacy: .public) → \(target.rawValue, privacy: .public): '\(text, privacy: .public)' → '\(converted, privacy: .public)'")
+                    
                     let convertedValid = await detector.isValidWord(converted, in: target)
-                    logger.info("Converted '\(text, privacy: .public)' -> '\(converted, privacy: .public)' (\(detected.rawValue, privacy: .public)->\(target.rawValue, privacy: .public)), valid: \(convertedValid, privacy: .public)")
+                    logger.info("📖 Converted word '\(converted, privacy: .public)' valid in \(target.rawValue, privacy: .public): \(convertedValid ? "YES" : "NO")")
+                    
                     if convertedValid {
+                        logger.info("✅ VALID CONVERSION FOUND!")
                         addToHistory(original: text, corrected: converted, from: detected, to: target)
+                        
                         // If auto-switch is enabled, switch the actual input source to the target language.
                         if await settings.autoSwitchLayout {
+                            logger.info("🔄 Auto-switch enabled - switching input source to \(target.rawValue, privacy: .public)")
                             await MainActor.run {
                                 InputSourceManager.shared.switchTo(language: target)
                             }
                         }
                         return converted
                     }
+                } else {
+                    logger.debug("⚠️ Conversion failed: \(detected.rawValue, privacy: .public) → \(target.rawValue, privacy: .public)")
                 }
             }
+            
+            logger.info("❌ No valid conversions found")
         }
         
         // Fallback: if expected layout is set and doesn't match detected, correct it
         if let expected = expectedLayout, expected != detected {
+            logger.info("🎯 Expected layout (\(expected.rawValue, privacy: .public)) differs from detected (\(detected.rawValue, privacy: .public)) - forcing conversion")
+            
             let corrected = LayoutMapper.convert(text, from: detected, to: expected)
             if let result = corrected {
-                logger.info("Forced conversion to expected layout: '\(text, privacy: .public)' -> '\(result, privacy: .public)'")
+                logger.info("✅ Forced conversion: '\(text, privacy: .public)' → '\(result, privacy: .public)'")
                 addToHistory(original: text, corrected: result, from: detected, to: expected)
+            } else {
+                logger.warning("❌ Forced conversion failed")
             }
             return corrected
         }
         
-        logger.info("No correction needed for: '\(text, privacy: .public)'")
+        logger.info("ℹ️ No correction needed - word is valid in detected language")
         return nil
     }
     
@@ -93,26 +125,35 @@ actor CorrectionEngine {
     }
     
     func correctLastWord(_ text: String) async -> String? {
-        logger.info("Manual correction triggered for: '\(text, privacy: .public)'")
+        logger.info("🔥 === MANUAL CORRECTION (HOTKEY) ===")
+        logger.info("Input: '\(text, privacy: .public)'")
         
-        guard !text.isEmpty else { return nil }
-        
-        let detected = await detector.detect(text)
-        guard let from = detected else {
-            logger.warning("Cannot detect language for manual correction")
+        guard !text.isEmpty else {
+            logger.warning("❌ Empty text provided")
             return nil
         }
         
+        let detected = await detector.detect(text)
+        guard let from = detected else {
+            logger.warning("❌ Cannot detect language for manual correction")
+            return nil
+        }
+        
+        logger.info("✅ Detected language: \(from.rawValue, privacy: .public)")
+        
         // Try all possible conversions
         let targets: [Language] = Language.allCases.filter { $0 != from }
+        logger.info("🔄 Trying conversions to: \(targets.map { $0.rawValue }.joined(separator: ", "), privacy: .public)")
+        
         for target in targets {
             if let converted = LayoutMapper.convert(text, from: from, to: target) {
-                logger.info("Manual conversion: '\(text, privacy: .public)' -> '\(converted, privacy: .public)' (\(from.rawValue, privacy: .public)->\(target.rawValue, privacy: .public))")
+                logger.info("✅ Manual conversion: '\(text, privacy: .public)' → '\(converted, privacy: .public)' (\(from.rawValue, privacy: .public)→\(target.rawValue, privacy: .public))")
                 addToHistory(original: text, corrected: converted, from: from, to: target)
                 return converted
             }
         }
         
+        logger.warning("❌ No conversions possible")
         return nil
     }
     

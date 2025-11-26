@@ -33,12 +33,13 @@ actor LanguageDetector {
     func detect(_ text: String) async -> Language? {
         guard !text.isEmpty else { return nil }
         
-        logger.debug("Detecting language for: '\(text, privacy: .public)'")
+        logger.info("🔍 === LANGUAGE DETECTION ===")
+        logger.info("Input: '\(text, privacy: .public)' (len=\(text.count))")
         
         // Fast path: character set heuristics for short text
         if text.count < 3 {
             let result = detectByCharacterSet(text)
-            logger.debug("Short text detection: \(result?.rawValue ?? "nil", privacy: .public)")
+            logger.info("Short text (<3 chars) - using character set detection: \(result?.rawValue ?? "nil", privacy: .public)")
             return result
         }
         
@@ -46,30 +47,44 @@ actor LanguageDetector {
         recognizer.processString(text)
         
         if let dominant = recognizer.dominantLanguage {
-            logger.debug("NLLanguageRecognizer detected: \(dominant.rawValue, privacy: .public)")
+            logger.info("NLLanguageRecognizer result: \(dominant.rawValue, privacy: .public)")
             switch dominant {
-            case .russian: return .russian
-            case .english: return .english
-            case .hebrew: return .hebrew
-            default: break
+            case .russian:
+                logger.info("✅ Detected: Russian")
+                return .russian
+            case .english:
+                logger.info("✅ Detected: English")
+                return .english
+            case .hebrew:
+                logger.info("✅ Detected: Hebrew")
+                return .hebrew
+            default:
+                logger.debug("⚠️ NLLanguageRecognizer returned unsupported language: \(dominant.rawValue, privacy: .public)")
             }
+        } else {
+            logger.debug("⚠️ NLLanguageRecognizer returned nil")
         }
         
         // Fallback to character set
         let result = detectByCharacterSet(text)
-        logger.debug("Fallback character set detection: \(result?.rawValue ?? "nil", privacy: .public)")
+        logger.info("Fallback to character set detection: \(result?.rawValue ?? "nil", privacy: .public)")
         return result
     }
     
     func isValidWord(_ word: String, in language: Language) -> Bool {
         guard !word.isEmpty else { return false }
+        
+        logger.debug("📖 Spell checking '\(word, privacy: .public)' in \(language.rawValue, privacy: .public)")
+        
         spellChecker.setLanguage(language.rawValue)
         let range = spellChecker.checkSpelling(
             of: word,
             startingAt: 0
         )
         let isValid = range.location == NSNotFound
-        logger.debug("Spell check '\(word, privacy: .public)' in \(language.rawValue, privacy: .public): \(isValid, privacy: .public)")
+        
+        logger.info("📖 Spell check result: '\(word, privacy: .public)' in \(language.rawValue, privacy: .public) = \(isValid ? "VALID" : "INVALID", privacy: .public)")
+        
         return isValid
     }
     
@@ -87,12 +102,26 @@ actor LanguageDetector {
             }
         }
         
-        let max = Swift.max(ruCount, enCount, heCount)
-        guard max > 0 else { return nil }
+        logger.debug("Character analysis: RU=\(ruCount), EN=\(enCount), HE=\(heCount)")
         
-        if ruCount == max { return .russian }
-        if heCount == max { return .hebrew }
-        if enCount == max { return .english }
+        let max = Swift.max(ruCount, enCount, heCount)
+        guard max > 0 else {
+            logger.debug("No recognizable characters found")
+            return nil
+        }
+        
+        if ruCount == max {
+            logger.debug("Character set detection: Russian (RU=\(ruCount))")
+            return .russian
+        }
+        if heCount == max {
+            logger.debug("Character set detection: Hebrew (HE=\(heCount))")
+            return .hebrew
+        }
+        if enCount == max {
+            logger.debug("Character set detection: English (EN=\(enCount))")
+            return .english
+        }
         return nil
     }
 }

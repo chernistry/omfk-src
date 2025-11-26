@@ -13,6 +13,9 @@ let package = Package(
             name: "OMFK",
             dependencies: [],
             path: "OMFK/Sources",
+            resources: [
+                .process("Resources")
+            ],
             swiftSettings: [
                 .enableUpcomingFeature("StrictConcurrency")
             ]

@@ -10,10 +10,29 @@ actor LayoutNgramDetector {
     private let logger = Logger.detection
     
     init() {
-        // Initialize with mock data (will be replaced with trained models in ticket 11)
-        self.ruModel = NgramLanguageModel(logProbs: MockNgramData.russianTrigrams)
-        self.enModel = NgramLanguageModel(logProbs: MockNgramData.englishTrigrams)
-        self.heModel = NgramLanguageModel(logProbs: MockNgramData.hebrewTrigrams)
+        // Try to load real models from resources
+        // Fallback to mock data if resources are missing (e.g. during certain test configurations)
+        
+        if let ru = try? NgramLanguageModel.loadLanguage("ru") {
+            self.ruModel = ru
+        } else {
+            logger.warning("Failed to load Russian model, using mock data")
+            self.ruModel = NgramLanguageModel(logProbs: MockNgramData.russianTrigrams)
+        }
+        
+        if let en = try? NgramLanguageModel.loadLanguage("en") {
+            self.enModel = en
+        } else {
+            logger.warning("Failed to load English model, using mock data")
+            self.enModel = NgramLanguageModel(logProbs: MockNgramData.englishTrigrams)
+        }
+        
+        if let he = try? NgramLanguageModel.loadLanguage("he") {
+            self.heModel = he
+        } else {
+            logger.warning("Failed to load Hebrew model, using mock data")
+            self.heModel = NgramLanguageModel(logProbs: MockNgramData.hebrewTrigrams)
+        }
     }
     
     /// Score a token against all layout hypotheses

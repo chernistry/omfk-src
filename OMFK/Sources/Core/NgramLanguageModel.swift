@@ -43,6 +43,62 @@ struct NgramLanguageModel: Sendable {
         self.smoothingValue = smoothingValue
     }
     
+    /// Load model from JSON file
+    static func loadFrom(jsonURL: URL) throws -> NgramLanguageModel {
+        let data = try Data(contentsOf: jsonURL)
+        let json = try JSONDecoder().decode(ModelJSON.self, from: data)
+        
+        // Validate format
+        guard json.n == 3 else {
+            throw ModelError.invalidFormat("Expected n=3, got n=\(json.n)")
+        }
+        
+        // Convert trigram strings to hashes
+        var logProbs: [UInt32: Float] = [:]
+        for (trigram, logProb) in json.trigrams {
+            guard trigram.count == 3 else { continue }
+            
+            let chars = Array(trigram)
+            let hash = trigramHash(chars[0], chars[1], chars[2])
+            logProbs[hash] = logProb
+        }
+        
+        // Use smoothing value from JSON or fall back to default derived from min probability
+        let smoothingValue: Float
+        if logProbs.isEmpty {
+            smoothingValue = -10.0
+        } else {
+            // Use minimum observed log-probability minus 2 as smoothing value
+            let minLogProb = logProbs.values.min() ?? -7.0
+            smoothingValue = minLogProb - 2.0
+        }
+        
+        return NgramLanguageModel(logProbs: logProbs, smoothingValue: smoothingValue)
+    }
+    
+    /// Load model for a specific language from app resources
+    static func loadLanguage(_ lang: String) throws -> NgramLanguageModel {
+        #if SWIFT_PACKAGE
+        guard let url = Bundle.module.url(
+            forResource: "\(lang)_trigrams",
+            withExtension: "json",
+            subdirectory: "LanguageModels"
+        ) else {
+            throw ModelError.resourceNotFound(lang)
+        }
+        #else
+        // For Xcode build
+        guard let url = Bundle.main.url(
+            forResource: "\(lang)_trigrams",
+            withExtension: "json"
+        ) else {
+            throw ModelError.resourceNotFound(lang)
+        }
+        #endif
+        
+        return try loadFrom(jsonURL: url)
+    }
+    
     /// Compute trigram hash from 3 characters
     static func trigramHash(_ c1: Character, _ c2: Character, _ c3: Character) -> UInt32 {
         guard let s1 = c1.unicodeScalars.first,
@@ -86,3 +142,21 @@ struct NgramLanguageModel: Sendable {
         return logProbs[hash] ?? smoothingValue
     }
 }
+
+// MARK: - JSON Decoding
+
+private struct ModelJSON: Codable {
+    let lang: String
+    let n: Int
+    let version: Int
+    let smoothing_k: Double?
+    let total_count: Int?
+    let unique_trigrams: Int?
+    let trigrams: [String: Float]
+}
+
+enum ModelError: Error {
+    case resourceNotFound(String)
+    case invalidFormat(String)
+}
+

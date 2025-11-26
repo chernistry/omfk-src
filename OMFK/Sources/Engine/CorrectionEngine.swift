@@ -56,63 +56,40 @@ actor CorrectionEngine {
         
         logger.info("✅ Detected language: \(detected.rawValue, privacy: .public)")
         
-        // Hybrid algorithm: validate word in detected language
-        let isValid = await detector.isValidWord(text, in: detected)
-        logger.info("📖 Word '\(text, privacy: .public)' valid in \(detected.rawValue, privacy: .public): \(isValid ? "YES" : "NO")")
-        
-        if !isValid {
-            logger.info("🔄 Word invalid in detected language - trying conversions...")
-            
-            // Word not found in detected language dictionary, try converting
-            let targetLangs: [Language] = detected == .russian ? [.english] :
-                                          detected == .hebrew ? [.english] :
-                                          [.russian, .hebrew]
+        // Hybrid algorithm: always try conversions to find better matches
+        // (NSSpellChecker is too liberal for Cyrillic, may accept gibberish)
+        let targetLangs: [Language] = detected == .russian ? [.english] :
+                                      detected == .hebrew ? [.english] :
+                                      [.russian, .hebrew]
 
-            logger.info("Target languages for conversion: \(targetLangs.map { $0.rawValue }.joined(separator: ", "), privacy: .public)")
+        logger.info("Trying conversions to: \(targetLangs.map { $0.rawValue }.joined(separator: ", "), privacy: .public)")
 
-            for target in targetLangs {
-                if let converted = LayoutMapper.convert(text, from: detected, to: target) {
-                    logger.info("🔄 Trying conversion: \(detected.rawValue, privacy: .public) → \(target.rawValue, privacy: .public): '\(text, privacy: .public)' → '\(converted, privacy: .public)'")
+        for target in targetLangs {
+            if let converted = LayoutMapper.convert(text, from: detected, to: target) {
+                logger.info("🔄 Trying conversion: \(detected.rawValue, privacy: .public) → \(target.rawValue, privacy: .public): '\(text, privacy: .public)' → '\(converted, privacy: .public)'")
+                
+                let convertedValid = await detector.isValidWord(converted, in: target)
+                logger.info("📖 Converted word '\(converted, privacy: .public)' valid in \(target.rawValue, privacy: .public): \(convertedValid ? "YES" : "NO")")
+                
+                if convertedValid {
+                    logger.info("✅ VALID CONVERSION FOUND!")
+                    addToHistory(original: text, corrected: converted, from: detected, to: target)
                     
-                    let convertedValid = await detector.isValidWord(converted, in: target)
-                    logger.info("📖 Converted word '\(converted, privacy: .public)' valid in \(target.rawValue, privacy: .public): \(convertedValid ? "YES" : "NO")")
-                    
-                    if convertedValid {
-                        logger.info("✅ VALID CONVERSION FOUND!")
-                        addToHistory(original: text, corrected: converted, from: detected, to: target)
-                        
-                        // If auto-switch is enabled, switch the actual input source to the target language.
-                        if await settings.autoSwitchLayout {
-                            logger.info("🔄 Auto-switch enabled - switching input source to \(target.rawValue, privacy: .public)")
-                            await MainActor.run {
-                                InputSourceManager.shared.switchTo(language: target)
-                            }
+                    // If auto-switch is enabled, switch the actual input source to the target language.
+                    if await settings.autoSwitchLayout {
+                        logger.info("🔄 Auto-switch enabled - switching input source to \(target.rawValue, privacy: .public)")
+                        await MainActor.run {
+                            InputSourceManager.shared.switchTo(language: target)
                         }
-                        return converted
                     }
-                } else {
-                    logger.debug("⚠️ Conversion failed: \(detected.rawValue, privacy: .public) → \(target.rawValue, privacy: .public)")
+                    return converted
                 }
-            }
-            
-            logger.info("❌ No valid conversions found")
-        }
-        
-        // Fallback: if expected layout is set and doesn't match detected, correct it
-        if let expected = expectedLayout, expected != detected {
-            logger.info("🎯 Expected layout (\(expected.rawValue, privacy: .public)) differs from detected (\(detected.rawValue, privacy: .public)) - forcing conversion")
-            
-            let corrected = LayoutMapper.convert(text, from: detected, to: expected)
-            if let result = corrected {
-                logger.info("✅ Forced conversion: '\(text, privacy: .public)' → '\(result, privacy: .public)'")
-                addToHistory(original: text, corrected: result, from: detected, to: expected)
             } else {
-                logger.warning("❌ Forced conversion failed")
+                logger.debug("⚠️ Conversion failed: \(detected.rawValue, privacy: .public) → \(target.rawValue, privacy: .public)")
             }
-            return corrected
         }
         
-        logger.info("ℹ️ No correction needed - word is valid in detected language")
+        logger.info("ℹ️ No valid conversions found")
         return nil
     }
     

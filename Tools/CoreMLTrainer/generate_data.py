@@ -118,63 +118,37 @@ def load_layout_map(json_path):
 def convert_text(text, mapping):
     return "".join(mapping.get(c, c) for c in text)
 
-def generate_sample(class_name, maps):
+def generate_sample(class_name, maps, max_phrase_len=3):
     # Determine source language and transformation
     if class_name in ['ru', 'en', 'he']:
         src_lang = class_name
-        text = random.choice(SEEDS[src_lang])
-        return text, class_name
+        num_words = random.randint(1, max_phrase_len)
+        words = [random.choice(SEEDS[src_lang]) for _ in range(num_words)]
+        return " ".join(words), class_name
     
-    parts = class_name.split('_from_') # e.g. ['ru', 'en']
-    intended_lang = parts[0]
-    typed_layout_lang = parts[1]
-    
-    # We need a map Intended -> Typed.
-    # Logic revision from step 308:
-    # "ru_from_en" means "It LOOKS like RU, but comes from EN layout"?
-    # NO. The classes are defined in ticket 17 as:
-    # "ru_from_en": Russian text that was typed on English layout (nonsense EN chars).
-    # Wait, let's double check this definition. It's crucial.
-    # Most language detectors output the LANGUAGE.
-    # If I type "ghbdtn", the detector should say "Russian".
-    # But here we have specific classes like `ru_from_en`.
-    # Why?
-    # Because "ghbdtn" is NOT Russian text. It is English text ("g", "h", ...).
-    # So a standard detector says "English".
-    # Our `ru_from_en` class means: "This is garbage English that maps to valid Russian".
-    # So the LABEL `ru_from_en` allows the Router to say: "Ah, this is 'Russian from English layout'".
-    # So input is EN chars. Intention is RU.
-    # So we map RU seeds -> EN chars.
-    
-    # Map key: `typed_from_intended`
-    # e.g. `en_from_ru` in my maps dict logic.
-    
+    parts = class_name.split('_from_')
+    intended_lang, typed_layout_lang = parts[0], parts[1]
     map_key = f"{typed_layout_lang}_from_{intended_lang}"
     available_maps = maps.get(map_key, [])
     
     if not available_maps:
         return "x", class_name
         
-    # Randomly choose one mapping combination (e.g. ru_pc -> en_us)
-    # This ensures we train on ALL variants.
     mapping = random.choice(available_maps)
-        
-    word = random.choice(SEEDS[intended_lang])
-    
-    # Fixed length handling (1-3 words)
-    num_words = random.randint(1, 2)
-    for _ in range(num_words - 1):
-        word += " " + random.choice(SEEDS[intended_lang])
-        
-    converted = convert_text(word, mapping)
+    num_words = random.randint(1, max_phrase_len)
+    words = [random.choice(SEEDS[intended_lang]) for _ in range(num_words)]
+    text = " ".join(words)
+    converted = convert_text(text, mapping)
     return converted, class_name
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--output', default='training_data.csv')
-    parser.add_argument('--count', type=int, default=10000)
+    parser.add_argument('--count', type=int, default=1000000)
     parser.add_argument('--layouts', default='../../.sdd/layouts.json')
     parser.add_argument('--corpus_dir', default=None, help="Directory with {lang}.txt corpus files")
+    parser.add_argument('--balance', type=float, default=0.5, help="Ratio of pure language samples (vs _from_ samples)")
+    parser.add_argument('--max-phrase-len', type=int, default=3, help="Max words per sample")
     args = parser.parse_args()
     
     maps = load_layout_map(args.layouts)
@@ -185,16 +159,12 @@ def main():
         for lang in ['ru', 'en', 'he']:
             path = os.path.join(args.corpus_dir, f"{lang}.txt")
             if os.path.exists(path):
-                print(f"  Loading {lang}.txt...", end='')
+                print(f"  Loading {lang}.txt...", end='', flush=True)
                 with open(path, 'r', encoding='utf-8') as f:
-                    # Read phrases and split into words/short phrases
                     words = []
-                    for i, line in enumerate(f):
-                        # Simple tokenizer: split by space
+                    for line in f:
                         parts = line.strip().split()
-                        words.extend([p for p in parts if len(p) > 2]) # Filter very short noise
-                        # Removed limit to use full corpus
-                    
+                        words.extend([p for p in parts if 2 < len(p) < 20])
                     if words:
                         SEEDS[lang] = words
                         print(f" {len(words)} words loaded.")
@@ -203,15 +173,26 @@ def main():
             else:
                 print(f"  Warning: {path} not found. Using default seeds.")
     
+    # Balanced class selection
+    pure_classes = ['ru', 'en', 'he']
+    from_classes = [c for c in CLASSES if '_from_' in c]
+    
     with open(args.output, 'w', encoding='utf-8') as f:
         f.write("text,label\n")
-        for _ in range(args.count):
-            cls = random.choice(CLASSES)
-            text, label = generate_sample(cls, maps)
-            # Simple CSV escaping
+        for i in range(args.count):
+            # Balance: args.balance chance of pure, (1-args.balance) chance of _from_
+            if random.random() < args.balance:
+                cls = random.choice(pure_classes)
+            else:
+                cls = random.choice(from_classes)
+            
+            text, label = generate_sample(cls, maps, args.max_phrase_len)
             if ',' in text or '"' in text:
-                text = f'"{text.replace("\"", "\"\"")}"'
+                text = f'"{text.replace(chr(34), chr(34)+chr(34))}"'
             f.write(f"{text},{label}\n")
+            
+            if (i + 1) % 100000 == 0:
+                print(f"  Generated {i+1}/{args.count}...")
             
     print(f"Generated {args.count} samples to {args.output}")
 

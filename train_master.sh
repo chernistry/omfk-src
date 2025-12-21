@@ -89,9 +89,9 @@ while true; do
             pip install -q -r requirements.txt
             
             # Generate data
-            echo "Generating training data from corpus (this may take a moment)..."
+            echo "Generating training data from corpus (1M samples, balanced)..."
             # Path to corpus is ../../data/processed relative to Tools/CoreMLTrainer
-            python3 generate_data.py --count 100000 --output training_data_real.csv --corpus_dir "../../$PROCESSED_DIR"
+            python3 generate_data.py --count 1000000 --balance 0.5 --max-phrase-len 3 --output training_data_real.csv --corpus_dir "../../$PROCESSED_DIR"
             
             # Train
             echo "Training (20 epochs)..."

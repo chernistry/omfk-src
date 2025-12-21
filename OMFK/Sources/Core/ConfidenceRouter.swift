@@ -57,6 +57,7 @@ actor ConfidenceRouter {
                 let threshold = await settings.fastPathThreshold
                 if fastDecision.confidence >= threshold {
                     logger.info("🚀 Fast Path (N-gram) used: \(fastDecision.language.rawValue, privacy: .public) (conf: \(fastDecision.confidence))")
+                    DecisionLogger.shared.logDecision(token: token, path: "FAST", result: fastDecision)
                     return fastDecision
                 }
             }
@@ -70,36 +71,39 @@ actor ConfidenceRouter {
         let stdThreshold = await settings.standardPathThreshold
         if decision.confidence >= stdThreshold {
             logger.info("🛡️ Standard Path (Ensemble) used: \(decision.language.rawValue, privacy: .public) (conf: \(decision.confidence))")
+            DecisionLogger.shared.logDecision(token: token, path: "STANDARD", result: decision)
             return decision
         }
         
         // 3. DEEP PATH: CoreML
         logger.info("🧠 Deep Path (CoreML) triggered for ambiguity: \(token)")
         
-        // Lazy load classifier if needed or access shared instance
-        // For now, we instantiate or use a property.
-        // Ideally this should be injected or held as a property.
-        // Assuming we add `private let coreML = CoreMLLayoutClassifier()` to properties.
-        
         if let (deepHypothesis, deepConf) = coreML.predict(token) {
             logger.info("🧠 Deep Path result: \(deepHypothesis.rawValue, privacy: .public) (conf: \(deepConf))")
             
-            // FUSION LOGIC:
-            // If CoreML is very confident (> 0.8), we trust it over the ensemble ambiguity.
-            // Or we could return a specific LanguageDecision type indicating "LayoutClassifier".
+            // Determine threshold based on whether it's a correction or just simple classification
+            // "Corrective" hypotheses (e.g. ru_from_en) are more valuable to act on than just confirming "ru"
+            let isCorrection = deepHypothesis.rawValue.contains("_from_")
+            let threshold = isCorrection ? 0.6 : 0.8
             
-            if deepConf > 0.8 {
-                return LanguageDecision(
-                    language: deepHypothesis.targetLanguage, // Map hypothesis back to language
+            if deepConf > threshold {
+                 let deepResult = LanguageDecision(
+                    language: deepHypothesis.targetLanguage, 
                     layoutHypothesis: deepHypothesis,
                     confidence: deepConf,
-                    scores: [:] // Scores not available/comparable
+                    scores: [:] 
                 )
+                DecisionLogger.shared.logDecision(token: token, path: "DEEP", result: deepResult)
+                return deepResult
+            } else {
+                 // Log why we rejected it
+                 let rejectedMsg = "REJECTED_DEEP: \(deepHypothesis.rawValue) (\(String(format: "%.2f", deepConf))) < \(threshold)"
+                 DecisionLogger.shared.log(rejectedMsg)
             }
         }
         
-        // Fallback to the ensemble decision if deep path also uncertain
         logger.info("⚠️ Falling back to Standard Path result after Deep Path (low confidence)")
+        DecisionLogger.shared.logDecision(token: token, path: "FALLBACK", result: decision)
         return decision
     }
     

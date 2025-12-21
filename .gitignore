@@ -13,3 +13,4 @@ Tools/NgramTrainer/*
 data/raw/*
 Tools/CoreMLTrainer/venv/*
 *__pycache__*
+data/processed/*

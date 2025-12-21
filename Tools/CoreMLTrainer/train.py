@@ -71,20 +71,43 @@ class LayoutClassifier(nn.Module):
         x = self.fc(x)
         return x
 
+import os
+
 def train(args):
-    dataset = LayoutDataset(args.data)
-    dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
+    # Detect device (MPS for Mac, CUDA for NVIDIA, CPU fallback)
+    device = torch.device("mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
     
-    model = LayoutClassifier()
+    # Optimize DataLoader
+    # num_workers: use CPU cores for parallel data loading
+    # pin_memory: speed up host-to-device transfer
+    num_workers = os.cpu_count() or 4
+    
+    dataset = LayoutDataset(args.data)
+    dataloader = DataLoader(
+        dataset, 
+        batch_size=args.batch_size, 
+        shuffle=True,
+        num_workers=num_workers,
+        pin_memory=True,
+        persistent_workers=True
+    )
+    
+    model = LayoutClassifier().to(device)
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=0.001)
     
-    print("Starting training...")
+    print(f"Starting training on {len(dataset)} samples with batch size {args.batch_size}...")
+    
     for epoch in range(args.epochs):
+        model.train()
         total_loss = 0
         correct = 0
         total = 0
+        
         for inputs, labels in dataloader:
+            inputs, labels = inputs.to(device), labels.to(device)
+            
             optimizer.zero_grad()
             outputs = model(inputs)
             loss = criterion(outputs, labels)
@@ -96,8 +119,10 @@ def train(args):
             total += labels.size(0)
             correct += (predicted == labels).sum().item()
             
-        print(f"Epoch {epoch+1}, Loss: {total_loss/len(dataloader):.4f}, Acc: {100 * correct / total:.2f}%")
+        print(f"Epoch {epoch+1}/{args.epochs}, Loss: {total_loss/len(dataloader):.4f}, Acc: {100 * correct / total:.2f}%")
         
+    # Move back to CPU for saving state dict (safer for cross-compatibility)
+    model.to("cpu")
     torch.save(model.state_dict(), args.model_out)
     print(f"Model saved to {args.model_out}")
 
@@ -105,6 +130,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--data', default='training_data.csv')
     parser.add_argument('--epochs', type=int, default=5)
+    parser.add_argument('--batch_size', type=int, default=256, help="Batch size (default: 256 for better GPU utilization)")
     parser.add_argument('--model_out', default='model.pth')
     args = parser.parse_args()
     train(args)

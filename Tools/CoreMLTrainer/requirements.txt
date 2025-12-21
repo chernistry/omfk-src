@@ -1,0 +1,9 @@
+datasets
+apache_beam
+mwparserfromhell
+torch
+coremltools
+ollama
+scikit-learn
+pandas
+hf_transfer

@@ -50,6 +50,10 @@
     - RU↔EN, HE↔EN direct character mapping tables
     - RU↔HE conversions via composition (RU→EN→HE and HE→EN→RU) that preserves reversibility
     - All layout hypotheses: `.ru`, `.en`, `.he`, `.ruFromEnLayout`, `.heFromEnLayout`, `.enFromRuLayout`, `.enFromHeLayout`, `.heFromRuLayout`, `.ruFromHeLayout`
+  - **Multiple layout variants** per language (see `.sdd/layouts.json`, `.sdd/layouts.md`):
+    - Russian: PC (ЙЦУКЕН), Phonetic (ЯШЕРТЫ)
+    - Hebrew: Standard (SI-1452), PC, QWERTY (phonetic)
+    - User-configurable via Settings
   - Async language detection (non-blocking)
   - Text replacement via CGEvent posting
 4. **Menu bar app with settings/history** (DoD: "Menu bar app launches and displays status icon", "Settings UI", "History view displays last 20+ corrections")
@@ -272,16 +276,18 @@ struct Correction: Codable, Identifiable {
    let language: String  // "ru", "en", "he"
 }
 ```
-**Layout Mapping Tables (Hardcoded)**
+**Layout Mapping Tables (JSON-driven)**
 ```swift
+// Layout data loaded from .sdd/layouts.json at runtime
+// See .sdd/layouts.md for documentation and CSV reference
 struct LayoutMapper {
-   private let ruToEn: [Character: Character] = [
-       "й": "q", "ц": "w", "у": "e", "к": "r", "е": "t",
-       "н": "y", "г": "u", "ш": "i", "щ": "o", "з": "p",
-   ]
-   private let heToEn: [Character: Character] = [
-       "ש": "a", "ד": "s", "ג": "d", "כ": "f", "ע": "g",
-   ]
+   private var layoutData: LayoutData  // Loaded from JSON
+   private var activeLayouts: [String: String]  // User-configured variants
+   
+   // Supports multiple variants per language:
+   // - Russian: ru_pc (ЙЦУКЕН), ru_phonetic_yasherty (ЯШЕРТЫ)
+   // - Hebrew: he_standard (SI-1452), he_pc, he_qwerty (phonetic)
+   // - English: en_us (QWERTY)
 }
 ```
 ### External Integrations
@@ -341,12 +347,25 @@ OMFK/
 - **OMFKApp.swift**: Entry point; creates AppCoordinator and MenuBarExtra
 - **EventMonitor.swift**: CGEventTap setup; integrates with LanguageDetector, LayoutMapper, CorrectionEngine
 - **LanguageDetector.swift**: NLLanguageRecognizer wrapper; character-set fallback
-- **LayoutMapper.swift**: Hardcoded character mapping tables
-- **SettingsStore.swift**: UserDefaults persistence; observed by SwiftUI views
+- **LayoutMapper.swift**: JSON-driven character mapping (loads from `.sdd/layouts.json`)
+- **LayoutData.swift**: Swift model for layout JSON schema
+- **SettingsStore.swift**: UserDefaults persistence; observed by SwiftUI views; includes `activeLayouts` config
 ### Extension Points (Minimal Change Surface)
-- **Adding new language**: Update LayoutMapper with new character map; add to languageHints
+- **Adding new layout variant**: Add to `.sdd/layouts.json`; no code changes needed
+- **Adding new language**: Add layout to JSON; update LanguageEnsemble hypotheses; add to languageHints
 - **Custom heuristics**: Extend LanguageDetector.detectWithFallback()
 - **Per-app rules**: Extend SettingsStore with app-specific thresholds
+
+### Layout Data Reference
+- **Full mapping data**: `.sdd/layouts.json` — JSON with all layouts, modifiers, and key mappings
+- **Documentation**: `.sdd/layouts.md` — CSV table, sources, edge cases, programmatic extraction guide
+- **Supported layouts**:
+  - `en_us` — English US QWERTY
+  - `ru_pc` — Russian PC (ЙЦУКЕН)
+  - `ru_phonetic_yasherty` — Russian Phonetic (ЯШЕРТЫ)
+  - `he_standard` — Hebrew Standard (SI-1452)
+  - `he_pc` — Hebrew PC
+  - `he_qwerty` — Hebrew QWERTY (phonetic)
 ---
 ## MCDM for Major Choices
 ### Criteria Weights (SMART Method)
@@ -431,18 +450,30 @@ OMFK/
 - Better future compatibility
 **Status**: Accepted
 ---
-### [ADR-005] Hardcoded Layout Mapping Tables
-**Context**: Need RU↔EN, HE↔EN character conversion for layout correction.
-**Decision**: Hardcode character mapping tables as `[Character: Character]` dictionaries in LayoutMapper struct.
+### [ADR-005] JSON-Driven Layout Mapping Tables
+**Context**: Need RU↔EN, HE↔EN character conversion for layout correction. Users may use different layout variants (e.g., Hebrew QWERTY vs Standard, Russian Phonetic vs PC).
+
+**Decision**: Load character mapping tables from JSON file (`.sdd/layouts.json`) at runtime. Support multiple layout variants per language with user configuration.
+
 **Alternatives**:
-- Load from external file: Adds complexity, no benefit for fixed mappings
-- Generate dynamically: Unnecessary overhead
-**Rationale**: Layout mappings are static and well-defined. Hardcoding provides O(1) lookup, no external dependencies, and compile-time validation.
+- Hardcode all variants: Explosion of code, hard to maintain
+- Generate dynamically via TIS API: Complex, platform-specific, overkill for known layouts
+- Single hardcoded layout per language: Doesn't support users with non-standard layouts
+
+**Rationale**: 
+- JSON provides single source of truth for all layout data
+- Easy to add new layouts without code changes
+- User can select their actual layout variant in Settings
+- Maintains O(1) lookup after initial load
+- See `.sdd/layouts.md` for full documentation
+
 **Consequences**:
-- Adding new language requires code change (acceptable for MVP)
-- Fast lookup (<1ms)
-- No runtime errors from missing files
-**Status**: Accepted
+- Must handle JSON load failure (fallback to embedded minimal tables)
+- Slightly higher startup time (JSON parsing)
+- More flexible for future layout additions
+- Requires Settings UI for layout selection (Ticket 17)
+
+**Status**: Accepted (supersedes original hardcoded approach)
 ---
 ### [ADR-006] Character-Set Fallback for Short Text
 **Context**: NLLanguageRecognizer unreliable for <3 word inputs.

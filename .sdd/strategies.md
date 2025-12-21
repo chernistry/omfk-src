@@ -1,6 +1,6 @@
 # Language Detection Strategies for OMFK
 
-## 📊 Implementation Status (as of 2025-11-26)
+## 📊 Implementation Status (as of 2025-12-21)
 
 ### ✅ Strategy 1: N-gram detector - **IMPLEMENTED**
 - ✅ Trigram models for RU/EN/HE (~39KB total, JSON format)
@@ -29,11 +29,47 @@
 - ✅ JSON persistence to Application Support, LRU eviction (1000 contexts)
 - 🎯 **Impact**: Reduces false positives by learning user preferences
 
-### ❌ Strategy 3: CoreML classifier - **NOT IMPLEMENTED**
-- ❌ No `.mlmodel` file
-- ❌ No training pipeline
-- ❌ No synthetic data generation
+### 🔄 Strategy 3: CoreML classifier - **PLANNED (Ticket 17)**
+- ❌ No `.mlmodel` file yet
+- ❌ No training pipeline yet
 - 📋 **See detailed implementation guide below**
+- 🎯 **Goal**: 98-99% accuracy, especially on short tokens and "dirty" input
+
+---
+
+## 🚀 Confidence Router Architecture (Ticket 14)
+
+The **Confidence Router** orchestrates all detection strategies, routing requests based on confidence levels:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    ConfidenceRouter                         │
+│  Routes detection based on confidence thresholds            │
+└─────────────────────────────────────────────────────────────┘
+                              │
+         ┌────────────────────┼────────────────────┐
+         │                    │                    │
+         ▼                    ▼                    ▼
+┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐
+│  Fast Path      │  │  Standard Path  │  │  Deep Path      │
+│  (N-gram only)  │  │  (Ensemble)     │  │  (CoreML)       │
+│  conf > 0.95    │  │  conf > 0.7     │  │  ambiguous      │
+│  latency: <1ms  │  │  latency: 2-5ms │  │  latency: 5-10ms│
+│  ~70% of cases  │  │  ~25% of cases  │  │  ~5% of cases   │
+└─────────────────┘  └─────────────────┘  └─────────────────┘
+```
+
+### Routing Logic
+
+1. **Fast Path** (N-gram only): High-confidence cases (>0.95) with 4+ characters
+2. **Standard Path** (Ensemble): Medium confidence (>0.7) or shorter tokens
+3. **Deep Path** (CoreML): Ambiguous cases where N-gram and Ensemble disagree
+
+### Benefits
+
+- **Performance**: Most requests (~70%) use fast N-gram path
+- **Accuracy**: Ambiguous cases get full ML treatment
+- **Graceful degradation**: Works without CoreML, just uses Ensemble for ambiguous cases
 
 ---
 

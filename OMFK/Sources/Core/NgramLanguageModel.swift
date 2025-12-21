@@ -1,16 +1,17 @@
 import Foundation
 
 /// Hypothesis about the language and layout configuration
+/// rawValue must match Python CLASSES in train.py exactly!
 public enum LanguageHypothesis: String, CaseIterable, Sendable {
-    case ru               // Russian as-is
-    case en               // English as-is
-    case he               // Hebrew as-is
-    case enFromRuLayout   // English typed on Russian layout
-    case enFromHeLayout   // English typed on Hebrew layout
-    case ruFromEnLayout   // Russian typed on English layout
-    case heFromEnLayout   // Hebrew typed on English layout
-    case heFromRuLayout   // Hebrew typed on Russian layout (via RU→EN→HE)
-    case ruFromHeLayout   // Russian typed on Hebrew layout (via HE→EN→RU)
+    case ru = "ru"                         // Russian as-is
+    case en = "en"                         // English as-is
+    case he = "he"                         // Hebrew as-is
+    case enFromRuLayout = "en_from_ru"     // English typed on Russian layout
+    case enFromHeLayout = "en_from_he"     // English typed on Hebrew layout
+    case ruFromEnLayout = "ru_from_en"     // Russian typed on English layout
+    case heFromEnLayout = "he_from_en"     // Hebrew typed on English layout
+    case heFromRuLayout = "he_from_ru"     // Hebrew typed on Russian layout
+    case ruFromHeLayout = "ru_from_he"     // Russian typed on Hebrew layout
     
     public var targetLanguage: Language {
         switch self {

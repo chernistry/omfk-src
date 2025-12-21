@@ -34,6 +34,7 @@ while true; do
     echo "  2) 📊 Train N-gram Models (requires extracted data)"
     echo "  3) 🧠 Train CoreML Model (requires extracted data for best results)"
     echo "  4) ✅ Run Tests"
+    echo "  5) 💬 Import Telegram Chat Exports (append to corpus)"
     echo "  q) Quit"
     echo ""
     read -p "Option: " choice
@@ -110,6 +111,31 @@ while true; do
         4)
             echo -e "${BLUE}--- Running Verification Tests ---${NC}"
             swift test
+            ;;
+            
+        5)
+            echo -e "${BLUE}--- Importing Telegram Chat Exports ---${NC}"
+            # Hardcoded paths from user request. Add more as needed.
+            TELEGRAM_FILES=(
+                "/Users/sasha/IdeaProjects/allthedocs/media/telegram_exports/telegramexport/result.json"
+                "/Users/sasha/IdeaProjects/allthedocs/media/telegram_exports/Чат с Сашей/ChatExport_2024-08-31/result.json"
+                "/Users/sasha/Desktop/m/result.json"
+            )
+            EXISTING_FILES=()
+            for f in "${TELEGRAM_FILES[@]}"; do
+                if [ -f "$f" ]; then
+                    EXISTING_FILES+=("$f")
+                else
+                    echo -e "${YELLOW}Skipping (not found): $f${NC}"
+                fi
+            done
+            if [ ${#EXISTING_FILES[@]} -gt 0 ]; then
+                echo "Found ${#EXISTING_FILES[@]} Telegram export file(s). Extracting..."
+                python3 Tools/Shared/extract_telegram.py "${EXISTING_FILES[@]}" --output-dir "$PROCESSED_DIR"
+                echo -e "${GREEN}Telegram data imported to $PROCESSED_DIR!${NC}"
+            else
+                echo -e "${RED}No Telegram export files found.${NC}"
+            fi
             ;;
             
         q)

@@ -42,6 +42,11 @@ actor ConfidenceRouter {
     }
     
     /// Main entry point for detection
+    /// 
+    /// NEW LOGIC (v2):
+    /// - N-gram/Ensemble detect the SCRIPT of the text (Cyrillic -> "Russian").
+    /// - CoreML detects LAYOUT MISMATCH ("this Cyrillic is gibberish Russian, but valid Hebrew from RU layout").
+    /// - We ALWAYS invoke CoreML to check for `_from_` hypotheses, even if Fast/Standard is confident.
     func route(token: String, context: DetectorContext) async -> LanguageDecision {
         let startTime = CFAbsoluteTimeGetCurrent()
         defer {
@@ -51,60 +56,122 @@ actor ConfidenceRouter {
              }
         }
         
-        // 1. FAST PATH: N-gram Only
+        // -- STEP 1: Get a baseline decision via Fast or Standard path --
+        var baselineDecision: LanguageDecision?
+        var baselinePath = "STANDARD"
+        
+        // 1a. FAST PATH: N-gram Only
         if token.count >= 4 {
             if let fastDecision = checkFastPath(token) {
                 let threshold = await settings.fastPathThreshold
                 if fastDecision.confidence >= threshold {
-                    logger.info("🚀 Fast Path (N-gram) used: \(fastDecision.language.rawValue, privacy: .public) (conf: \(fastDecision.confidence))")
-                    DecisionLogger.shared.logDecision(token: token, path: "FAST", result: fastDecision)
-                    return fastDecision
+                    logger.info("🚀 Fast Path (N-gram) candidate: \(fastDecision.language.rawValue, privacy: .public) (conf: \(fastDecision.confidence))")
+                    baselineDecision = fastDecision
+                    baselinePath = "FAST"
                 }
             }
         }
         
-        // 2. STANDARD PATH: Ensemble
-        // Context mapping: DetectorContext is conceptually similar to EnsembleContext
-        let ensembleContext = EnsembleContext(lastLanguage: context.lastLanguage)
-        let decision = await ensemble.classify(token, context: ensembleContext)
-        
-        let stdThreshold = await settings.standardPathThreshold
-        if decision.confidence >= stdThreshold {
-            logger.info("🛡️ Standard Path (Ensemble) used: \(decision.language.rawValue, privacy: .public) (conf: \(decision.confidence))")
-            DecisionLogger.shared.logDecision(token: token, path: "STANDARD", result: decision)
-            return decision
+        // 1b. STANDARD PATH: Ensemble (if Fast Path didn't produce high-confidence result)
+        if baselineDecision == nil {
+            let ensembleContext = EnsembleContext(lastLanguage: context.lastLanguage)
+            let decision = await ensemble.classify(token, context: ensembleContext)
+            let stdThreshold = await settings.standardPathThreshold
+            if decision.confidence >= stdThreshold {
+                logger.info("🛡️ Standard Path (Ensemble) candidate: \(decision.language.rawValue, privacy: .public) (conf: \(decision.confidence))")
+                baselineDecision = decision
+                baselinePath = "STANDARD"
+            } else {
+                // Even low confidence is better than nothing for fallback
+                baselineDecision = decision
+                baselinePath = "FALLBACK"
+            }
         }
         
-        // 3. DEEP PATH: CoreML
-        logger.info("🧠 Deep Path (CoreML) triggered for ambiguity: \(token)")
+        guard let baseline = baselineDecision else {
+            // Shouldn't happen, but be safe
+            let fallback = LanguageDecision(language: .english, layoutHypothesis: .en, confidence: 0.5, scores: [:])
+            DecisionLogger.shared.logDecision(token: token, path: "ERROR", result: fallback)
+            return fallback
+        }
+        
+        // -- STEP 2: ALWAYS invoke CoreML to check for layout mismatch --
+        // CoreML can detect "_from_" hypotheses that contradict the baseline.
+        logger.info("🧠 Deep Path (CoreML) checking for layout mismatch: \(token)")
         
         if let (deepHypothesis, deepConf) = coreML.predict(token) {
             logger.info("🧠 Deep Path result: \(deepHypothesis.rawValue, privacy: .public) (conf: \(deepConf))")
             
-            // Determine threshold based on whether it's a correction or just simple classification
-            // "Corrective" hypotheses (e.g. ru_from_en) are more valuable to act on than just confirming "ru"
             let isCorrection = deepHypothesis.rawValue.contains("_from_")
-            let threshold = isCorrection ? 0.6 : 0.8
             
-            if deepConf > threshold {
-                 let deepResult = LanguageDecision(
-                    language: deepHypothesis.targetLanguage, 
-                    layoutHypothesis: deepHypothesis,
-                    confidence: deepConf,
-                    scores: [:] 
-                )
-                DecisionLogger.shared.logDecision(token: token, path: "DEEP", result: deepResult)
-                return deepResult
+            if isCorrection {
+                // CoreML thinks this is a layout mismatch (e.g. "en_from_ru").
+                // VALIDATION: Before accepting, convert the text and verify the result
+                // is actually valid in the target language using N-gram scoring.
+                let correctionThreshold = 0.70 // Raised threshold
+                
+                if deepConf > correctionThreshold {
+                    // Determine source and target layouts
+                    let sourceLayout: Language
+                    let targetLanguage = deepHypothesis.targetLanguage
+                    
+                    switch deepHypothesis {
+                    case .ruFromEnLayout, .heFromEnLayout: sourceLayout = .english
+                    case .enFromRuLayout, .heFromRuLayout: sourceLayout = .russian
+                    case .enFromHeLayout, .ruFromHeLayout: sourceLayout = .hebrew
+                    default: sourceLayout = .english
+                    }
+                    
+                    // Try to convert and validate
+                    if let converted = LayoutMapper.shared.convert(token, from: sourceLayout, to: targetLanguage) {
+                        // Score the converted text using N-gram
+                        let targetScore = scoreWithNgram(converted, language: targetLanguage)
+                        let sourceScore = scoreWithNgram(token, language: baseline.language)
+                        
+                        logger.info("🔍 Validation: '\(token)' → '\(converted)' | source_score=\(String(format: "%.2f", sourceScore)) target_score=\(String(format: "%.2f", targetScore))")
+                        
+                        // Only accept correction if:
+                        // 1. Target score is good (converted text is valid)
+                        // 2. Target score is significantly better than source score (original was gibberish)
+                        let isValidConversion = targetScore > -6.0 && (targetScore - sourceScore) > 1.0
+                        
+                        if isValidConversion {
+                            let deepResult = LanguageDecision(
+                                language: targetLanguage, 
+                                layoutHypothesis: deepHypothesis,
+                                confidence: deepConf,
+                                scores: [:] 
+                            )
+                            DecisionLogger.shared.logDecision(token: token, path: "DEEP_CORRECTION", result: deepResult)
+                            return deepResult
+                        } else {
+                            let rejectedMsg = "REJECTED_VALIDATION: \(deepHypothesis.rawValue) | converted='\(converted)' srcScore=\(String(format: "%.2f", sourceScore)) tgtScore=\(String(format: "%.2f", targetScore))"
+                            DecisionLogger.shared.log(rejectedMsg)
+                        }
+                    }
+                } else {
+                    let rejectedMsg = "REJECTED_DEEP_CORRECTION: \(deepHypothesis.rawValue) (\(String(format: "%.2f", deepConf))) < \(correctionThreshold)"
+                    DecisionLogger.shared.log(rejectedMsg)
+                }
             } else {
-                 // Log why we rejected it
-                 let rejectedMsg = "REJECTED_DEEP: \(deepHypothesis.rawValue) (\(String(format: "%.2f", deepConf))) < \(threshold)"
-                 DecisionLogger.shared.log(rejectedMsg)
+                // CoreML just confirms the script (e.g. "ru" for Cyrillic).
+                // Only prefer CoreML if it's more confident than baseline.
+                if deepConf > baseline.confidence && deepConf > 0.7 {
+                    let deepResult = LanguageDecision(
+                        language: deepHypothesis.targetLanguage, 
+                        layoutHypothesis: deepHypothesis,
+                        confidence: deepConf,
+                        scores: [:] 
+                    )
+                    DecisionLogger.shared.logDecision(token: token, path: "DEEP", result: deepResult)
+                    return deepResult
+                }
             }
         }
         
-        logger.info("⚠️ Falling back to Standard Path result after Deep Path (low confidence)")
-        DecisionLogger.shared.logDecision(token: token, path: "FALLBACK", result: decision)
-        return decision
+        // -- STEP 3: Fall back to baseline --
+        DecisionLogger.shared.logDecision(token: token, path: baselinePath, result: baseline)
+        return baseline
     }
     
     private func checkFastPath(_ text: String) -> LanguageDecision? {
@@ -145,6 +212,17 @@ actor ConfidenceRouter {
                 .he: Double(sHe)
             ]
         )
+    }
+    
+    /// Score text against a specific language's N-gram model
+    private func scoreWithNgram(_ text: String, language: Language) -> Double {
+        let model: NgramLanguageModel?
+        switch language {
+        case .russian: model = ruModel
+        case .english: model = enModel
+        case .hebrew: model = heModel
+        }
+        return Double(model?.score(text) ?? -100.0)
     }
 }
 

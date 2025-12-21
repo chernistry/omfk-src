@@ -78,7 +78,10 @@ public final class CoreMLLayoutClassifier {
     /// Predicts the layout/language for the given text.
     /// - Returns: Tuple of (Hypothesis, Confidence) or nil if prediction fails.
     public func predict(_ text: String) -> (LanguageHypothesis, Double)? {
-        guard let model = self.model else { return nil }
+        guard let model = self.model else { 
+            print("CoreMLLayoutClassifier: Model not loaded!")
+            return nil 
+        }
         
         // Tokenize
         let inputIds = tokenize(text)
@@ -104,6 +107,7 @@ public final class CoreMLLayoutClassifier {
             // But our export.py defined "classLogits".
             
             guard let logits = output.featureValue(for: "classLogits")?.multiArrayValue else {
+                print("CoreMLLayoutClassifier: No classLogits in output!")
                 return nil
             }
             
@@ -112,6 +116,10 @@ public final class CoreMLLayoutClassifier {
             
             // Argmax
             let (maxIndex, maxScore) = argmax(scores)
+            
+            // DEBUG: Log raw prediction
+            let predictedLabel = maxIndex < CoreMLLayoutClassifier.classLabels.count ? CoreMLLayoutClassifier.classLabels[maxIndex] : "unknown"
+            DecisionLogger.shared.log("COREML_RAW: '\(text)' -> \(predictedLabel) (idx:\(maxIndex), conf:\(String(format: "%.2f", maxScore)))")
             
             if maxIndex < CoreMLLayoutClassifier.classLabels.count {
                 let label = CoreMLLayoutClassifier.classLabels[maxIndex]

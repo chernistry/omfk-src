@@ -33,10 +33,11 @@ def load_layout_map(json_path):
     # Map key: (source_layout, target_layout) -> {source_char: target_char}
     
     # Primary layouts to use
+    # Primary layouts to use (Lists to support multiple variants)
     layouts = {
-        'en': 'en_us',
-        'ru': 'ru_pc',
-        'he': 'he_qwerty' # Switched to he_qwerty based on user feedback/logs (phonetic mapping)
+        'en': ['en_us'],
+        'ru': ['ru_pc', 'ru_phonetic_yasherty'],
+        'he': ['he_standard', 'he_qwerty', 'he_pc'] # Support ALL common Hebrew layouts
     }
     
     maps = {}
@@ -50,25 +51,67 @@ def load_layout_map(json_path):
         return None
 
     # Build maps between all pairs
-    for src_lang, src_layout in layouts.items():
-        for tgt_lang, tgt_layout in layouts.items():
+    # Since we have lists of layouts, we generate a map for each specific layout pair
+    # and store them in a list under the language pair key.
+    
+    for src_lang, src_layout_list in layouts.items():
+        for tgt_lang, tgt_layout_list in layouts.items():
             if src_lang == tgt_lang: continue
             
-            mapping = {}
-            for key_code in key_map:
-                # Normal
-                s_char = get_char(key_code, src_layout, 'n')
-                t_char = get_char(key_code, tgt_layout, 'n')
-                if s_char and t_char:
-                    mapping[s_char] = t_char
-                
-                # Shift
-                s_char_s = get_char(key_code, src_layout, 's')
-                t_char_s = get_char(key_code, tgt_layout, 's')
-                if s_char_s and t_char_s:
-                    mapping[s_char_s] = t_char_s
+            # We want to support: User intends src_lang, but is typing on tgt_layout.
+            # Wait, the class naming is "tgt_from_src" (e.g., "ru_from_en").
+            # This means: "Detected as RU, but coming from EN layout input".
+            # My logic in generate_sample:
+            # intended_lang = ru
+            # typed_layout_lang = en
+            # We need map: RU -> EN.
+            # i.e., what keys does user press to type RU word?
+            # And what characters do those keys produce on EN layout?
             
-            maps[f"{tgt_lang}_from_{src_lang}"] = mapping # e.g. ru_from_en maps en chars to ru
+            # The user presses a physical key.
+            # If user intends RU (e.g. "привет"), they press keys G, H, ...
+            # Wait. "привет" is typed on `ru_pc`.
+            # Keys: G (п), H (р), B (и), ...
+            # Make sure we use the CORRECT RU layout they utilize.
+            # If they use `ru_pc`, they press `KeyG`.
+            # If they are on `en_us` layout, `KeyG` produces `g`.
+            
+            # So, for each possible intended layout (e.g. `ru_pc`):
+            # And each possible actual layout (e.g. `en_us`):
+            # We create a map.
+            
+            pair_key = f"{tgt_lang}_from_{src_lang}" # e.g. en_from_ru (EN chars from RU intention)
+            
+            if pair_key not in maps:
+                maps[pair_key] = []
+            
+            for s_layout in src_layout_list:
+                for t_layout in tgt_layout_list:
+                    
+                    mapping = {}
+                    for key_code in key_map:
+                        # Character produced by key in INTENDED layout (s_layout)
+                        # This works backwards:
+                        # We have intended char (e.g. 'п').
+                        # We find key code that produces it in s_layout (KeyG).
+                        # We find char produced by that key code in t_layout ('g').
+                        
+                        # Optimization: Layouts.json map is Key -> Layout -> Char.
+                        # So for each KEY, we map s_char -> t_char
+                        
+                        # Normal
+                        s_char = get_char(key_code, s_layout, 'n')
+                        t_char = get_char(key_code, t_layout, 'n')
+                        if s_char and t_char:
+                            mapping[s_char] = t_char
+                        
+                        # Shift
+                        s_char_s = get_char(key_code, s_layout, 's')
+                        t_char_s = get_char(key_code, t_layout, 's')
+                        if s_char_s and t_char_s:
+                            mapping[s_char_s] = t_char_s
+                    
+                    maps[pair_key].append(mapping)
             
     return maps
 
@@ -82,56 +125,43 @@ def generate_sample(class_name, maps):
         text = random.choice(SEEDS[src_lang])
         return text, class_name
     
-    # Negative classes: key is like "ru_from_en" (Russian typed on EN layout)
-    # This means the USER MEANT Russian, but WAS ON English layout.
-    # So the input characters are English, but the latent meaning is Russian.
-    # Wait, let's verify definition.
-    # architect.md: "ruFromEnLayout" -> Input is EN chars, intended is RU.
-    # ticket 17: 'ru_from_en' # Russian typed on EN layout (ghbdtn -> привет)
-    # The INPUT to the classifier will be "ghbdtn".
-    # So we take a RU word, and reverse-map it to EN keys?
-    # Or do we take a RU word (intended) and map it to EN (typed)?
-    
-    # "Russian typed on EN layout" implies:
-    # Intention: Russian word "привет"
-    # Physical keys pressed: G, H, B, D, T, N (on QWERTY)
-    # Screen shows: "ghbdtn"
-    # So we need to map RU -> EN.
-    
-    # Logic:
-    # Target Class: ru_from_en
-    # Source Word (Intended): from SEEDS['ru']
-    # Output Text (Screen): Map RU chars to EN chars.
-    
     parts = class_name.split('_from_') # e.g. ['ru', 'en']
     intended_lang = parts[0]
     typed_layout_lang = parts[1]
     
     # We need a map Intended -> Typed.
-    # The maps dict keys are named "tgt_from_src". This naming is tricky.
-    # My load_layout_map logic: `maps[f"{tgt_lang}_from_{src_lang}"] = mapping`
-    # maps en chars to ru.
-    # So `maps['ru_from_en']` converts 'ghbdtn' -> 'привет'.
-    # We want the REVERSE generation here.
-    # We start with 'привет' (RU id) and want to generate 'ghbdtn' (EN id).
-    # So we need `maps['en_from_ru']`.
+    # Logic revision from step 308:
+    # "ru_from_en" means "It LOOKS like RU, but comes from EN layout"?
+    # NO. The classes are defined in ticket 17 as:
+    # "ru_from_en": Russian text that was typed on English layout (nonsense EN chars).
+    # Wait, let's double check this definition. It's crucial.
+    # Most language detectors output the LANGUAGE.
+    # If I type "ghbdtn", the detector should say "Russian".
+    # But here we have specific classes like `ru_from_en`.
+    # Why?
+    # Because "ghbdtn" is NOT Russian text. It is English text ("g", "h", ...).
+    # So a standard detector says "English".
+    # Our `ru_from_en` class means: "This is garbage English that maps to valid Russian".
+    # So the LABEL `ru_from_en` allows the Router to say: "Ah, this is 'Russian from English layout'".
+    # So input is EN chars. Intention is RU.
+    # So we map RU seeds -> EN chars.
     
-    # Example: "ru_from_en" (Class)
-    # Intention: RU. Typed: EN.
-    # Sample generator: Pick RU word. Convert using RU->EN map.
-    # RU->EN map name in my dict: "en_from_ru"
+    # Map key: `typed_from_intended`
+    # e.g. `en_from_ru` in my maps dict logic.
     
     map_key = f"{typed_layout_lang}_from_{intended_lang}"
-    mapping = maps.get(map_key)
+    available_maps = maps.get(map_key, [])
     
-    if not mapping:
-        # Fallback if map missing (shouldn't happen with full layouts)
+    if not available_maps:
         return "x", class_name
         
+    # Randomly choose one mapping combination (e.g. ru_pc -> en_us)
+    # This ensures we train on ALL variants.
+    mapping = random.choice(available_maps)
+        
     word = random.choice(SEEDS[intended_lang])
-    # Optional: combine words to make phrases?
-    # The classifier input is fixed length (12 chars). 
-    # Let's make 1-3 word phrases.
+    
+    # Fixed length handling (1-3 words)
     num_words = random.randint(1, 2)
     for _ in range(num_words - 1):
         word += " " + random.choice(SEEDS[intended_lang])
@@ -163,7 +193,7 @@ def main():
                         # Simple tokenizer: split by space
                         parts = line.strip().split()
                         words.extend([p for p in parts if len(p) > 2]) # Filter very short noise
-                        if i > 50000: break # Limit memory usage for now
+                        # Removed limit to use full corpus
                     
                     if words:
                         SEEDS[lang] = words

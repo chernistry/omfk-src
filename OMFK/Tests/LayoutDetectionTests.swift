@@ -67,29 +67,32 @@ final class LayoutDetectionTests: XCTestCase {
         TestCase(input: "ыные|у|ь", expectedClass: .enFromRuLayout, intendedText: "system"),
     ]
     
-    // Hebrew intended, English layout active
-    // Note: Hebrew layout detection is challenging - these are known difficult cases
-    // The model may not reliably detect he_from_en due to training data imbalance
+    // Hebrew intended, English layout active -> produces Latin chars
     static let heFromEnCases: [TestCase] = [
-        // Skipping he_from_en tests as this scenario needs more training data (per ticket root cause #3)
+        TestCase(input: "NJAC", expectedClass: .heFromEnLayout, intendedText: "מחשב"),
+        TestCase(input: "MWTNH", expectedClass: .heFromEnLayout, intendedText: "משתנה"),
+        TestCase(input: "MERKT", expectedClass: .heFromEnLayout, intendedText: "מערכת"),
+        TestCase(input: "WLVם", expectedClass: .heFromEnLayout, intendedText: "שלום"),
     ]
     
-    // English intended, Hebrew layout active
+    // English intended, Hebrew layout active -> produces Hebrew chars
     static let enFromHeCases: [TestCase] = [
         TestCase(input: "יקךךם", expectedClass: .enFromHeLayout, intendedText: "hello"),
         TestCase(input: "ןםרךג", expectedClass: .enFromHeLayout, intendedText: "world"),
     ]
     
-    // Hebrew intended, Russian layout active
+    // Hebrew intended, Russian layout active -> produces Cyrillic chars
     static let heFromRuCases: [TestCase] = [
-        // These require RU->EN->HE conversion chain
-        TestCase(input: "ЛМПКРД", expectedClass: .heFromRuLayout, intendedText: "שלום"),
+        TestCase(input: "ЬУКЛЕ", expectedClass: .heFromRuLayout, intendedText: "מערכת"),
+        TestCase(input: "ТОФС", expectedClass: .heFromRuLayout, intendedText: "מחשב"),
+        TestCase(input: "ИВШЙР", expectedClass: .heFromRuLayout, intendedText: "בדיקה"),
+        TestCase(input: "ЦДМם", expectedClass: .heFromRuLayout, intendedText: "שלום"),
     ]
     
-    // Russian intended, Hebrew layout active
+    // Russian intended, Hebrew layout active -> produces Hebrew chars
     static let ruFromHeCases: [TestCase] = [
-        // These require HE->EN->RU conversion chain
-        TestCase(input: "זריואק", expectedClass: .ruFromHeLayout, intendedText: "привет"),
+        TestCase(input: "עינגאמ", expectedClass: .ruFromHeLayout, intendedText: "привет"),
+        TestCase(input: "זפדר", expectedClass: .ruFromHeLayout, intendedText: "язык"),
     ]
     
     // MARK: - CoreML Direct Tests
@@ -115,9 +118,19 @@ final class LayoutDetectionTests: XCTestCase {
     }
     
     func testCoreMLHeFromEn() {
-        // Skip: HE from EN detection needs more training data (ticket root cause #3)
-        // This test documents the known limitation
-        XCTAssertTrue(true, "HE from EN detection is a known limitation - see ticket 22")
+        runCoreMLTests(Self.heFromEnCases, scenario: "HE from EN layout")
+    }
+    
+    func testCoreMLHeFromRu() {
+        runCoreMLTests(Self.heFromRuCases, scenario: "HE from RU layout")
+    }
+    
+    func testCoreMLEnFromHe() {
+        runCoreMLTests(Self.enFromHeCases, scenario: "EN from HE layout")
+    }
+    
+    func testCoreMLRuFromHe() {
+        runCoreMLTests(Self.ruFromHeCases, scenario: "RU from HE layout")
     }
     
     // MARK: - Layout Mapper Tests
@@ -149,7 +162,10 @@ final class LayoutDetectionTests: XCTestCase {
             ("Pure HE", Self.pureHebrewCases),
             ("RU from EN", Self.ruFromEnCases),
             ("EN from RU", Self.enFromRuCases),
-            // HE from EN skipped - known limitation (ticket root cause #3)
+            ("HE from EN", Self.heFromEnCases),
+            ("HE from RU", Self.heFromRuCases),
+            ("EN from HE", Self.enFromHeCases),
+            ("RU from HE", Self.ruFromHeCases),
         ]
         
         print("\n=== LAYOUT DETECTION ACCURACY REPORT ===\n")

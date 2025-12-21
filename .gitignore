@@ -11,3 +11,5 @@ Package.resolved
 .sdd/runs/*
 Tools/NgramTrainer/*
 data/raw/*
+Tools/CoreMLTrainer/venv/*
+*__pycache__*

@@ -27,6 +27,7 @@ actor ConfidenceRouter {
     private var ruModel: NgramLanguageModel?
     private var enModel: NgramLanguageModel?
     private var heModel: NgramLanguageModel?
+    private let coreML: CoreMLLayoutClassifier
     
     private let logger = Logger.detection
     private let settings: SettingsManager
@@ -37,6 +38,7 @@ actor ConfidenceRouter {
         self.ruModel = try? NgramLanguageModel.loadLanguage("ru")
         self.enModel = try? NgramLanguageModel.loadLanguage("en")
         self.heModel = try? NgramLanguageModel.loadLanguage("he")
+        self.coreML = CoreMLLayoutClassifier()
     }
     
     /// Main entry point for detection
@@ -71,9 +73,33 @@ actor ConfidenceRouter {
             return decision
         }
         
-        // 3. DEEP PATH: CoreML (Future)
-        // For now, fall back to the ensemble decision even if low confidence
-        logger.info("⚠️ Falling back to Standard Path result (low confidence: \(decision.confidence))")
+        // 3. DEEP PATH: CoreML
+        logger.info("🧠 Deep Path (CoreML) triggered for ambiguity: \(token)")
+        
+        // Lazy load classifier if needed or access shared instance
+        // For now, we instantiate or use a property.
+        // Ideally this should be injected or held as a property.
+        // Assuming we add `private let coreML = CoreMLLayoutClassifier()` to properties.
+        
+        if let (deepHypothesis, deepConf) = coreML.predict(token) {
+            logger.info("🧠 Deep Path result: \(deepHypothesis.rawValue, privacy: .public) (conf: \(deepConf))")
+            
+            // FUSION LOGIC:
+            // If CoreML is very confident (> 0.8), we trust it over the ensemble ambiguity.
+            // Or we could return a specific LanguageDecision type indicating "LayoutClassifier".
+            
+            if deepConf > 0.8 {
+                return LanguageDecision(
+                    language: deepHypothesis.targetLanguage, // Map hypothesis back to language
+                    layoutHypothesis: deepHypothesis,
+                    confidence: deepConf,
+                    scores: [:] // Scores not available/comparable
+                )
+            }
+        }
+        
+        // Fallback to the ensemble decision if deep path also uncertain
+        logger.info("⚠️ Falling back to Standard Path result after Deep Path (low confidence)")
         return decision
     }
     

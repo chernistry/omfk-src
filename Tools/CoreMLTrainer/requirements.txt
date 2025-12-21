@@ -1,9 +1,5 @@
-datasets
-apache_beam
-mwparserfromhell
-torch
-coremltools
-ollama
-scikit-learn
+torch>=2.0.0
+coremltools>=7.0
+numpy
 pandas
-hf_transfer
+scikit-learn

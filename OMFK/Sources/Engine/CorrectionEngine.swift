@@ -9,6 +9,9 @@ actor CorrectionEngine {
     private var history: [CorrectionRecord] = []
     private let logger = Logger.engine
     
+    // Cycling state for hotkey corrections
+    private var cyclingState: CyclingState?
+    
     struct CorrectionRecord: Identifiable {
         let id = UUID()
         let original: String
@@ -16,6 +19,29 @@ actor CorrectionEngine {
         let fromLang: Language
         let toLang: Language
         let timestamp: Date
+    }
+    
+    /// State for cycling through alternatives on repeated hotkey presses
+    struct CyclingState {
+        let originalText: String
+        let alternatives: [Alternative]
+        var currentIndex: Int
+        let wasAutomatic: Bool
+        let autoHypothesis: LanguageHypothesis?
+        
+        struct Alternative {
+            let text: String
+            let hypothesis: LanguageHypothesis?
+        }
+        
+        mutating func next() -> Alternative {
+            currentIndex = (currentIndex + 1) % alternatives.count
+            return alternatives[currentIndex]
+        }
+        
+        var current: Alternative {
+            alternatives[currentIndex]
+        }
     }
     
     init(settings: SettingsManager) {
@@ -112,7 +138,41 @@ actor CorrectionEngine {
         // Attempt conversion
         if let corrected = LayoutMapper.shared.convert(text, from: sourceLayout, to: decision.language) {
             logger.info("✅ VALID CONVERSION FOUND! (Ensemble)")
+            
+            // Store cycling state for potential undo
+            var alternatives: [CyclingState.Alternative] = [
+                CyclingState.Alternative(text: text, hypothesis: nil),  // Original
+                CyclingState.Alternative(text: corrected, hypothesis: decision.layoutHypothesis)  // Corrected
+            ]
+            
+            // Add other possible conversions
+            for target in Language.allCases where target != decision.language && target != sourceLayout {
+                if let alt = LayoutMapper.shared.convert(text, from: sourceLayout, to: target), alt != corrected {
+                    let hyp = hypothesisFor(source: sourceLayout, target: target)
+                    alternatives.append(CyclingState.Alternative(text: alt, hypothesis: hyp))
+                }
+            }
+            
+            cyclingState = CyclingState(
+                originalText: text,
+                alternatives: alternatives,
+                currentIndex: 1,  // Start at corrected version
+                wasAutomatic: true,
+                autoHypothesis: decision.layoutHypothesis
+            )
+            
             let result = await applyCorrection(original: text, corrected: corrected, from: sourceLayout, to: decision.language, hypothesis: decision.layoutHypothesis)
+            
+            // Log for learning
+            let bundleId = await MainActor.run { NSWorkspace.shared.frontmostApplication?.bundleIdentifier }
+            CorrectionLogger.shared.log(
+                original: text,
+                final: corrected,
+                autoAttempted: decision.layoutHypothesis,
+                userSelected: nil,  // Auto, not user-selected
+                app: bundleId
+            )
+            
             // Record as accepted
             let ctx = ProfileContext(token: text, lastLanguage: lastLang)
             await profile.record(context: ctx, outcome: .accepted, hypothesis: decision.layoutHypothesis)
@@ -144,7 +204,7 @@ actor CorrectionEngine {
         history.removeAll()
     }
     
-    func correctLastWord(_ text: String) async -> String? {
+    func correctLastWord(_ text: String, bundleId: String? = nil) async -> String? {
         logger.info("🔥 === MANUAL CORRECTION (HOTKEY) ===")
         logger.info("Input: '\(text, privacy: .public)'")
         
@@ -153,33 +213,95 @@ actor CorrectionEngine {
             return nil
         }
         
-        // For manual correction, we try to detect the SOURCE language and flip it.
-        // We use ensemble to guess the most likely interpretation, then infer source.
-        let decision = await router.route(token: text, context: DetectorContext(lastLanguage: nil))
-        
-        let from: Language
-        switch decision.layoutHypothesis {
-        case .ru, .enFromRuLayout, .heFromRuLayout: from = .russian
-        case .en, .ruFromEnLayout, .heFromEnLayout: from = .english
-        case .he, .enFromHeLayout, .ruFromHeLayout: from = .hebrew
+        // Check if we're cycling through alternatives for the same text
+        if let state = cyclingState, state.originalText == text || state.alternatives.contains(where: { $0.text == text }) {
+            return await cycleCorrection(bundleId: bundleId)
         }
         
-        logger.info("✅ Inferred source language: \(from.rawValue, privacy: .public)")
+        // New text - build alternatives list
+        let decision = await router.route(token: text, context: DetectorContext(lastLanguage: nil))
+        var alternatives: [CyclingState.Alternative] = []
         
-        // Try all possible conversions
-        let targets: [Language] = Language.allCases.filter { $0 != from }
-        logger.info("🔄 Trying conversions to: \(targets.map { $0.rawValue }.joined(separator: ", "), privacy: .public)")
+        // First alternative: original text
+        alternatives.append(CyclingState.Alternative(text: text, hypothesis: nil))
         
-        for target in targets {
-            if let converted = LayoutMapper.shared.convert(text, from: from, to: target) {
-                logger.info("✅ Manual conversion: '\(text, privacy: .public)' → '\(converted, privacy: .public)' (\(from.rawValue, privacy: .public)→\(target.rawValue, privacy: .public))")
-                addToHistory(original: text, corrected: converted, from: from, to: target)
-                return converted
+        // Generate all possible conversions
+        let sourceLayouts: [Language] = [.english, .russian, .hebrew]
+        let targetLanguages: [Language] = [.russian, .english, .hebrew]
+        
+        for source in sourceLayouts {
+            for target in targetLanguages where target != source {
+                if let converted = LayoutMapper.shared.convert(text, from: source, to: target), converted != text {
+                    let hyp = hypothesisFor(source: source, target: target)
+                    if !alternatives.contains(where: { $0.text == converted }) {
+                        alternatives.append(CyclingState.Alternative(text: converted, hypothesis: hyp))
+                    }
+                }
             }
         }
         
-        logger.warning("❌ No conversions possible")
-        return nil
+        guard alternatives.count > 1 else {
+            logger.warning("❌ No conversions possible")
+            return nil
+        }
+        
+        // Start cycling from first alternative (which is the conversion, not original)
+        cyclingState = CyclingState(
+            originalText: text,
+            alternatives: alternatives,
+            currentIndex: 0,
+            wasAutomatic: false,
+            autoHypothesis: decision.layoutHypothesis
+        )
+        
+        return await cycleCorrection(bundleId: bundleId)
+    }
+    
+    /// Cycle to next alternative on repeated hotkey press
+    func cycleCorrection(bundleId: String? = nil) async -> String? {
+        guard var state = cyclingState else {
+            logger.warning("❌ No cycling state")
+            return nil
+        }
+        
+        let alt = state.next()
+        cyclingState = state
+        
+        logger.info("🔄 Cycling to: '\(alt.text, privacy: .public)' (index \(state.currentIndex)/\(state.alternatives.count))")
+        
+        // Log the correction for learning
+        CorrectionLogger.shared.log(
+            original: state.originalText,
+            final: alt.text,
+            autoAttempted: state.autoHypothesis,
+            userSelected: alt.hypothesis,
+            app: bundleId
+        )
+        
+        // Record for profile learning
+        if let hyp = alt.hypothesis {
+            let ctx = ProfileContext(token: state.originalText, lastLanguage: nil)
+            await profile.record(context: ctx, outcome: .manual, hypothesis: hyp)
+        }
+        
+        return alt.text
+    }
+    
+    /// Reset cycling state (called when new text is typed)
+    func resetCycling() {
+        cyclingState = nil
+    }
+    
+    private func hypothesisFor(source: Language, target: Language) -> LanguageHypothesis {
+        switch (source, target) {
+        case (.english, .russian): return .ruFromEnLayout
+        case (.english, .hebrew): return .heFromEnLayout
+        case (.russian, .english): return .enFromRuLayout
+        case (.russian, .hebrew): return .heFromRuLayout
+        case (.hebrew, .english): return .enFromHeLayout
+        case (.hebrew, .russian): return .ruFromHeLayout
+        default: return .en
+        }
     }
     
     private func addToHistory(original: String, corrected: String, from: Language, to: Language) {

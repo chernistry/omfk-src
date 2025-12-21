@@ -35,6 +35,7 @@ while true; do
     echo "  3) 🧠 Train CoreML Model (requires extracted data for best results)"
     echo "  4) ✅ Run Tests"
     echo "  5) 💬 Import Telegram Chat Exports (append to corpus)"
+    echo "  6) 🎬 Download OpenSubtitles (conversational HE/RU data)"
     echo "  q) Quit"
     echo ""
     read -p "Option: " choice
@@ -136,6 +137,25 @@ while true; do
             else
                 echo -e "${RED}No Telegram export files found.${NC}"
             fi
+            ;;
+            
+        6)
+            echo -e "${BLUE}--- Downloading OpenSubtitles (conversational data) ---${NC}"
+            cd Tools/CoreMLTrainer
+            source venv/bin/activate 2>/dev/null || python3 -m venv venv && source venv/bin/activate
+            python3 download_subtitles.py --only he_mono ru_mono --limit 2000000
+            
+            echo -e "${YELLOW}Merging subtitles into main corpus...${NC}"
+            cd ../..
+            if [ -f "$PROCESSED_DIR/subtitles_he.txt" ]; then
+                cat "$PROCESSED_DIR/subtitles_he.txt" >> "$PROCESSED_DIR/he.txt"
+                echo -e "${GREEN}  Merged Hebrew subtitles into he.txt${NC}"
+            fi
+            if [ -f "$PROCESSED_DIR/subtitles_ru.txt" ]; then
+                cat "$PROCESSED_DIR/subtitles_ru.txt" >> "$PROCESSED_DIR/ru.txt"
+                echo -e "${GREEN}  Merged Russian subtitles into ru.txt${NC}"
+            fi
+            echo -e "${GREEN}OpenSubtitles data imported!${NC}"
             ;;
             
         q)

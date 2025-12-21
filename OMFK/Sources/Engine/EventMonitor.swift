@@ -116,6 +116,11 @@ final class EventMonitor {
             buffer.append(chars)
             logger.info("⌨️ Typed: '\(chars, privacy: .public)' | Buffer: '\(self.buffer, privacy: .public)' (len=\(self.buffer.count))")
             
+            // Reset cycling state on new input
+            Task { @MainActor in
+                await engine.resetCycling()
+            }
+            
             // Process on word boundaries
             if chars.rangeOfCharacter(from: .whitespacesAndNewlines) != nil {
                 logger.info("📍 Word boundary detected (space/newline) - processing buffer")
@@ -179,7 +184,9 @@ final class EventMonitor {
         
         logger.info("📝 Text for manual correction: '\(text, privacy: .public)' (len=\(text.count))")
         
-        if let corrected = await engine.correctLastWord(text) {
+        let bundleId = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        
+        if let corrected = await engine.correctLastWord(text, bundleId: bundleId) {
             logger.info("✅ MANUAL CORRECTION: '\(text, privacy: .public)' → '\(corrected, privacy: .public)'")
             await replaceText(with: corrected, originalLength: text.count)
         } else {

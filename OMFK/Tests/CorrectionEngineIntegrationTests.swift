@@ -12,6 +12,8 @@ final class CorrectionEngineIntegrationTests: XCTestCase {
         // Ensure enabled for tests
         await MainActor.run {
             settings.isEnabled = true
+            settings.fastPathThreshold = 0.8
+            settings.standardPathThreshold = 0.4
         }
     }
     

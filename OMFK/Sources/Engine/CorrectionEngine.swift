@@ -3,7 +3,7 @@ import AppKit
 import os.log
 
 actor CorrectionEngine {
-    private let ensemble = LanguageEnsemble()
+    private let router: ConfidenceRouter
     private let profile = UserLanguageProfile()
     private let settings: SettingsManager
     private var history: [CorrectionRecord] = []
@@ -20,6 +20,7 @@ actor CorrectionEngine {
     
     init(settings: SettingsManager) {
         self.settings = settings
+        self.router = ConfidenceRouter(settings: settings)
     }
     
     func shouldCorrect(for bundleId: String?) async -> Bool {
@@ -54,9 +55,9 @@ actor CorrectionEngine {
         if let lastRecord = history.first {
             lastLang = lastRecord.toLang
         }
-        let context = EnsembleContext(lastLanguage: lastLang)
+        let context = DetectorContext(lastLanguage: lastLang)
         
-        let decision = await ensemble.classify(text, context: context)
+        let decision = await router.route(token: text, context: context)
         logger.info("✅ Decision: \(decision.language.rawValue, privacy: .public) (Hypothesis: \(decision.layoutHypothesis.rawValue, privacy: .public), Conf: \(decision.confidence))")
         
         // Adjust confidence based on user profile
@@ -68,7 +69,8 @@ actor CorrectionEngine {
         logger.info("📊 Adjusted confidence: \(decision.confidence) → \(adjustedConfidence)")
         
         // Only apply correction if adjusted confidence is high enough
-        guard adjustedConfidence > 0.6 else {
+        let threshold = await settings.standardPathThreshold
+        guard adjustedConfidence > threshold else {
             logger.info("⏭️ Skipping correction (confidence too low after adjustment)")
             return nil
         }
@@ -108,7 +110,7 @@ actor CorrectionEngine {
         }
         
         // Attempt conversion
-        if let corrected = LayoutMapper.convert(text, from: sourceLayout, to: decision.language) {
+        if let corrected = LayoutMapper.shared.convert(text, from: sourceLayout, to: decision.language) {
             logger.info("✅ VALID CONVERSION FOUND! (Ensemble)")
             let result = await applyCorrection(original: text, corrected: corrected, from: sourceLayout, to: decision.language, hypothesis: decision.layoutHypothesis)
             // Record as accepted
@@ -153,7 +155,7 @@ actor CorrectionEngine {
         
         // For manual correction, we try to detect the SOURCE language and flip it.
         // We use ensemble to guess the most likely interpretation, then infer source.
-        let decision = await ensemble.classify(text, context: EnsembleContext())
+        let decision = await router.route(token: text, context: DetectorContext(lastLanguage: nil))
         
         let from: Language
         switch decision.layoutHypothesis {
@@ -169,7 +171,7 @@ actor CorrectionEngine {
         logger.info("🔄 Trying conversions to: \(targets.map { $0.rawValue }.joined(separator: ", "), privacy: .public)")
         
         for target in targets {
-            if let converted = LayoutMapper.convert(text, from: from, to: target) {
+            if let converted = LayoutMapper.shared.convert(text, from: from, to: target) {
                 logger.info("✅ Manual conversion: '\(text, privacy: .public)' → '\(converted, privacy: .public)' (\(from.rawValue, privacy: .public)→\(target.rawValue, privacy: .public))")
                 addToHistory(original: text, corrected: converted, from: from, to: target)
                 return converted

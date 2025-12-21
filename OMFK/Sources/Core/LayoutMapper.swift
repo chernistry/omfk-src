@@ -1,52 +1,160 @@
 import Foundation
 
-struct LayoutMapper {
-    // RU ↔ EN mapping (QWERTY/ЙЦУКЕН)
-    private static let ruToEn: [Character: Character] = [
-        "й": "q", "ц": "w", "у": "e", "к": "r", "е": "t", "н": "y", "г": "u", "ш": "i", "щ": "o", "з": "p",
-        "х": "[", "ъ": "]", "ф": "a", "ы": "s", "в": "d", "а": "f", "п": "g", "р": "h", "о": "j", "л": "k",
-        "д": "l", "ж": ";", "э": "'", "я": "z", "ч": "x", "с": "c", "м": "v", "и": "b", "т": "n", "ь": "m",
-        "б": ",", "ю": ".", "ё": "`",
-        "Й": "Q", "Ц": "W", "У": "E", "К": "R", "Е": "T", "Н": "Y", "Г": "U", "Ш": "I", "Щ": "O", "З": "P",
-        "Х": "{", "Ъ": "}", "Ф": "A", "Ы": "S", "В": "D", "А": "F", "П": "G", "Р": "H", "О": "J", "Л": "K",
-        "Д": "L", "Ж": ":", "Э": "\"", "Я": "Z", "Ч": "X", "С": "C", "М": "V", "И": "B", "Т": "N", "Ь": "M",
-        "Б": "<", "Ю": ">", "Ё": "~"
+/// Maps characters between different keyboard layouts using a data-driven approach.
+public final class LayoutMapper: @unchecked Sendable {
+    private var layoutData: LayoutData?
+    
+    // Cache: LayoutID -> [Character : (Key: String, Modifier: String)]
+    // We need to know which Key+Modifier produced a Character in a specifically named layout.
+    private var charToKeyMap: [String: [Character: (key: String, mod: String)]] = [:]
+    
+    // Defines which layout ID is "default" for a given language if not specified in Settings.
+    private let defaultLayouts: [Language: String] = [
+        .english: "en_us",
+        .russian: "ru_pc",
+        .hebrew: "he_standard"
     ]
     
-    private static let enToRu: [Character: Character] = Dictionary(uniqueKeysWithValues: ruToEn.map { ($1, $0) })
+    /// Shared singleton instance for convenient access
+    public static let shared = LayoutMapper()
     
-    // HE ↔ EN mapping (QWERTY/Hebrew standard)
-    private static let heToEn: [Character: Character] = [
-        "/": "q", "'": "w", "ק": "e", "ר": "r", "א": "t", "ט": "y", "ו": "u", "ן": "i", "ם": "o", "פ": "p",
-        "ש": "a", "ד": "s", "ג": "d", "כ": "f", "ע": "g", "י": "h", "ח": "j", "ל": "k", "ך": "l", "ף": ";",
-        "ז": "z", "ס": "x", "ב": "c", "ה": "v", "נ": "b", "מ": "n", "צ": "m", "ת": ",", "ץ": "."
-    ]
+    // Make init public for testing if needed, though usually shared is enough
+    public init() {
+        loadLayoutData()
+        buildMaps()
+    }
     
-    private static let enToHe: [Character: Character] = Dictionary(uniqueKeysWithValues: heToEn.map { ($1, $0) })
-    
-    static func convert(_ text: String, from: Language, to: Language) -> String? {
-        guard from != to else { return text }
-        
-        let map: [Character: Character]?
-        switch (from, to) {
-        case (.russian, .english): map = ruToEn
-        case (.english, .russian): map = enToRu
-        case (.hebrew, .english): map = heToEn
-        case (.english, .hebrew): map = enToHe
-        case (.russian, .hebrew):
-            // RU→HE via composition: RU→EN→HE
-            guard let intermediate = convert(text, from: .russian, to: .english),
-                  let result = convert(intermediate, from: .english, to: .hebrew) else { return nil }
-            return result
-        case (.hebrew, .russian):
-            // HE→RU via composition: HE→EN→RU
-            guard let intermediate = convert(text, from: .hebrew, to: .english),
-                  let result = convert(intermediate, from: .english, to: .russian) else { return nil }
-            return result
-        default: return nil
+    private func loadLayoutData() {
+        // ... (Keep existing loading logic, simplified for brevity in replacement if unchanged, 
+        // but since I am replacing the whole class, I will include it)
+        guard let url = Bundle.module.url(forResource: "layouts", withExtension: "json") else {
+            print("LayoutMapper: Could not find layouts.json in bundle.")
+            return
         }
         
-        guard let mapping = map else { return nil }
-        return String(text.map { mapping[$0] ?? $0 })
+        do {
+            let data = try Data(contentsOf: url)
+            let decoder = JSONDecoder()
+            self.layoutData = try decoder.decode(LayoutData.self, from: data)
+        } catch {
+            print("LayoutMapper: Failed to decode layouts.json: \(error)")
+        }
+    }
+    
+    private func buildMaps() {
+        guard let map = layoutData?.map else { return }
+        let modifiers = ["n", "s", "a", "sa"]
+        
+        // Iterate over all keys: KeyCode -> [LayoutID -> Mapping]
+        for (keyCode, layoutsMap) in map {
+            for (layoutID, mapping) in layoutsMap {
+                
+                // For this LayoutID, map Char -> (KeyCode, Mod)
+                if charToKeyMap[layoutID] == nil {
+                    charToKeyMap[layoutID] = [:]
+                }
+                
+                // Check each modifier
+                for mod in modifiers {
+                    let charString: String?
+                    switch mod {
+                    case "n": charString = mapping.n
+                    case "s": charString = mapping.s
+                    case "a": charString = mapping.a
+                    case "sa": charString = mapping.sa
+                    default: charString = nil
+                    }
+                    
+                    if let s = charString, let char = s.first, s.count == 1 {
+                        // Store mapping. Prioritize simple modifiers (n) found earlier.
+                        if charToKeyMap[layoutID]?[char] == nil {
+                            charToKeyMap[layoutID]?[char] = (key: keyCode, mod: mod)
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Handle aliases? keys in charToKeyMap are LayoutIDs.
+        // We should ensure aliases point to real IDs before lookup.
+    }
+    
+    /// Converts text from a specific source layout to a target layout.
+    /// - Parameters:
+    ///   - text: The input string.
+    ///   - fromLayout: The ID of the layout the text was typed in (e.g., "en_us").
+    ///   - toLayout: The ID of the target layout (e.g., "ru_pc").
+    /// - Returns: The converted string, or nil if conversion isn't fully possible.
+    public func convert(_ text: String, fromLayout: String, toLayout: String) -> String? {
+        let fromID = resolveAlias(fromLayout)
+        let toID = resolveAlias(toLayout)
+        
+        if fromID == toID { return text }
+        
+        // Ensure we have maps
+        guard let sourceMap = charToKeyMap[fromID] else { return nil }
+        // For target, we look up in layoutData directly using KeyCode
+        guard let fullMap = layoutData?.map else { return nil }
+        
+        var result = ""
+        result.reserveCapacity(text.count)
+        
+        for char in text {
+            // 1. Find KeyCode used to type this char in Source Layout
+            if let (keyCode, mod) = sourceMap[char] {
+                // 2. Find what this KeyCode + Mod produces in Target Layout
+                if let targetMapping = fullMap[keyCode]?[toID] {
+                    let targetCharString: String?
+                    switch mod {
+                    case "n": targetCharString = targetMapping.n
+                    case "s": targetCharString = targetMapping.s
+                    case "a": targetCharString = targetMapping.a
+                    case "sa": targetCharString = targetMapping.sa
+                    default: targetCharString = nil
+                    }
+                    
+                    if let t = targetCharString {
+                        result.append(t)
+                    } else {
+                         // Key exists but produces nothing in this state? Keep original?
+                        result.append(char)
+                    }
+                } else {
+                    // Key doesn't exist in target layout? Keep original
+                    result.append(char)
+                }
+            } else {
+                // Character unique to source layout or not mapped? Keep original
+                result.append(char)
+            }
+        }
+        return result
+    }
+    
+    /// Convenience: Convert using abstract Language enum.
+    /// Uses default or configured layouts for these languages.
+    /// - Parameters:
+    ///   - activeLayouts: Optional dictionary mapping Language to layout ID. 
+    ///                    If nil, uses internal defaults.
+    public func convert(_ text: String, from: Language, to: Language, activeLayouts: [String: String]? = nil) -> String? {
+        let fromKey = from.rawValue
+        let toKey = to.rawValue
+        
+        let fromLayoutID = activeLayouts?[fromKey] ?? defaultLayouts[from] ?? defaultLayoutID(for: from)
+        let toLayoutID = activeLayouts?[toKey] ?? defaultLayouts[to] ?? defaultLayoutID(for: to)
+        
+        return convert(text, fromLayout: fromLayoutID, toLayout: toLayoutID)
+    }
+    
+    private func resolveAlias(_ layoutID: String) -> String {
+        return layoutData?.layoutAliases[layoutID] ?? layoutID
+    }
+    
+    private func defaultLayoutID(for language: Language) -> String {
+        switch language {
+        case .english: return "en_us"
+        case .russian: return "ru_pc"
+        case .hebrew: return "he_standard"
+        }
     }
 }

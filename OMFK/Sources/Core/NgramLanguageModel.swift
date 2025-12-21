@@ -1,7 +1,7 @@
 import Foundation
 
 /// Hypothesis about the language and layout configuration
-enum LanguageHypothesis: String, CaseIterable, Sendable {
+public enum LanguageHypothesis: String, CaseIterable, Sendable {
     case ru               // Russian as-is
     case en               // English as-is
     case he               // Hebrew as-is
@@ -12,7 +12,7 @@ enum LanguageHypothesis: String, CaseIterable, Sendable {
     case heFromRuLayout   // Hebrew typed on Russian layout (via RU→EN→HE)
     case ruFromHeLayout   // Russian typed on Hebrew layout (via HE→EN→RU)
     
-    var targetLanguage: Language {
+    public var targetLanguage: Language {
         switch self {
         case .ru, .ruFromEnLayout, .ruFromHeLayout: return .russian
         case .en, .enFromRuLayout, .enFromHeLayout: return .english

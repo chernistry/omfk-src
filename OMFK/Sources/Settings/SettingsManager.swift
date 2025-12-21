@@ -28,6 +28,18 @@ final class SettingsManager: ObservableObject {
         didSet { UserDefaults.standard.set(hotkeyKeyCode, forKey: "hotkeyKeyCode") }
     }
     
+    @Published var activeLayouts: [String: String] {
+        didSet { UserDefaults.standard.set(activeLayouts, forKey: "activeLayouts") }
+    }
+    
+    @Published var fastPathThreshold: Double {
+        didSet { UserDefaults.standard.set(fastPathThreshold, forKey: "fastPathThreshold") }
+    }
+    
+    @Published var standardPathThreshold: Double {
+        didSet { UserDefaults.standard.set(standardPathThreshold, forKey: "standardPathThreshold") }
+    }
+    
     private init() {
         self.isEnabled = UserDefaults.standard.object(forKey: "isEnabled") as? Bool ?? true
         
@@ -40,6 +52,15 @@ final class SettingsManager: ObservableObject {
         self.autoSwitchLayout = UserDefaults.standard.object(forKey: "autoSwitchLayout") as? Bool ?? false
         self.hotkeyEnabled = UserDefaults.standard.object(forKey: "hotkeyEnabled") as? Bool ?? true
         self.hotkeyKeyCode = UInt16(UserDefaults.standard.integer(forKey: "hotkeyKeyCode") != 0 ? UserDefaults.standard.integer(forKey: "hotkeyKeyCode") : 58) // 58 = left Alt
+        
+        self.activeLayouts = UserDefaults.standard.object(forKey: "activeLayouts") as? [String: String] ?? [
+            "en": "en_us",
+            "ru": "ru_pc",
+            "he": "he_standard"
+        ]
+        
+        self.fastPathThreshold = UserDefaults.standard.object(forKey: "fastPathThreshold") as? Double ?? 0.95
+        self.standardPathThreshold = UserDefaults.standard.object(forKey: "standardPathThreshold") as? Double ?? 0.70
     }
     
     func isExcluded(bundleId: String) -> Bool {

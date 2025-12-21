@@ -4,20 +4,20 @@ import AppKit
 import os.log
 
 /// Context for ensemble decision making
-struct EnsembleContext: Sendable {
-    let lastLanguage: Language?
+public struct EnsembleContext: Sendable {
+    public let lastLanguage: Language?
     
-    init(lastLanguage: Language? = nil) {
+    public init(lastLanguage: Language? = nil) {
         self.lastLanguage = lastLanguage
     }
 }
 
 /// Detailed decision from the ensemble
-struct LanguageDecision: Sendable {
-    let language: Language
-    let layoutHypothesis: LanguageHypothesis
-    let confidence: Double
-    let scores: [LanguageHypothesis: Double] // Debug/logging info
+public struct LanguageDecision: Sendable {
+    public let language: Language
+    public let layoutHypothesis: LanguageHypothesis
+    public let confidence: Double
+    public let scores: [LanguageHypothesis: Double] // Debug/logging info
 }
 
 /// Ensemble classifier that combines NLLanguageRecognizer with layout hypotheses and heuristics
@@ -80,36 +80,58 @@ actor LanguageEnsemble {
         hypothesisScores[.en] = evaluate(text: token, target: .english, context: context, isMapped: false)
         hypothesisScores[.he] = evaluate(text: token, target: .hebrew, context: context, isMapped: false)
         
+        // Check script presence to filter impossible hypotheses
+        let hasLatin = checkCharacterSet(token, for: .english) // > 0.7 match
+        let hasCyrillic = checkCharacterSet(token, for: .russian) // > 0.7 match
+        let hasHebrew = checkCharacterSet(token, for: .hebrew) // > 0.7 match
+        
+        // Strict-ish check for "Pure" scripts to avoid generating "English from Russian" for Latin text
+        // If text is primarily Latin, it CANNOT be source Russian or Hebrew.
+        
         // 2. Evaluate "Layout Mapped" hypotheses
-        // Layout corrections
-        // Check if input (English) maps to Russian
-        if let ruMapped = LayoutMapper.convert(token, from: .english, to: .russian) {
-             hypothesisScores[.ruFromEnLayout] = evaluate(text: ruMapped, target: .russian, context: context, isMapped: true)
+        
+        // If input is primarily LATIN
+        if hasLatin {
+            // Check if input (English) maps to Russian
+            if let ruMapped = LayoutMapper.shared.convert(token, from: .english, to: .russian) {
+                 hypothesisScores[.ruFromEnLayout] = evaluate(text: ruMapped, target: .russian, context: context, isMapped: true)
+            }
+            
+            // Check if input (English) maps to Hebrew
+            if let heMapped = LayoutMapper.shared.convert(token, from: .english, to: .hebrew) {
+                hypothesisScores[.heFromEnLayout] = evaluate(text: heMapped, target: .hebrew, context: context, isMapped: true)
+            }
         }
         
-        // Check if input (English) maps to Hebrew
-        if let heMapped = LayoutMapper.convert(token, from: .english, to: .hebrew) {
-            hypothesisScores[.heFromEnLayout] = evaluate(text: heMapped, target: .hebrew, context: context, isMapped: true)
+        // If input is primarily CYRILLIC
+        if hasCyrillic {
+            // Check if input (Russian) maps to Hebrew (via RU→EN→HE)
+            if let heMapped = LayoutMapper.shared.convert(token, from: .russian, to: .hebrew) {
+                hypothesisScores[.heFromRuLayout] = evaluate(text: heMapped, target: .hebrew, context: context, isMapped: true)
+            }
+            
+            // Reverse mappings (EN from RU)
+            if let enFromRu = LayoutMapper.shared.convert(token, from: .russian, to: .english) {
+                hypothesisScores[.enFromRuLayout] = evaluate(text: enFromRu, target: .english, context: context, isMapped: true)
+            }
         }
         
-        // Check if input (Russian) maps to Hebrew (via RU→EN→HE)
-        if let heMapped = LayoutMapper.convert(token, from: .russian, to: .hebrew) {
-            hypothesisScores[.heFromRuLayout] = evaluate(text: heMapped, target: .hebrew, context: context, isMapped: true)
+        // If input is primarily HEBREW
+        if hasHebrew {
+            // Check if input (Hebrew) maps to Russian (via HE→EN→RU)
+             if let ruMapped = LayoutMapper.shared.convert(token, from: .hebrew, to: .russian) {
+                 hypothesisScores[.ruFromHeLayout] = evaluate(text: ruMapped, target: .russian, context: context, isMapped: true)
+             }
+            
+            if let enFromHe = LayoutMapper.shared.convert(token, from: .hebrew, to: .english) {
+                hypothesisScores[.enFromHeLayout] = evaluate(text: enFromHe, target: .english, context: context, isMapped: true)
+            }
         }
         
-        // Check if input (Hebrew) maps to Russian (via HE→EN→RU)
-        if let ruMapped = LayoutMapper.convert(token, from: .hebrew, to: .russian) {
-            hypothesisScores[.ruFromHeLayout] = evaluate(text: ruMapped, target: .russian, context: context, isMapped: true)
-        }
-        
-        // Reverse mappings (EN from RU/HE layouts)
-        if let enFromRu = LayoutMapper.convert(token, from: .russian, to: .english) {
-            hypothesisScores[.enFromRuLayout] = evaluate(text: enFromRu, target: .english, context: context, isMapped: true)
-        }
-        
-        if let enFromHe = LayoutMapper.convert(token, from: .hebrew, to: .english) {
-            hypothesisScores[.enFromHeLayout] = evaluate(text: enFromHe, target: .english, context: context, isMapped: true)
-        }
+        // Fallback: If Mixed or Unknown script, maybe try all? 
+        // But for Ticket 13/14 valid cases, inputs are usually clean tokens.
+        // If mixed (e.g. "hello мир"), `checkCharacterSet` returns false for both (>0.7).
+        // Then we skip mapped hypotheses. This is correct for "Mixed Script Rejection".
         
         // 3. Select best hypothesis
         let best = hypothesisScores.max(by: { $0.value < $1.value })?.key ?? .en

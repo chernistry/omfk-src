@@ -1,0 +1,905 @@
+{
+  "test_cases": [
+    {
+      "input": "привет",
+      "expected_class": "ru",
+      "intended_text": "привет"
+    },
+    {
+      "input": "переменная",
+      "expected_class": "ru",
+      "intended_text": "переменная"
+    },
+    {
+      "input": "мир",
+      "expected_class": "ru",
+      "intended_text": "мир"
+    },
+    {
+      "input": "программа",
+      "expected_class": "ru",
+      "intended_text": "программа"
+    },
+    {
+      "input": "мир",
+      "expected_class": "ru",
+      "intended_text": "мир"
+    },
+    {
+      "input": "мир",
+      "expected_class": "ru",
+      "intended_text": "мир"
+    },
+    {
+      "input": "переменная",
+      "expected_class": "ru",
+      "intended_text": "переменная"
+    },
+    {
+      "input": "программа",
+      "expected_class": "ru",
+      "intended_text": "программа"
+    },
+    {
+      "input": "мир",
+      "expected_class": "ru",
+      "intended_text": "мир"
+    },
+    {
+      "input": "привет",
+      "expected_class": "ru",
+      "intended_text": "привет"
+    },
+    {
+      "input": "тестирование",
+      "expected_class": "ru",
+      "intended_text": "тестирование"
+    },
+    {
+      "input": "компьютер",
+      "expected_class": "ru",
+      "intended_text": "компьютер"
+    },
+    {
+      "input": "система",
+      "expected_class": "ru",
+      "intended_text": "система"
+    },
+    {
+      "input": "клавиатура",
+      "expected_class": "ru",
+      "intended_text": "клавиатура"
+    },
+    {
+      "input": "привет",
+      "expected_class": "ru",
+      "intended_text": "привет"
+    },
+    {
+      "input": "компьютер",
+      "expected_class": "ru",
+      "intended_text": "компьютер"
+    },
+    {
+      "input": "программа",
+      "expected_class": "ru",
+      "intended_text": "программа"
+    },
+    {
+      "input": "тестирование",
+      "expected_class": "ru",
+      "intended_text": "тестирование"
+    },
+    {
+      "input": "язык",
+      "expected_class": "ru",
+      "intended_text": "язык"
+    },
+    {
+      "input": "тестирование",
+      "expected_class": "ru",
+      "intended_text": "тестирование"
+    },
+    {
+      "input": "language",
+      "expected_class": "en",
+      "intended_text": "language"
+    },
+    {
+      "input": "function",
+      "expected_class": "en",
+      "intended_text": "function"
+    },
+    {
+      "input": "program",
+      "expected_class": "en",
+      "intended_text": "program"
+    },
+    {
+      "input": "variable",
+      "expected_class": "en",
+      "intended_text": "variable"
+    },
+    {
+      "input": "hello",
+      "expected_class": "en",
+      "intended_text": "hello"
+    },
+    {
+      "input": "hello",
+      "expected_class": "en",
+      "intended_text": "hello"
+    },
+    {
+      "input": "system",
+      "expected_class": "en",
+      "intended_text": "system"
+    },
+    {
+      "input": "program",
+      "expected_class": "en",
+      "intended_text": "program"
+    },
+    {
+      "input": "function",
+      "expected_class": "en",
+      "intended_text": "function"
+    },
+    {
+      "input": "program",
+      "expected_class": "en",
+      "intended_text": "program"
+    },
+    {
+      "input": "program",
+      "expected_class": "en",
+      "intended_text": "program"
+    },
+    {
+      "input": "language",
+      "expected_class": "en",
+      "intended_text": "language"
+    },
+    {
+      "input": "testing",
+      "expected_class": "en",
+      "intended_text": "testing"
+    },
+    {
+      "input": "computer",
+      "expected_class": "en",
+      "intended_text": "computer"
+    },
+    {
+      "input": "world",
+      "expected_class": "en",
+      "intended_text": "world"
+    },
+    {
+      "input": "program",
+      "expected_class": "en",
+      "intended_text": "program"
+    },
+    {
+      "input": "function",
+      "expected_class": "en",
+      "intended_text": "function"
+    },
+    {
+      "input": "language",
+      "expected_class": "en",
+      "intended_text": "language"
+    },
+    {
+      "input": "keyboard",
+      "expected_class": "en",
+      "intended_text": "keyboard"
+    },
+    {
+      "input": "function",
+      "expected_class": "en",
+      "intended_text": "function"
+    },
+    {
+      "input": "בדיקה",
+      "expected_class": "he",
+      "intended_text": "בדיקה"
+    },
+    {
+      "input": "פונקציה",
+      "expected_class": "he",
+      "intended_text": "פונקציה"
+    },
+    {
+      "input": "תוכנית",
+      "expected_class": "he",
+      "intended_text": "תוכנית"
+    },
+    {
+      "input": "בדיקה",
+      "expected_class": "he",
+      "intended_text": "בדיקה"
+    },
+    {
+      "input": "תוכנית",
+      "expected_class": "he",
+      "intended_text": "תוכנית"
+    },
+    {
+      "input": "תוכנית",
+      "expected_class": "he",
+      "intended_text": "תוכנית"
+    },
+    {
+      "input": "תוכנית",
+      "expected_class": "he",
+      "intended_text": "תוכנית"
+    },
+    {
+      "input": "מחשב",
+      "expected_class": "he",
+      "intended_text": "מחשב"
+    },
+    {
+      "input": "עולם",
+      "expected_class": "he",
+      "intended_text": "עולם"
+    },
+    {
+      "input": "שלום",
+      "expected_class": "he",
+      "intended_text": "שלום"
+    },
+    {
+      "input": "משתנה",
+      "expected_class": "he",
+      "intended_text": "משתנה"
+    },
+    {
+      "input": "תוכנית",
+      "expected_class": "he",
+      "intended_text": "תוכנית"
+    },
+    {
+      "input": "תוכנית",
+      "expected_class": "he",
+      "intended_text": "תוכנית"
+    },
+    {
+      "input": "תוכנית",
+      "expected_class": "he",
+      "intended_text": "תוכנית"
+    },
+    {
+      "input": "בדיקה",
+      "expected_class": "he",
+      "intended_text": "בדיקה"
+    },
+    {
+      "input": "משתנה",
+      "expected_class": "he",
+      "intended_text": "משתנה"
+    },
+    {
+      "input": "עולם",
+      "expected_class": "he",
+      "intended_text": "עולם"
+    },
+    {
+      "input": "שלום",
+      "expected_class": "he",
+      "intended_text": "שלום"
+    },
+    {
+      "input": "מערכת",
+      "expected_class": "he",
+      "intended_text": "מערכת"
+    },
+    {
+      "input": "מערכת",
+      "expected_class": "he",
+      "intended_text": "מערכת"
+    },
+    {
+      "input": "ntcnbhjdfybt",
+      "expected_class": "ru_from_en",
+      "intended_text": "тестирование"
+    },
+    {
+      "input": "rjvgm.nth",
+      "expected_class": "ru_from_en",
+      "intended_text": "компьютер"
+    },
+    {
+      "input": "cbcntvf",
+      "expected_class": "ru_from_en",
+      "intended_text": "система"
+    },
+    {
+      "input": "rkfdbfnehf",
+      "expected_class": "ru_from_en",
+      "intended_text": "клавиатура"
+    },
+    {
+      "input": "ghjuhfvvf",
+      "expected_class": "ru_from_en",
+      "intended_text": "программа"
+    },
+    {
+      "input": "ghjuhfvvf",
+      "expected_class": "ru_from_en",
+      "intended_text": "программа"
+    },
+    {
+      "input": "ntcnbhjdfybt",
+      "expected_class": "ru_from_en",
+      "intended_text": "тестирование"
+    },
+    {
+      "input": "gthtvtyyfz",
+      "expected_class": "ru_from_en",
+      "intended_text": "переменная"
+    },
+    {
+      "input": "gthtvtyyfz",
+      "expected_class": "ru_from_en",
+      "intended_text": "переменная"
+    },
+    {
+      "input": "rjvgm.nth",
+      "expected_class": "ru_from_en",
+      "intended_text": "компьютер"
+    },
+    {
+      "input": "ghbdtn",
+      "expected_class": "ru_from_en",
+      "intended_text": "привет"
+    },
+    {
+      "input": "ghbdtn",
+      "expected_class": "ru_from_en",
+      "intended_text": "привет"
+    },
+    {
+      "input": "vbh",
+      "expected_class": "ru_from_en",
+      "intended_text": "мир"
+    },
+    {
+      "input": "gthtvtyyfz",
+      "expected_class": "ru_from_en",
+      "intended_text": "переменная"
+    },
+    {
+      "input": "rkfdbfnehf",
+      "expected_class": "ru_from_en",
+      "intended_text": "клавиатура"
+    },
+    {
+      "input": "ntcnbhjdfybt",
+      "expected_class": "ru_from_en",
+      "intended_text": "тестирование"
+    },
+    {
+      "input": "zpsr",
+      "expected_class": "ru_from_en",
+      "intended_text": "язык"
+    },
+    {
+      "input": "ghbdtn",
+      "expected_class": "ru_from_en",
+      "intended_text": "привет"
+    },
+    {
+      "input": "vbh",
+      "expected_class": "ru_from_en",
+      "intended_text": "мир"
+    },
+    {
+      "input": "rkfdbfnehf",
+      "expected_class": "ru_from_en",
+      "intended_text": "клавиатура"
+    },
+    {
+      "input": "NA<BV",
+      "expected_class": "he_from_en",
+      "intended_text": "משתנה"
+    },
+    {
+      "input": "NGRF<",
+      "expected_class": "he_from_en",
+      "intended_text": "מערכת"
+    },
+    {
+      "input": "MERKT",
+      "expected_class": "he_from_en",
+      "intended_text": "מערכת"
+    },
+    {
+      "input": "APV",
+      "expected_class": "he_from_en",
+      "intended_text": "שפה"
+    },
+    {
+      "input": "MERKT",
+      "expected_class": "he_from_en",
+      "intended_text": "מערכת"
+    },
+    {
+      "input": "MERKT",
+      "expected_class": "he_from_en",
+      "intended_text": "מערכת"
+    },
+    {
+      "input": "PUBEMHV",
+      "expected_class": "he_from_en",
+      "intended_text": "פונקציה"
+    },
+    {
+      "input": "NJAC",
+      "expected_class": "he_from_en",
+      "intended_text": "מחשב"
+    },
+    {
+      "input": "NEKS<",
+      "expected_class": "he_from_en",
+      "intended_text": "מקלדת"
+    },
+    {
+      "input": "WLVם",
+      "expected_class": "he_from_en",
+      "intended_text": "שלום"
+    },
+    {
+      "input": "NGRF<",
+      "expected_class": "he_from_en",
+      "intended_text": "מערכת"
+    },
+    {
+      "input": "MXWB",
+      "expected_class": "he_from_en",
+      "intended_text": "מחשב"
+    },
+    {
+      "input": "WLVם",
+      "expected_class": "he_from_en",
+      "intended_text": "שלום"
+    },
+    {
+      "input": "WFH",
+      "expected_class": "he_from_en",
+      "intended_text": "שפה"
+    },
+    {
+      "input": "MWTNH",
+      "expected_class": "he_from_en",
+      "intended_text": "משתנה"
+    },
+    {
+      "input": "BDIQH",
+      "expected_class": "he_from_en",
+      "intended_text": "בדיקה"
+    },
+    {
+      "input": "FVNQCIH",
+      "expected_class": "he_from_en",
+      "intended_text": "פונקציה"
+    },
+    {
+      "input": "PUBEMHV",
+      "expected_class": "he_from_en",
+      "intended_text": "פונקציה"
+    },
+    {
+      "input": "TVKNIT",
+      "expected_class": "he_from_en",
+      "intended_text": "תוכנית"
+    },
+    {
+      "input": "MWTNH",
+      "expected_class": "he_from_en",
+      "intended_text": "משתנה"
+    },
+    {
+      "input": "сщьзгеук",
+      "expected_class": "en_from_ru",
+      "intended_text": "computer"
+    },
+    {
+      "input": "сщьзгеук",
+      "expected_class": "en_from_ru",
+      "intended_text": "computer"
+    },
+    {
+      "input": "мфкшфиду",
+      "expected_class": "en_from_ru",
+      "intended_text": "variable"
+    },
+    {
+      "input": "сщьзгеук",
+      "expected_class": "en_from_ru",
+      "intended_text": "computer"
+    },
+    {
+      "input": "ыныеуь",
+      "expected_class": "en_from_ru",
+      "intended_text": "system"
+    },
+    {
+      "input": "мфкшфиду",
+      "expected_class": "en_from_ru",
+      "intended_text": "variable"
+    },
+    {
+      "input": "дфтпгфпу",
+      "expected_class": "en_from_ru",
+      "intended_text": "language"
+    },
+    {
+      "input": "мфкшфиду",
+      "expected_class": "en_from_ru",
+      "intended_text": "variable"
+    },
+    {
+      "input": "цщкдв",
+      "expected_class": "en_from_ru",
+      "intended_text": "world"
+    },
+    {
+      "input": "цщкдв",
+      "expected_class": "en_from_ru",
+      "intended_text": "world"
+    },
+    {
+      "input": "ыныеуь",
+      "expected_class": "en_from_ru",
+      "intended_text": "system"
+    },
+    {
+      "input": "лунищфкв",
+      "expected_class": "en_from_ru",
+      "intended_text": "keyboard"
+    },
+    {
+      "input": "еуыештп",
+      "expected_class": "en_from_ru",
+      "intended_text": "testing"
+    },
+    {
+      "input": "зкщпкфь",
+      "expected_class": "en_from_ru",
+      "intended_text": "program"
+    },
+    {
+      "input": "лунищфкв",
+      "expected_class": "en_from_ru",
+      "intended_text": "keyboard"
+    },
+    {
+      "input": "ыныеуь",
+      "expected_class": "en_from_ru",
+      "intended_text": "system"
+    },
+    {
+      "input": "агтсешщт",
+      "expected_class": "en_from_ru",
+      "intended_text": "function"
+    },
+    {
+      "input": "еуыештп",
+      "expected_class": "en_from_ru",
+      "intended_text": "testing"
+    },
+    {
+      "input": "агтсешщт",
+      "expected_class": "en_from_ru",
+      "intended_text": "function"
+    },
+    {
+      "input": "ыныеуь",
+      "expected_class": "en_from_ru",
+      "intended_text": "system"
+    },
+    {
+      "input": "שורלד",
+      "expected_class": "en_from_he",
+      "intended_text": "world"
+    },
+    {
+      "input": "כעטבוארד",
+      "expected_class": "en_from_he",
+      "intended_text": "keyboard"
+    },
+    {
+      "input": "אקדאןמע",
+      "expected_class": "en_from_he",
+      "intended_text": "testing"
+    },
+    {
+      "input": "׳םרךג",
+      "expected_class": "en_from_he",
+      "intended_text": "world"
+    },
+    {
+      "input": "פרוגראמ",
+      "expected_class": "en_from_he",
+      "intended_text": "program"
+    },
+    {
+      "input": "השרןשנךק",
+      "expected_class": "en_from_he",
+      "intended_text": "variable"
+    },
+    {
+      "input": "׳םרךג",
+      "expected_class": "en_from_he",
+      "intended_text": "world"
+    },
+    {
+      "input": "פרםערשצ",
+      "expected_class": "en_from_he",
+      "intended_text": "program"
+    },
+    {
+      "input": "פרוגראמ",
+      "expected_class": "en_from_he",
+      "intended_text": "program"
+    },
+    {
+      "input": "פרםערשצ",
+      "expected_class": "en_from_he",
+      "intended_text": "program"
+    },
+    {
+      "input": "בםצפואקר",
+      "expected_class": "en_from_he",
+      "intended_text": "computer"
+    },
+    {
+      "input": "השרןשנךק",
+      "expected_class": "en_from_he",
+      "intended_text": "variable"
+    },
+    {
+      "input": "פונצתיונ",
+      "expected_class": "en_from_he",
+      "intended_text": "function"
+    },
+    {
+      "input": "שורלד",
+      "expected_class": "en_from_he",
+      "intended_text": "world"
+    },
+    {
+      "input": "לאנגואגע",
+      "expected_class": "en_from_he",
+      "intended_text": "language"
+    },
+    {
+      "input": "פרוגראמ",
+      "expected_class": "en_from_he",
+      "intended_text": "program"
+    },
+    {
+      "input": "ואריאבלע",
+      "expected_class": "en_from_he",
+      "intended_text": "variable"
+    },
+    {
+      "input": "צומפותער",
+      "expected_class": "en_from_he",
+      "intended_text": "computer"
+    },
+    {
+      "input": "סטסתעמ",
+      "expected_class": "en_from_he",
+      "intended_text": "system"
+    },
+    {
+      "input": "סטסתעמ",
+      "expected_class": "en_from_he",
+      "intended_text": "system"
+    },
+    {
+      "input": "ЬУКЛЕ",
+      "expected_class": "he_from_ru",
+      "intended_text": "מערכת"
+    },
+    {
+      "input": "ЗГИУЬРМ",
+      "expected_class": "he_from_ru",
+      "intended_text": "פונקציה"
+    },
+    {
+      "input": "ЬУКЛЕ",
+      "expected_class": "he_from_ru",
+      "intended_text": "מערכת"
+    },
+    {
+      "input": "ЬЦЕТР",
+      "expected_class": "he_from_ru",
+      "intended_text": "משתנה"
+    },
+    {
+      "input": "ПГЛЩ",
+      "expected_class": "he_from_ru",
+      "intended_text": "עולם"
+    },
+    {
+      "input": "ТФБИМ",
+      "expected_class": "he_from_ru",
+      "intended_text": "משתנה"
+    },
+    {
+      "input": "ТОФС",
+      "expected_class": "he_from_ru",
+      "intended_text": "מחשב"
+    },
+    {
+      "input": "ЬЙДВЕ",
+      "expected_class": "he_from_ru",
+      "intended_text": "מקלדת"
+    },
+    {
+      "input": "ЬЧЦИ",
+      "expected_class": "he_from_ru",
+      "intended_text": "מחשב"
+    },
+    {
+      "input": "ЬЙДВЕ",
+      "expected_class": "he_from_ru",
+      "intended_text": "מקלדת"
+    },
+    {
+      "input": "ЬЧЦИ",
+      "expected_class": "he_from_ru",
+      "intended_text": "מחשב"
+    },
+    {
+      "input": "ЬЦЕТР",
+      "expected_class": "he_from_ru",
+      "intended_text": "משתנה"
+    },
+    {
+      "input": "ИВШЙР",
+      "expected_class": "he_from_ru",
+      "intended_text": "בדיקה"
+    },
+    {
+      "input": "ТОФС",
+      "expected_class": "he_from_ru",
+      "intended_text": "מחשב"
+    },
+    {
+      "input": "ТФБИМ",
+      "expected_class": "he_from_ru",
+      "intended_text": "משתנה"
+    },
+    {
+      "input": "ТПКАБ",
+      "expected_class": "he_from_ru",
+      "intended_text": "מערכת"
+    },
+    {
+      "input": "ЦДМם",
+      "expected_class": "he_from_ru",
+      "intended_text": "שלום"
+    },
+    {
+      "input": "ИВШЙР",
+      "expected_class": "he_from_ru",
+      "intended_text": "בדיקה"
+    },
+    {
+      "input": "ТУЛЫБ",
+      "expected_class": "he_from_ru",
+      "intended_text": "מקלדת"
+    },
+    {
+      "input": "ЦДМם",
+      "expected_class": "he_from_ru",
+      "intended_text": "שלום"
+    },
+    {
+      "input": "זפדר",
+      "expected_class": "ru_from_he",
+      "intended_text": "язык"
+    },
+    {
+      "input": "נתצנבהחדפטבת",
+      "expected_class": "ru_from_he",
+      "intended_text": "тестирование"
+    },
+    {
+      "input": "גהחוהפוופ",
+      "expected_class": "ru_from_he",
+      "intended_text": "программа"
+    },
+    {
+      "input": "מאבמניחגכטנא",
+      "expected_class": "ru_from_he",
+      "intended_text": "тестирование"
+    },
+    {
+      "input": "נתצנבהחדפטבת",
+      "expected_class": "ru_from_he",
+      "intended_text": "тестирование"
+    },
+    {
+      "input": "מאבמניחגכטנא",
+      "expected_class": "ru_from_he",
+      "intended_text": "тестирование"
+    },
+    {
+      "input": "שקטר׳נז",
+      "expected_class": "ru_from_he",
+      "intended_text": "функция"
+    },
+    {
+      "input": "עאיאהאטטכז",
+      "expected_class": "ru_from_he",
+      "intended_text": "переменная"
+    },
+    {
+      "input": "עאיאהאטטכז",
+      "expected_class": "ru_from_he",
+      "intended_text": "переменная"
+    },
+    {
+      "input": "זפסר",
+      "expected_class": "ru_from_he",
+      "intended_text": "язык"
+    },
+    {
+      "input": "הני",
+      "expected_class": "ru_from_he",
+      "intended_text": "мир"
+    },
+    {
+      "input": "שקטר׳נז",
+      "expected_class": "ru_from_he",
+      "intended_text": "функция"
+    },
+    {
+      "input": "עינגאמ",
+      "expected_class": "ru_from_he",
+      "intended_text": "привет"
+    },
+    {
+      "input": "עיחויכההכ",
+      "expected_class": "ru_from_he",
+      "intended_text": "программа"
+    },
+    {
+      "input": "עיחויכההכ",
+      "expected_class": "ru_from_he",
+      "intended_text": "программа"
+    },
+    {
+      "input": "אעטרשבז",
+      "expected_class": "ru_from_he",
+      "intended_text": "функция"
+    },
+    {
+      "input": "רלכגנכמקיכ",
+      "expected_class": "ru_from_he",
+      "intended_text": "клавиатура"
+    },
+    {
+      "input": "רחהעצץמאי",
+      "expected_class": "ru_from_he",
+      "intended_text": "компьютер"
+    },
+    {
+      "input": "רכפדבפנעהפ",
+      "expected_class": "ru_from_he",
+      "intended_text": "клавиатура"
+    },
+    {
+      "input": "רחוגמ.נתה",
+      "expected_class": "ru_from_he",
+      "intended_text": "компьютер"
+    }
+  ],
+  "total": 180
+}

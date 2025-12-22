@@ -2,7 +2,6 @@ import SwiftUI
 
 struct SettingsView: View {
     @StateObject private var settings = SettingsManager.shared
-    @Environment(\.dismiss) private var dismiss
     @State private var selectedTab = 0
     
     var body: some View {
@@ -10,15 +9,15 @@ struct SettingsView: View {
             header
             Divider()
             
-            TabView(selection: $selectedTab) {
-                GeneralTab(settings: settings).tag(0)
-                HotkeyTab(settings: settings).tag(1)
-                AppsTab(settings: settings).tag(2)
+            // Content based on selected tab
+            Group {
+                switch selectedTab {
+                case 0: GeneralTab(settings: settings)
+                case 1: HotkeyTab(settings: settings)
+                case 2: AppsTab(settings: settings)
+                default: GeneralTab(settings: settings)
+                }
             }
-            .tabViewStyle(.automatic)
-            
-            Divider()
-            footer
         }
         .frame(width: 420, height: 480)
         .background(.ultraThinMaterial)
@@ -49,19 +48,10 @@ struct SettingsView: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
+            
+            Text("Version 1.0.0").font(.system(size: 10)).foregroundStyle(.tertiary)
         }
         .padding(20)
-    }
-    
-    private var footer: some View {
-        HStack {
-            Text("Version 1.0.0").font(.system(size: 11)).foregroundStyle(.tertiary)
-            Spacer()
-            Button("Done") { dismiss() }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.regular)
-        }
-        .padding(16)
     }
 }
 

@@ -11,8 +11,53 @@ struct OMFKApp: App {
             MenuBarView()
         }
         .menuBarExtraStyle(.window)
+        
+        // Settings window (opened via WindowManager)
+        Window("OMFK Settings", id: "settings") {
+            SettingsView()
+        }
+        .windowStyle(.hiddenTitleBar)
+        .windowResizability(.contentSize)
+        .defaultPosition(.center)
+        
+        // History window
+        Window("History", id: "history") {
+            HistoryView()
+        }
+        .windowStyle(.hiddenTitleBar)
+        .windowResizability(.contentSize)
+        .defaultPosition(.center)
     }
 }
+
+// MARK: - Window Manager
+
+@MainActor
+final class WindowManager {
+    static let shared = WindowManager()
+    
+    func openSettings() {
+        if let url = URL(string: "omfk://settings") {
+            NSWorkspace.shared.open(url)
+        }
+        // Fallback: use Environment openWindow
+        NSApp.activate(ignoringOtherApps: true)
+        for window in NSApp.windows where window.identifier?.rawValue == "settings" {
+            window.makeKeyAndOrderFront(nil)
+            return
+        }
+    }
+    
+    func openHistory() {
+        NSApp.activate(ignoringOtherApps: true)
+        for window in NSApp.windows where window.identifier?.rawValue == "history" {
+            window.makeKeyAndOrderFront(nil)
+            return
+        }
+    }
+}
+
+// MARK: - App Delegate
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {

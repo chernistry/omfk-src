@@ -5,109 +5,163 @@ struct MenuBarView: View {
     @Environment(\.openWindow) private var openWindow
     
     var body: some View {
-        VStack(spacing: 16) {
-            // Status pill
-            statusPill
+        VStack(alignment: .leading, spacing: 0) {
+            // Status header with Liquid Glass
+            statusHeader
             
-            // Quick controls
-            VStack(spacing: 12) {
-                ControlRow(icon: "arrow.left.arrow.right", title: "Auto-switch", isOn: $settings.autoSwitchLayout)
-                ControlRow(icon: "option", title: "Hotkey", isOn: $settings.hotkeyEnabled)
+            Divider()
+            
+            // Quick toggles
+            VStack(spacing: 2) {
+                MenuToggleRow(
+                    title: "Auto-switch layout",
+                    isOn: $settings.autoSwitchLayout
+                )
+                MenuToggleRow(
+                    title: "Hotkey enabled",
+                    isOn: $settings.hotkeyEnabled
+                )
             }
-            .padding(.horizontal, 4)
+            .padding(.vertical, 6)
+            
+            Divider()
             
             // Actions
-            HStack(spacing: 12) {
-                ActionButton(icon: "gear", title: "Settings") { openWindow(id: "settings") }
-                ActionButton(icon: "clock", title: "History") { openWindow(id: "history") }
+            VStack(spacing: 2) {
+                MenuActionRow(title: "Settings...", shortcut: "⌘,") {
+                    openWindow(id: "settings")
+                }
+                MenuActionRow(title: "History") {
+                    openWindow(id: "history")
+                }
             }
+            .padding(.vertical, 6)
+            
+            Divider()
             
             // Quit
             Button(action: { NSApplication.shared.terminate(nil) }) {
                 Text("Quit OMFK")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .padding(.vertical, 6)
         }
-        .padding(20)
-        .frame(width: 260)
+        .frame(width: 240)
     }
     
-    private var statusPill: some View {
+    private var statusHeader: some View {
         HStack(spacing: 10) {
-            Circle()
-                .fill(settings.isEnabled ? Color.green : Color.gray.opacity(0.4))
-                .frame(width: 8, height: 8)
-                .shadow(color: settings.isEnabled ? .green.opacity(0.5) : .clear, radius: 4)
+            // Status indicator with glass effect on macOS 26
+            statusIndicator
             
             Text(settings.isEnabled ? "Active" : "Paused")
-                .font(.system(size: 13, weight: .medium))
+                .font(.headline)
             
             Spacer()
             
             Toggle("", isOn: $settings.isEnabled)
                 .toggleStyle(.switch)
                 .labelsHidden()
-                .scaleEffect(0.75)
+                .controlSize(.small)
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, 14)
         .padding(.vertical, 12)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+    }
+    
+    @ViewBuilder
+    private var statusIndicator: some View {
+        if #available(macOS 26.0, *) {
+            Circle()
+                .fill(settings.isEnabled ? Color.green : Color.secondary.opacity(0.4))
+                .frame(width: 10, height: 10)
+                .glassEffect(.regular.interactive(), in: Circle())
+        } else {
+            Circle()
+                .fill(settings.isEnabled ? Color.green : Color.secondary.opacity(0.4))
+                .frame(width: 8, height: 8)
+        }
     }
 }
 
-struct ControlRow: View {
-    let icon: String
+struct MenuToggleRow: View {
     let title: String
     @Binding var isOn: Bool
+    @State private var isHovered = false
     
     var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: icon)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(isOn ? .blue : .secondary)
-                .frame(width: 24)
-            
+        HStack {
             Text(title)
-                .font(.system(size: 13))
-            
             Spacer()
-            
             Toggle("", isOn: $isOn)
                 .toggleStyle(.switch)
                 .labelsHidden()
-                .scaleEffect(0.75)
+                .controlSize(.small)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
+        .padding(.horizontal, 14)
+        .padding(.vertical, 6)
+        .background(hoverBackground)
+        .cornerRadius(4)
+        .padding(.horizontal, 6)
+        .onHover { isHovered = $0 }
+    }
+    
+    @ViewBuilder
+    private var hoverBackground: some View {
+        if isHovered {
+            if #available(macOS 26.0, *) {
+                Color.clear.glassEffect(.regular, in: RoundedRectangle(cornerRadius: 4))
+            } else {
+                Color.accentColor.opacity(0.1)
+            }
+        } else {
+            Color.clear
+        }
     }
 }
 
-struct ActionButton: View {
-    let icon: String
+struct MenuActionRow: View {
     let title: String
+    var shortcut: String? = nil
     let action: () -> Void
     @State private var isHovered = false
     
     var body: some View {
         Button(action: action) {
-            VStack(spacing: 6) {
-                Image(systemName: icon)
-                    .font(.system(size: 18, weight: .light))
+            HStack {
                 Text(title)
-                    .font(.system(size: 11))
+                Spacer()
+                if let shortcut {
+                    Text(shortcut)
+                        .foregroundStyle(.secondary)
+                        .font(.callout)
+                }
             }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 14)
-            .background {
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(isHovered ? AnyShapeStyle(.white.opacity(0.1)) : AnyShapeStyle(.ultraThinMaterial))
-            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 6)
+            .background(hoverBackground)
+            .cornerRadius(4)
+            .padding(.horizontal, 6)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
+    }
+    
+    @ViewBuilder
+    private var hoverBackground: some View {
+        if isHovered {
+            if #available(macOS 26.0, *) {
+                Color.clear.glassEffect(.regular, in: RoundedRectangle(cornerRadius: 4))
+            } else {
+                Color.accentColor.opacity(0.1)
+            }
+        } else {
+            Color.clear
+        }
     }
 }
 

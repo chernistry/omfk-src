@@ -115,6 +115,19 @@ while true; do
             FINETUNED_MODEL="model_production_he_qwerty.pth"
             LAYOUTS_SPEC="../../.sdd/layouts.json"
 
+            # Ultra mode: crank up dataset + corpus usage for maximum quality (will take longer).
+            ULTRA="${OMFK_ULTRA:-0}"
+            if [ "$ULTRA" = "1" ]; then
+                echo -e "${YELLOW}OMFK_ULTRA=1 enabled → maximizing training sizes (expect long runtimes).${NC}"
+                : "${OMFK_BASE_SAMPLES:=20000000}"
+                : "${OMFK_BASE_EPOCHS:=120}"
+                : "${OMFK_BASE_PATIENCE:=20}"
+                : "${OMFK_HE_QWERTY_SAMPLES:=2000000}"
+                : "${OMFK_HE_QWERTY_EPOCHS:=30}"
+                : "${OMFK_HE_QWERTY_PATIENCE:=8}"
+                : "${OMFK_MAX_CORPUS_WORDS:=0}"
+            fi
+
             BASE_SAMPLES="${OMFK_BASE_SAMPLES:-5000000}"
             BASE_EPOCHS="${OMFK_BASE_EPOCHS:-100}"
             BASE_BATCH_SIZE="${OMFK_BASE_BATCH_SIZE:-512}"

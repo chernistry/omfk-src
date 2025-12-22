@@ -18,7 +18,7 @@ def export(args):
         model = LayoutClassifier()
         print("Loading LayoutClassifier (basic)")
     
-    model.load_state_dict(torch.load(args.model_in, weights_only=True))
+    model.load_state_dict(torch.load(args.model_in, map_location='cpu', weights_only=True))
     model.eval()
     
     # Count parameters

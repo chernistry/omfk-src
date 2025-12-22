@@ -133,9 +133,9 @@ actor ConfidenceRouter {
                         logger.info("🔍 Validation: \(DecisionLogger.tokenSummary(token), privacy: .public) → \(DecisionLogger.tokenSummary(converted), privacy: .public) | source_score=\(String(format: "%.2f", sourceScore)) target_score=\(String(format: "%.2f", targetScore))")
                         
                         // Only accept correction if:
-                        // 1. Target score is good (converted text is valid)
-                        // 2. Target score is significantly better than source score (original was gibberish)
-                        let isValidConversion = targetScore > -6.0 && (targetScore - sourceScore) > 1.0
+                        // 1. Target score is reasonable (Russian scores tend to be lower than English/Hebrew)
+                        // 2. Target score is better than source score (original was gibberish)
+                        let isValidConversion = targetScore > -9.0 && targetScore > sourceScore
                         
                         if isValidConversion {
                             let deepResult = LanguageDecision(

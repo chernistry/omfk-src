@@ -29,7 +29,7 @@ actor CorrectionEngine {
         let wasAutomatic: Bool
         let autoHypothesis: LanguageHypothesis?
         let timestamp: Date
-        let hadTrailingSpace: Bool  // Whether the original had a trailing space
+        let hadTrailingSpace: Bool
         
         struct Alternative {
             let text: String
@@ -45,9 +45,9 @@ actor CorrectionEngine {
             alternatives[currentIndex]
         }
         
-        /// Check if cycling state is still valid (within 10 seconds)
+        /// Check if cycling state is still valid (60 seconds timeout)
         var isValid: Bool {
-            Date().timeIntervalSince(timestamp) < 10.0
+            Date().timeIntervalSince(timestamp) < 60.0
         }
     }
     
@@ -148,9 +148,10 @@ actor CorrectionEngine {
             logger.info("✅ VALID CONVERSION FOUND! (Ensemble)")
             
             // Store cycling state for potential undo
+            // Order: [0]=original (undo), [1]=corrected (current), [2+]=other alternatives
             var alternatives: [CyclingState.Alternative] = [
-                CyclingState.Alternative(text: text, hypothesis: nil),  // Original
-                CyclingState.Alternative(text: corrected, hypothesis: decision.layoutHypothesis)  // Corrected
+                CyclingState.Alternative(text: text, hypothesis: nil),  // [0] Original (undo target)
+                CyclingState.Alternative(text: corrected, hypothesis: decision.layoutHypothesis)  // [1] Corrected
             ]
             
             // Add other possible conversions
@@ -161,14 +162,16 @@ actor CorrectionEngine {
                 }
             }
             
+            // currentIndex=1 means we're at corrected; next() will go to 2, then 0 (undo)
+            // But we want first hotkey press to UNDO, so we need special handling
             cyclingState = CyclingState(
                 originalText: text,
                 alternatives: alternatives,
-                currentIndex: 1,  // Start at corrected version
+                currentIndex: 1,  // Currently showing corrected
                 wasAutomatic: true,
                 autoHypothesis: decision.layoutHypothesis,
                 timestamp: Date(),
-                hadTrailingSpace: true  // Auto-correction triggers on space
+                hadTrailingSpace: true
             )
             
             let result = await applyCorrection(original: text, corrected: corrected, from: sourceLayout, to: decision.language, hypothesis: decision.layoutHypothesis)
@@ -228,56 +231,92 @@ actor CorrectionEngine {
             return await cycleCorrection(bundleId: bundleId)
         }
         
-        // New text - build alternatives list
-        let decision = await router.route(token: text, context: DetectorContext(lastLanguage: nil))
-        var alternatives: [CyclingState.Alternative] = []
+        // New text - build alternatives with "undo-first" semantics:
+        // [0] = original (undo target)
+        // [1] = best guess (most likely intended)
+        // [2+] = other alternatives sorted by likelihood
         
-        // First alternative: original text
+        var alternatives: [CyclingState.Alternative] = []
+        let activeLayouts = await settings.activeLayouts
+        
+        // Detect what the text likely is
+        let decision = await router.route(token: text, context: DetectorContext(lastLanguage: nil))
+        
+        // [0] Original text (undo target)
         alternatives.append(CyclingState.Alternative(text: text, hypothesis: nil))
         
         // Generate all possible conversions
-        let sourceLayouts: [Language] = [.english, .russian, .hebrew]
-        let targetLanguages: [Language] = [.russian, .english, .hebrew]
-        let activeLayouts = await settings.activeLayouts
+        let conversions: [(from: Language, to: Language)] = [
+            (.english, .russian),
+            (.english, .hebrew),
+            (.russian, .english),
+            (.russian, .hebrew),
+            (.hebrew, .english),
+            (.hebrew, .russian),
+        ]
         
-        for source in sourceLayouts {
-            for target in targetLanguages where target != source {
-                if let converted = LayoutMapper.shared.convert(text, from: source, to: target, activeLayouts: activeLayouts), converted != text {
-                    let hyp = hypothesisFor(source: source, target: target)
-                    if !alternatives.contains(where: { $0.text == converted }) {
-                        alternatives.append(CyclingState.Alternative(text: converted, hypothesis: hyp))
-                    }
-                }
+        var otherAlternatives: [(text: String, hyp: LanguageHypothesis, score: Double)] = []
+        
+        for (from, to) in conversions {
+            if let converted = LayoutMapper.shared.convert(text, from: from, to: to, activeLayouts: activeLayouts),
+               converted != text,
+               !alternatives.contains(where: { $0.text == converted }),
+               !otherAlternatives.contains(where: { $0.text == converted }) {
+                let hyp = hypothesisFor(source: from, target: to)
+                // Score: higher if matches detected hypothesis
+                let score = (hyp == decision.layoutHypothesis) ? 1.0 : 0.5
+                otherAlternatives.append((text: converted, hyp: hyp, score: score))
             }
         }
         
+        // Sort by score (best guess first)
+        otherAlternatives.sort { $0.score > $1.score }
+        
+        // Add to alternatives
+        for alt in otherAlternatives {
+            alternatives.append(CyclingState.Alternative(text: alt.text, hypothesis: alt.hyp))
+        }
+        
         guard alternatives.count > 1 else {
-            logger.warning("❌ No conversions possible")
+            logger.warning("❌ No conversions possible for: \(text)")
             return nil
         }
         
-        // Start cycling - first call to cycleCorrection will return index 1 (first conversion)
+        logger.info("🔄 Built \(alternatives.count) alternatives: original → best guess → others")
+        
+        // Start at index 0 (original), first next() will go to 1 (best guess)
         cyclingState = CyclingState(
             originalText: text,
             alternatives: alternatives,
-            currentIndex: 0,  // next() will move to 1
+            currentIndex: 0,
             wasAutomatic: false,
             autoHypothesis: decision.layoutHypothesis,
             timestamp: Date(),
-            hadTrailingSpace: false  // Manual correction - no trailing space
+            hadTrailingSpace: false
         )
         
         return await cycleCorrection(bundleId: bundleId)
     }
     
     /// Cycle to next alternative on repeated hotkey press
+    /// For auto-correction: first press = undo (go to original)
+    /// For manual: cycles through alternatives
     func cycleCorrection(bundleId: String? = nil) async -> String? {
         guard var state = cyclingState, state.isValid else {
             logger.warning("❌ No cycling state or expired")
             return nil
         }
         
-        let alt = state.next()
+        // For auto-correction, first hotkey press should UNDO (go to index 0)
+        let alt: CyclingState.Alternative
+        if state.wasAutomatic && state.currentIndex == 1 {
+            // First press after auto-correction: go to original (undo)
+            state.currentIndex = 0
+            alt = state.alternatives[0]
+            logger.info("🔄 UNDO auto-correction → original")
+        } else {
+            alt = state.next()
+        }
         cyclingState = state
         
         logger.info("🔄 Cycling to: \(DecisionLogger.tokenSummary(alt.text), privacy: .public) (index \(state.currentIndex)/\(state.alternatives.count))")
@@ -319,6 +358,16 @@ actor CorrectionEngine {
     /// Check if cycling state had trailing space
     func cyclingHadTrailingSpace() -> Bool {
         return cyclingState?.hadTrailingSpace ?? false
+    }
+    
+    /// Get target language from last correction hypothesis
+    func getLastCorrectionTargetLanguage() -> Language? {
+        guard let hyp = cyclingState?.current.hypothesis else { return nil }
+        switch hyp {
+        case .ru, .ruFromEnLayout, .ruFromHeLayout: return .russian
+        case .en, .enFromRuLayout, .enFromHeLayout: return .english
+        case .he, .heFromEnLayout, .heFromRuLayout: return .hebrew
+        }
     }
     
     private func hypothesisFor(source: Language, target: Language) -> LanguageHypothesis {

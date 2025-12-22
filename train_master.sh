@@ -143,8 +143,10 @@ while true; do
             MAX_CORPUS_WORDS="${OMFK_MAX_CORPUS_WORDS:-2000000}"
             FORCE_RETRAIN="${OMFK_FORCE_RETRAIN:-0}"
             SKIP_RETRAIN_ON_LAYOUT_CHANGE="${OMFK_SKIP_BASE_RETRAIN_ON_LAYOUT_CHANGE:-0}"
+            BASE_DATASET="${OMFK_BASE_DATASET:-training_data_combined.csv}"
+            FORCE_REGEN_DATA="${OMFK_FORCE_REGEN_DATA:-0}"
 
-            echo -e "${BLUE}Training config:${NC} base_samples=${BASE_SAMPLES} he_qwerty_samples=${HE_QWERTY_SAMPLES} max_corpus_words=${MAX_CORPUS_WORDS}"
+            echo -e "${BLUE}Training config:${NC} base_dataset=${BASE_DATASET} base_samples=${BASE_SAMPLES} he_qwerty_samples=${HE_QWERTY_SAMPLES} max_corpus_words=${MAX_CORPUS_WORDS}"
 
             should_train_base=0
             if [ "$FORCE_RETRAIN" = "1" ]; then
@@ -176,25 +178,29 @@ print("Base model checkpoint OK:", path)
 PY
             fi
             
-            # Generate data
             if [ "$should_train_base" = "1" ] || [ ! -f "$BASE_MODEL" ]; then
                 echo -e "${YELLOW}Base model not found (${BASE_MODEL}). Training from scratch...${NC}"
-                echo "Generating training data from corpus (${BASE_SAMPLES} samples, balanced, up to 5 words)..."
-                # Path to corpus is ../../data/processed relative to Tools/CoreMLTrainer
-                python3 generate_data.py \
-                    --count "$BASE_SAMPLES" \
-                    --balance 0.5 \
-                    --max-phrase-len 5 \
-                    --max-corpus-words "$MAX_CORPUS_WORDS" \
-                    --output training_data_real.csv \
-                    --corpus_dir "../../$PROCESSED_DIR"
+                # Generate base dataset unless user already prepared it (e.g. training_data_combined.csv).
+                if [ -f "$BASE_DATASET" ] && [ "$FORCE_REGEN_DATA" != "1" ]; then
+                    echo -e "${GREEN}Found base dataset: ${BASE_DATASET} (set OMFK_FORCE_REGEN_DATA=1 to regenerate)${NC}"
+                else
+                    echo "Generating training data from corpus (${BASE_SAMPLES} samples, balanced, up to 5 words)..."
+                    # Path to corpus is ../../data/processed relative to Tools/CoreMLTrainer
+                    python3 generate_data.py \
+                        --count "$BASE_SAMPLES" \
+                        --balance 0.5 \
+                        --max-phrase-len 5 \
+                        --max-corpus-words "$MAX_CORPUS_WORDS" \
+                        --output "$BASE_DATASET" \
+                        --corpus_dir "../../$PROCESSED_DIR"
+                fi
                 
                 # Train with ALL advanced techniques
                 echo "Training base model (ensemble, augmentation, mixup)..."
                 echo "This will take 30-60 minutes..."
                 python3 train.py --epochs "$BASE_EPOCHS" --batch_size "$BASE_BATCH_SIZE" --lr "$BASE_LR" --patience "$BASE_PATIENCE" \
                     --ensemble --augment --mixup \
-                    --data training_data_real.csv --model_out "$BASE_MODEL"
+                    --data "$BASE_DATASET" --model_out "$BASE_MODEL"
             else
                 echo -e "${GREEN}Found base model: ${BASE_MODEL}${NC}"
             fi

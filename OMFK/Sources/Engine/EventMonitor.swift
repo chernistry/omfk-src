@@ -11,10 +11,11 @@ final class EventMonitor {
     private var runLoopSource: CFRunLoopSource?
     private var buffer: String = ""
     private var lastEventTime: Date = .distantPast
-    private var lastCorrectedLength: Int = 0  // Track length of last corrected text for cycling
-    private var lastCorrectedText: String = ""  // Track last corrected text for manual undo
+    private var lastCorrectedLength: Int = 0
+    private var lastCorrectedText: String = ""
     private let logger = Logger.events
     private let settings: SettingsManager
+    private var isReplacing: Bool = false  // Flag to ignore our own events during replacement
     
     init(engine: CorrectionEngine) {
         self.engine = engine
@@ -79,6 +80,8 @@ final class EventMonitor {
     }
     
     private var optionKeyWasPressed = false  // Track Option key state for tap detection
+    private var shiftWasHeldWithOption = false  // Track if Shift was held with Option
+    private var phraseBuffer: String = ""  // Buffer for entire phrase (cleared on app switch/click)
     
     private func handleEvent(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent> {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
@@ -89,24 +92,43 @@ final class EventMonitor {
             return Unmanaged.passUnretained(event)
         }
         
+        // Ignore our own events during text replacement
+        if isReplacing {
+            return Unmanaged.passUnretained(event)
+        }
+        
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
         let flags = event.flags
         
         // Handle flagsChanged for Option key (modifier keys don't generate keyDown)
         if type == .flagsChanged {
             let isOptionPressed = flags.contains(.maskAlternate)
+            let isShiftPressed = flags.contains(.maskShift)
             
             // Detect Option key tap (press and release without other keys)
             if settings.hotkeyEnabled && settings.hotkeyKeyCode == 58 {
                 if isOptionPressed && !optionKeyWasPressed {
-                    // Option just pressed
+                    // Option just pressed - track if Shift is also held
                     optionKeyWasPressed = true
+                    shiftWasHeldWithOption = isShiftPressed
                 } else if !isOptionPressed && optionKeyWasPressed {
                     // Option just released - this is a tap!
                     optionKeyWasPressed = false
-                    logger.info("🔥 OPTION KEY TAP DETECTED - triggering manual correction")
-                    Task { @MainActor in
-                        await handleHotkeyPress()
+                    let wasShiftHeld = shiftWasHeldWithOption
+                    shiftWasHeldWithOption = false
+                    
+                    if wasShiftHeld {
+                        // Shift+Option = convert last phrase/line
+                        logger.info("🔥 SHIFT+OPTION TAP - converting last phrase")
+                        Task { @MainActor in
+                            await handleHotkeyPress(convertPhrase: true)
+                        }
+                    } else {
+                        // Option only = convert last word
+                        logger.info("🔥 OPTION TAP - converting last word")
+                        Task { @MainActor in
+                            await handleHotkeyPress(convertPhrase: false)
+                        }
                     }
                 }
             }
@@ -116,6 +138,7 @@ final class EventMonitor {
         // Reset option tracking if any other key is pressed while Option is held
         if optionKeyWasPressed {
             optionKeyWasPressed = false
+            shiftWasHeldWithOption = false
         }
         
         guard type == .keyDown else {
@@ -131,11 +154,13 @@ final class EventMonitor {
                 logger.info("⏱️ Buffer timeout (\(String(format: "%.1f", timeSinceLastEvent))s) - clearing buffer: \(DecisionLogger.tokenSummary(self.buffer), privacy: .public)")
             }
             buffer = ""
+            phraseBuffer = ""  // Also clear phrase on timeout
         }
         lastEventTime = now
         
         if let chars = event.keyboardEventCharacters {
             buffer.append(chars)
+            phraseBuffer.append(chars)
             logger.info("⌨️ Typed: \(DecisionLogger.tokenSummary(chars), privacy: .public) | Buffer: \(DecisionLogger.tokenSummary(self.buffer), privacy: .public)")
             
             // Reset cycling state on new input
@@ -148,8 +173,11 @@ final class EventMonitor {
             // Process on word boundaries
             if chars.rangeOfCharacter(from: .whitespacesAndNewlines) != nil {
                 logger.info("📍 Word boundary detected (space/newline) - processing buffer")
+                // Capture buffer content before clearing to avoid race condition
+                let textToProcess = buffer
+                buffer = ""  // Clear immediately to prevent next char from being added
                 Task { @MainActor in
-                    await processBuffer()
+                    await self.processBufferContent(textToProcess)
                 }
             }
         } else {
@@ -159,17 +187,18 @@ final class EventMonitor {
         return Unmanaged.passUnretained(event)
     }
     
-    private func processBuffer() async {
-        let text = buffer.trimmingCharacters(in: .whitespacesAndNewlines)
+    private func processBufferContent(_ bufferContent: String) async {
+        let text = bufferContent.trimmingCharacters(in: .whitespacesAndNewlines)
         guard text.count >= 3 else {
             logger.debug("⏭️ Buffer too short (\(text.count) chars), skipping: \(DecisionLogger.tokenSummary(text), privacy: .public)")
             return
         }
         
-        // Calculate actual length in buffer (including trailing space that triggered processing)
-        let bufferLength = buffer.count
+        // Count only the word length (without trailing whitespace)
+        // The space that triggered processing is AFTER the cursor, we only delete the word
+        let wordLength = text.count
         
-        logger.info("🔍 Processing buffer: \(DecisionLogger.tokenSummary(text), privacy: .public) (buffer len: \(bufferLength))")
+        logger.info("🔍 Processing buffer: \(DecisionLogger.tokenSummary(text), privacy: .public) (word len: \(wordLength))")
         
         let bundleId = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
         logger.info("📱 Frontmost app: \(bundleId ?? "unknown", privacy: .public)")
@@ -181,8 +210,6 @@ final class EventMonitor {
         
         logger.info("✅ Correction enabled for this app - proceeding...")
 
-        // If auto-switch is enabled, treat the preferred language as the expected layout.
-        // This makes the engine more decisive about converting words into the user's primary layout.
         let expectedLayout: Language? = settings.autoSwitchLayout ? settings.preferredLanguage : nil
         if let expected = expectedLayout {
             logger.info("🎯 Auto-switch enabled, expected layout: \(expected.rawValue, privacy: .public)")
@@ -190,25 +217,19 @@ final class EventMonitor {
 
         if let corrected = await engine.correctText(text, expectedLayout: expectedLayout) {
             logger.info("✅ CORRECTION APPLIED: \(DecisionLogger.tokenSummary(text), privacy: .public) → \(DecisionLogger.tokenSummary(corrected), privacy: .public)")
-            // Delete only the word (not the trailing space), replace with corrected text
-            // The space that triggered processing is already in the field after the cursor
-            // We need to go back past the space, delete the word, type corrected, then move forward
-            
-            // Simpler approach: delete bufferLength chars (including space), type corrected + space
-            await replaceText(with: corrected + " ", originalLength: bufferLength)
-            // Store the corrected text length (with space) for potential cycling
+            // Delete word + the space that triggered (cursor is after space)
+            await replaceText(with: corrected + " ", originalLength: wordLength + 1)
             lastCorrectedLength = corrected.count + 1
             lastCorrectedText = corrected
         } else {
             logger.info("ℹ️ No correction needed for: \(DecisionLogger.tokenSummary(text), privacy: .public)")
         }
         
-        buffer = ""
-        logger.debug("🧹 Buffer cleared")
+        logger.debug("🧹 Buffer processing complete")
     }
     
-    private func handleHotkeyPress() async {
-        logger.info("🔥 === HOTKEY PRESSED - Manual Correction Mode ===")
+    private func handleHotkeyPress(convertPhrase: Bool = false) async {
+        logger.info("🔥 === HOTKEY PRESSED - \(convertPhrase ? "PHRASE" : "WORD") Mode ===")
         
         // First check if we have a recent auto-correction to undo/cycle
         if await engine.hasCyclingState() {
@@ -220,14 +241,24 @@ final class EventMonitor {
                 logger.info("✅ CYCLING: → \(DecisionLogger.tokenSummary(corrected), privacy: .public) (deleting \(lengthToDelete) chars, space: \(hadSpace))")
                 await replaceText(with: textToType, originalLength: lengthToDelete)
                 lastCorrectedLength = textToType.count
+                lastCorrectedText = corrected
             }
             return
         }
         
-        // No recent correction - get selected text or last word
-        let text = await getSelectedOrLastWord()
+        // Get text to convert
+        let text: String
+        if convertPhrase {
+            // Shift+Option: use entire phrase buffer
+            text = phraseBuffer.trimmingCharacters(in: .whitespacesAndNewlines)
+            logger.info("📝 Phrase mode - using phraseBuffer: \(DecisionLogger.tokenSummary(text), privacy: .public)")
+        } else {
+            // Option only: get last word
+            text = await getSelectedOrLastWord()
+        }
+        
         guard !text.isEmpty else {
-            logger.warning("⚠️ No text to correct (selection empty, buffer empty)")
+            logger.warning("⚠️ No text to correct")
             return
         }
         
@@ -237,8 +268,16 @@ final class EventMonitor {
         
         if let corrected = await engine.correctLastWord(text, bundleId: bundleId) {
             logger.info("✅ MANUAL CORRECTION: \(DecisionLogger.tokenSummary(text), privacy: .public) → \(DecisionLogger.tokenSummary(corrected), privacy: .public)")
-            await replaceText(with: corrected, originalLength: text.count)
+            let lengthToDelete = convertPhrase ? phraseBuffer.count : text.count
+            await replaceText(with: corrected, originalLength: lengthToDelete)
             lastCorrectedLength = corrected.count
+            lastCorrectedText = corrected
+            
+            // Switch system layout to match the corrected text language
+            if let targetLang = await engine.getLastCorrectionTargetLanguage() {
+                InputSourceManager.shared.switchTo(language: targetLang)
+                logger.info("🔄 Switched system layout to: \(targetLang.rawValue)")
+            }
         } else {
             logger.warning("❌ Manual correction failed for: \(DecisionLogger.tokenSummary(text), privacy: .public)")
         }
@@ -247,44 +286,51 @@ final class EventMonitor {
     private func getSelectedOrLastWord() async -> String {
         logger.debug("🔍 Attempting to get selected text or last word...")
         
-        let pb = NSPasteboard.general
-        let originalContents = pb.string(forType: .string)
-        pb.clearContents()
-
-        // 1. Try to copy current selection via Cmd+C
-        postKeyEvent(keyCode: 0x08, flags: .maskCommand) // C key
-        try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
-        
-        if let selected = pb.string(forType: .string), 
-           !selected.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-           selected != originalContents {
-            let trimmed = selected.trimmingCharacters(in: .whitespacesAndNewlines)
-            logger.info("✅ Using selected text: \(DecisionLogger.tokenSummary(trimmed), privacy: .public)")
-            return trimmed
-        }
-
-        // 2. Fall back to lastCorrectedText if available (for undo after auto-correction)
+        // Priority 1: Use our own buffer (most reliable, no external dependencies)
         if !lastCorrectedText.isEmpty {
             logger.info("✅ Using last corrected text: \(DecisionLogger.tokenSummary(self.lastCorrectedText), privacy: .public)")
             return lastCorrectedText
         }
         
-        // 3. Fall back to buffer if available
         let text = buffer.trimmingCharacters(in: .whitespacesAndNewlines)
         if !text.isEmpty {
             logger.info("✅ Using buffer text: \(DecisionLogger.tokenSummary(text), privacy: .public)")
             return text
         }
         
-        logger.debug("⚠️ No selection or buffer, trying word selection...")
+        // Priority 2: Try Accessibility API (kAXSelectedTextAttribute)
+        if let axText = getSelectedTextViaAccessibility() {
+            let trimmed = axText.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                logger.info("✅ Using AX selected text: \(DecisionLogger.tokenSummary(trimmed), privacy: .public)")
+                return trimmed
+            }
+        }
         
-        // 3. Select word backward using Option+Shift+Left (selects one word)
+        // Priority 3: Fallback to clipboard (for apps where AX doesn't work)
+        logger.debug("⚠️ No buffer or AX selection, falling back to clipboard...")
+        let pb = NSPasteboard.general
+        let originalContents = pb.string(forType: .string)
         pb.clearContents()
-        postKeyEvent(keyCode: 0x7B, flags: [.maskAlternate, .maskShift]) // Left arrow
+
+        postKeyEvent(keyCode: 0x08, flags: .maskCommand) // Cmd+C
+        try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
+        
+        if let selected = pb.string(forType: .string), 
+           !selected.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           selected != originalContents {
+            let trimmed = selected.trimmingCharacters(in: .whitespacesAndNewlines)
+            logger.info("✅ Using clipboard selection: \(DecisionLogger.tokenSummary(trimmed), privacy: .public)")
+            return trimmed
+        }
+        
+        // Priority 4: Select word backward and copy
+        logger.debug("⚠️ No clipboard selection, trying word selection...")
+        pb.clearContents()
+        postKeyEvent(keyCode: 0x7B, flags: [.maskAlternate, .maskShift]) // Option+Shift+Left
         try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
         
-        // Copy the selection
-        postKeyEvent(keyCode: 0x08, flags: .maskCommand) // C key
+        postKeyEvent(keyCode: 0x08, flags: .maskCommand) // Cmd+C
         try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
         
         let result = pb.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -303,6 +349,27 @@ final class EventMonitor {
         return result
     }
     
+    /// Get selected text via Accessibility API (kAXSelectedTextAttribute)
+    private func getSelectedTextViaAccessibility() -> String? {
+        let systemWide = AXUIElementCreateSystemWide()
+        var focusedElement: AnyObject?
+        
+        guard AXUIElementCopyAttributeValue(systemWide, kAXFocusedUIElementAttribute as CFString, &focusedElement) == .success,
+              let element = focusedElement else {
+            logger.debug("⚠️ AX: Could not get focused element")
+            return nil
+        }
+        
+        var selectedText: AnyObject?
+        guard AXUIElementCopyAttributeValue(element as! AXUIElement, kAXSelectedTextAttribute as CFString, &selectedText) == .success,
+              let text = selectedText as? String else {
+            logger.debug("⚠️ AX: Could not get selected text attribute")
+            return nil
+        }
+        
+        return text
+    }
+    
     /// Post a keyboard event with proper keyDown and keyUp
     private func postKeyEvent(keyCode: CGKeyCode, flags: CGEventFlags) {
         guard let keyDown = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: true),
@@ -318,16 +385,23 @@ final class EventMonitor {
     private func replaceText(with newText: String, originalLength: Int) async {
         logger.info("🔄 Replacing text: deleting \(originalLength) chars, typing \(DecisionLogger.tokenSummary(newText), privacy: .public)")
         
+        // Set flag to ignore our own events
+        isReplacing = true
+        defer { isReplacing = false }
+        
         // Delete original text using backspace
         for _ in 0..<originalLength {
             postKeyEvent(keyCode: 0x33, flags: []) // Backspace key
         }
         
-        // Small delay to ensure deletions are processed
-        try? await Task.sleep(nanoseconds: 20_000_000) // 20ms
+        // Longer delay to ensure all deletions are processed before typing
+        try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
         
-        // Type new text using Unicode string method (more reliable for non-ASCII)
+        // Type new text using Unicode string method
         typeUnicodeString(newText)
+        
+        // Wait for typing to complete
+        try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
         
         logger.info("✅ Text replacement complete")
     }

@@ -20,6 +20,7 @@ COLOR_RESET=$'\033[0m'
 say() { printf "%s\n" "$*"; }
 info() { say "${COLOR_BLUE}$*${COLOR_RESET}"; }
 ok() { say "${COLOR_GREEN}$*${COLOR_RESET}"; }
+success() { say "${COLOR_GREEN}✅ $*${COLOR_RESET}"; }
 warn() { say "${COLOR_YELLOW}$*${COLOR_RESET}"; }
 err() { say "${COLOR_RED}$*${COLOR_RESET}" >&2; }
 die() { err "ERROR: $*"; exit 1; }
@@ -88,6 +89,7 @@ interactive_menu() {
     "📥 corpus download-subtitles → Download OpenSubtitles"
     "📜 logs stream    → Stream debug logs"
     "📦 release build  → Build DMG release"
+    "🌐 release github → Trigger GitHub release"
     "❌ quit           → Exit"
   )
 
@@ -144,6 +146,7 @@ interactive_menu() {
       read -rp "Version (e.g. 1.0.0): " ver
       [[ -n "$ver" ]] && cmd_release_build --version "$ver"
       ;;
+    "release github") cmd_release_github ;;
     "quit") exit 0 ;;
     *) die "Unknown selection" ;;
   esac
@@ -611,6 +614,63 @@ cmd_release_build() {
   (cd "${ROOT_DIR}/releases" && ./build_release.sh "${version}")
 }
 
+cmd_release_github() {
+  local release_type="patch"
+  local version=""
+  
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --type) release_type="$2"; shift 2 ;;
+      --version) version="$2"; shift 2 ;;
+      *) die "Unknown flag: $1. Use --type [patch|minor|major] or --version X.Y.Z" ;;
+    esac
+  done
+  
+  # Check gh CLI
+  if ! command -v gh &>/dev/null; then
+    die "GitHub CLI (gh) not installed. Run: brew install gh"
+  fi
+  
+  # Check auth
+  if ! gh auth status &>/dev/null; then
+    die "Not authenticated. Run: gh auth login"
+  fi
+  
+  # Get latest tag and suggest next version
+  local latest=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+  latest=${latest#v}
+  
+  IFS='.' read -r major minor patch <<< "$latest"
+  
+  case "$release_type" in
+    major) major=$((major + 1)); minor=0; patch=0 ;;
+    minor) minor=$((minor + 1)); patch=0 ;;
+    patch) patch=$((patch + 1)) ;;
+  esac
+  
+  local suggested="${major}.${minor}.${patch}"
+  
+  if [[ -z "$version" ]]; then
+    echo ""
+    info "Latest release: ${COLOR_YELLOW}v${latest}${COLOR_RESET}"
+    info "Suggested next (${release_type}): ${COLOR_GREEN}v${suggested}${COLOR_RESET}"
+    echo ""
+    read -p "Version to release [${suggested}]: " version
+    version=${version:-$suggested}
+  fi
+  
+  info "Triggering GitHub Actions release for v${version}..."
+  
+  gh workflow run release.yml \
+    --field version="${version}" \
+    --field release_type="${release_type}"
+  
+  success "Release workflow triggered!"
+  info "Watch progress: gh run watch"
+  echo ""
+  info "Or open: https://github.com/$(gh repo view --json nameWithOwner -q .nameWithOwner)/actions"
+}
+
 cmd_logs_stream() {
   info "Streaming logs (Ctrl+C to stop)..."
   log stream --predicate 'subsystem == "com.chernistry.omfk"' --level debug --style compact
@@ -691,7 +751,8 @@ main() {
     release)
       case "${1:-}" in
         build) shift; cmd_release_build "$@" ;;
-        *) die "Unknown release subcommand. Use: release build --version X.Y.Z" ;;
+        github) shift; cmd_release_github "$@" ;;
+        *) die "Unknown release subcommand. Use: release build|github" ;;
       esac
       ;;
     logs)

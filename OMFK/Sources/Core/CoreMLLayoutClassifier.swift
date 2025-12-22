@@ -13,7 +13,7 @@ public final class CoreMLLayoutClassifier {
         + "абвгдеёжзийклмнопрстуфхцчшщъыьэюяАБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ"
         + "אבגדהוזחטיכלמנסעפצקרשתךםןףץ"
         
-    private static let inputLength = 12
+    private static let inputLength = 20  // Matched to train.py INPUT_LENGTH
     
     // Must match Python `train.py` CLASSES
     private static let classLabels = [

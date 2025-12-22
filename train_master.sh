@@ -90,17 +90,20 @@ while true; do
             pip install -q -r requirements.txt
             
             # Generate data
-            echo "Generating training data from corpus (1M samples, balanced)..."
+            echo "Generating training data from corpus (5M samples, balanced, up to 5 words)..."
             # Path to corpus is ../../data/processed relative to Tools/CoreMLTrainer
-            python3 generate_data.py --count 1000000 --balance 0.5 --max-phrase-len 3 --output training_data_real.csv --corpus_dir "../../$PROCESSED_DIR"
+            python3 generate_data.py --count 5000000 --balance 0.5 --max-phrase-len 5 --output training_data_real.csv --corpus_dir "../../$PROCESSED_DIR"
             
-            # Train
-            echo "Training (20 epochs)..."
-            python3 train.py --epochs 20 --data training_data_real.csv --model_out model_production.pth
+            # Train with ALL advanced techniques
+            echo "Training ULTIMATE model (ensemble, augmentation, mixup)..."
+            echo "This will take 30-60 minutes..."
+            python3 train.py --epochs 100 --batch_size 512 --lr 0.001 --patience 15 \
+                --ensemble --augment --mixup \
+                --data training_data_real.csv --model_out model_production.pth
             
             # Export
-            echo "Exporting..."
-            python3 export.py --model_in model_production.pth --output LayoutClassifier.mlmodel
+            echo "Exporting to CoreML..."
+            python3 export.py --model_in model_production.pth --output LayoutClassifier.mlmodel --ensemble
             
             # Install
             cp LayoutClassifier.mlmodel "../../$RESOURCES_DIR/"

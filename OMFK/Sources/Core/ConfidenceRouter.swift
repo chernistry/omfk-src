@@ -30,15 +30,15 @@ actor ConfidenceRouter {
     private let coreML: CoreMLLayoutClassifier
     private let wordValidator: WordValidator
     private var unigramCache: [Language: WordFrequencyModel] = [:]
+    private let builtinValidator: BuiltinWordValidator = BuiltinWordValidator()
     
     private let logger = Logger.detection
     private let settings: SettingsManager
     
     init(settings: SettingsManager) {
         self.settings = settings
-        let validator = HybridWordValidator()
-        self.wordValidator = validator
-        self.ensemble = LanguageEnsemble(wordValidator: validator)
+        self.wordValidator = HybridWordValidator()
+        self.ensemble = LanguageEnsemble()
         // We load models separately for the Fast Path to ensure independence
         self.ruModel = try? NgramLanguageModel.loadLanguage("ru")
         self.enModel = try? NgramLanguageModel.loadLanguage("en")
@@ -155,17 +155,16 @@ actor ConfidenceRouter {
                     let sourceScore = scoreWithNgram(token, language: sourceLayout)
                     let sourceNorm = scoreWithNgramNormalized(token, language: sourceLayout)
 
-                    func isShortLetters(_ text: String) -> Bool {
-                        text.filter { $0.isLetter }.count <= 3
-                    }
-
                     let sourceWordConfidence = wordValidator.confidence(for: token, language: sourceLayout)
+                    let sourceFreq = frequencyScore(token, language: sourceLayout)
 
                     func isValidConversion(_ converted: String) -> Bool {
                         let targetWordConfidence = wordValidator.confidence(for: converted, language: targetLanguage)
-                        if isShortLetters(converted) {
-                            DecisionLogger.shared.log("SHORT_CHECK: \(converted) wordConf=\(String(format: "%.2f", targetWordConfidence)) need>=0.95")
-                            return targetWordConfidence >= 0.95
+                        let targetFreq = frequencyScore(converted, language: targetLanguage)
+                        let shortLetters = converted.filter { $0.isLetter }.count <= 3
+                        if shortLetters {
+                            // Avoid false positives on 2–3 letter tokens by requiring a strong frequency improvement.
+                            return targetWordConfidence >= 0.80 && targetFreq >= sourceFreq + 0.25
                         }
 
                         let targetNorm = scoreWithNgramNormalized(converted, language: targetLanguage)
@@ -178,7 +177,12 @@ actor ConfidenceRouter {
                             return true
                         }
 
-                        return targetNorm >= 0.75 && targetNorm >= sourceNorm + 0.15
+                        // Also accept when unigram frequency jumps significantly even if spellcheck is permissive.
+                        if targetFreq >= sourceFreq + 0.25 && targetWordConfidence >= 0.60 {
+                            return true
+                        }
+
+                        return targetNorm >= 0.75 && targetNorm >= sourceNorm + 0.15 && (targetFreq >= sourceFreq || targetWordConfidence >= 0.60)
                     }
 
                     // Prefer conversion using the user-selected/detected active layouts first.
@@ -421,7 +425,14 @@ actor ConfidenceRouter {
         let letterCount = token.filter { $0.isLetter }.count
         let isShort = letterCount <= 3
 
+        let sourceBuiltin = builtinValidator.confidence(for: token, language: sourceLayout)
+        let targetBuiltin = builtinValidator.confidence(for: converted, language: targetLanguage)
+
         // Strong accept: target looks like real text and source looks like gibberish.
+        if targetBuiltin >= 0.99 && sourceBuiltin <= 0.01 {
+            return LanguageDecision(language: targetLanguage, layoutHypothesis: hypothesis, confidence: max(confidence, 0.90), scores: [:])
+        }
+
         if targetWord >= 0.80 && (targetWord >= sourceWord + 0.20 || targetFreq >= sourceFreq + 0.20) {
             return LanguageDecision(language: targetLanguage, layoutHypothesis: hypothesis, confidence: max(confidence, 0.85), scores: [:])
         }
@@ -515,6 +526,11 @@ actor ConfidenceRouter {
                   converted != token else { continue }
             let targetWord = wordValidator.confidence(for: converted, language: target)
             let q = quality(converted, lang: target) - 0.05 // small bias against corrections
+            let sourceBuiltin = builtinValidator.confidence(for: token, language: source)
+            let targetBuiltin = builtinValidator.confidence(for: converted, language: target)
+            if targetBuiltin >= 0.99 && sourceBuiltin <= 0.01 {
+                return LanguageDecision(language: target, layoutHypothesis: hyp, confidence: 0.95, scores: [:])
+            }
             let cand = Candidate(hypothesis: hyp, target: target, converted: converted, targetWord: targetWord, q: q)
             if best == nil || cand.q > best!.q { best = cand }
         }

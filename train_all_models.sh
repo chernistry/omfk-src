@@ -36,7 +36,10 @@ cd Tools/NgramTrainer
 echo "Проверяю существующие модели..."
 if [ -f "../../OMFK/Sources/Resources/LanguageModels/ru_trigrams.json" ] && \
    [ -f "../../OMFK/Sources/Resources/LanguageModels/en_trigrams.json" ] && \
-   [ -f "../../OMFK/Sources/Resources/LanguageModels/he_trigrams.json" ]; then
+   [ -f "../../OMFK/Sources/Resources/LanguageModels/he_trigrams.json" ] && \
+   [ -f "../../OMFK/Sources/Resources/LanguageModels/ru_unigrams.tsv" ] && \
+   [ -f "../../OMFK/Sources/Resources/LanguageModels/en_unigrams.tsv" ] && \
+   [ -f "../../OMFK/Sources/Resources/LanguageModels/he_unigrams.tsv" ]; then
     echo -e "${GREEN}✓${NC} N-gram модели уже существуют"
     echo ""
     read -p "Переобучить? (y/n) " -n 1 -r
@@ -48,6 +51,9 @@ if [ -f "../../OMFK/Sources/Resources/LanguageModels/ru_trigrams.json" ] && \
         python3 train_ngrams.py --lang ru --input corpora/ru_sample.txt --output ../../OMFK/Sources/Resources/LanguageModels/ru_trigrams.json
         python3 train_ngrams.py --lang en --input corpora/en_sample.txt --output ../../OMFK/Sources/Resources/LanguageModels/en_trigrams.json
         python3 train_ngrams.py --lang he --input corpora/he_sample.txt --output ../../OMFK/Sources/Resources/LanguageModels/he_trigrams.json
+        python3 train_unigrams.py --lang ru --top 200000 --input corpora/ru_sample.txt --output ../../OMFK/Sources/Resources/LanguageModels/ru_unigrams.tsv
+        python3 train_unigrams.py --lang en --top 200000 --input corpora/en_sample.txt --output ../../OMFK/Sources/Resources/LanguageModels/en_unigrams.tsv
+        python3 train_unigrams.py --lang he --top 200000 --input corpora/he_sample.txt --output ../../OMFK/Sources/Resources/LanguageModels/he_unigrams.tsv
         echo -e "${GREEN}✓${NC} N-gram модели обновлены"
     fi
 else
@@ -55,6 +61,9 @@ else
     python3 train_ngrams.py --lang ru --input corpora/ru_sample.txt --output ../../OMFK/Sources/Resources/LanguageModels/ru_trigrams.json
     python3 train_ngrams.py --lang en --input corpora/en_sample.txt --output ../../OMFK/Sources/Resources/LanguageModels/en_trigrams.json
     python3 train_ngrams.py --lang he --input corpora/he_sample.txt --output ../../OMFK/Sources/Resources/LanguageModels/he_trigrams.json
+    python3 train_unigrams.py --lang ru --top 200000 --input corpora/ru_sample.txt --output ../../OMFK/Sources/Resources/LanguageModels/ru_unigrams.tsv
+    python3 train_unigrams.py --lang en --top 200000 --input corpora/en_sample.txt --output ../../OMFK/Sources/Resources/LanguageModels/en_unigrams.tsv
+    python3 train_unigrams.py --lang he --top 200000 --input corpora/he_sample.txt --output ../../OMFK/Sources/Resources/LanguageModels/he_unigrams.tsv
     echo -e "${GREEN}✓${NC} N-gram модели созданы"
 fi
 

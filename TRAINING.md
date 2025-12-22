@@ -22,6 +22,9 @@
 - **Что делают**: Быстрое определение языка по триграммам
 - **Модели**: RU, EN, HE
 - **Размер**: ~50-100 KB каждая
+ - **Дополнительно**: unigram-лексиконы (частоты слов) для:
+   - дизамбигуации неоднозначных раскладок (Hebrew QWERTY дубликаты)
+   - детерминированной валидации слов, даже если в macOS нет словаря (часто для Hebrew)
 
 ### 2. **CoreML модель** (Deep Path)
 - **Где**: `Tools/CoreMLTrainer/`
@@ -39,6 +42,11 @@ cd Tools/NgramTrainer
 python3 train_ngrams.py --lang ru --input corpora/ru_sample.txt --output ../../OMFK/Sources/Resources/LanguageModels/ru_trigrams.json
 python3 train_ngrams.py --lang en --input corpora/en_sample.txt --output ../../OMFK/Sources/Resources/LanguageModels/en_trigrams.json
 python3 train_ngrams.py --lang he --input corpora/he_sample.txt --output ../../OMFK/Sources/Resources/LanguageModels/he_trigrams.json
+
+# unigram word-frequency (TSV)
+python3 train_unigrams.py --lang ru --input corpora/ru_sample.txt --output ../../OMFK/Sources/Resources/LanguageModels/ru_unigrams.tsv --top 200000
+python3 train_unigrams.py --lang en --input corpora/en_sample.txt --output ../../OMFK/Sources/Resources/LanguageModels/en_unigrams.tsv --top 200000
+python3 train_unigrams.py --lang he --input corpora/he_sample.txt --output ../../OMFK/Sources/Resources/LanguageModels/he_unigrams.tsv --top 200000
 ```
 
 ### Вариант 2: CoreML модель
@@ -107,6 +115,9 @@ OMFK/
     │   ├── ru_trigrams.json
     │   ├── en_trigrams.json
     │   └── he_trigrams.json
+    │   ├── ru_unigrams.tsv
+    │   ├── en_unigrams.tsv
+    │   └── he_unigrams.tsv
     └── LayoutClassifier.mlmodel  ← CoreML модель
 ```
 

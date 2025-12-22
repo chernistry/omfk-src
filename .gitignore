@@ -10,6 +10,8 @@ Package.resolved
 
 .sdd/runs/*
 Tools/NgramTrainer/*
+!Tools/NgramTrainer/train_ngrams.py
+!Tools/NgramTrainer/train_unigrams.py
 data/raw/*
 Tools/CoreMLTrainer/venv/*
 *__pycache__*

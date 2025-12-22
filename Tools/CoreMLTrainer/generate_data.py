@@ -25,7 +25,7 @@ CLASSES = [
     'he_from_ru', 'ru_from_he'
 ]
 
-def load_layout_map(json_path):
+def load_layout_map(json_path, focus_layout=None):
     with open(json_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
     
@@ -39,6 +39,13 @@ def load_layout_map(json_path):
         'ru': ['ru_pc', 'ru_phonetic_yasherty'],
         'he': ['he_standard', 'he_qwerty', 'he_pc'] # Support ALL common Hebrew layouts
     }
+
+    if focus_layout:
+        focus_lang = focus_layout.split('_', 1)[0] if '_' in focus_layout else focus_layout
+        if focus_lang in layouts and focus_layout in layouts[focus_lang]:
+            layouts[focus_lang] = [focus_layout]
+        else:
+            print(f"Warning: focus layout '{focus_layout}' not found in presets, ignoring")
     
     maps = {}
     
@@ -149,9 +156,14 @@ def main():
     parser.add_argument('--corpus_dir', default=None, help="Directory with {lang}.txt corpus files")
     parser.add_argument('--balance', type=float, default=0.5, help="Ratio of pure language samples (vs _from_ samples)")
     parser.add_argument('--max-phrase-len', type=int, default=3, help="Max words per sample")
+    parser.add_argument(
+        '--focus-layout',
+        default=None,
+        help="Focus generation on a specific layout variant (e.g. he_qwerty). When set, only classes involving that language are generated.",
+    )
     args = parser.parse_args()
     
-    maps = load_layout_map(args.layouts)
+    maps = load_layout_map(args.layouts, focus_layout=args.focus_layout)
     
     # Load corpus words if provided
     if args.corpus_dir:
@@ -176,6 +188,23 @@ def main():
     # Balanced class selection
     pure_classes = ['ru', 'en', 'he']
     from_classes = [c for c in CLASSES if '_from_' in c]
+
+    if args.focus_layout:
+        focus = args.focus_layout
+        # Currently only language-specific focus is supported via layout prefix.
+        # Example: he_qwerty -> focus on Hebrew-related classes.
+        focus_lang = focus.split('_', 1)[0] if '_' in focus else focus
+        if focus_lang in ['ru', 'en', 'he']:
+            pure_classes = [focus_lang]
+            focused_from = []
+            for c in from_classes:
+                intended, typed = c.split('_from_')
+                if intended == focus_lang or typed == focus_lang:
+                    focused_from.append(c)
+            from_classes = focused_from
+            print(f"Focus mode: {focus} -> classes: pure={pure_classes} from={len(from_classes)}")
+        else:
+            print(f"Warning: unknown focus layout '{focus}', ignoring focus mode")
     
     with open(args.output, 'w', encoding='utf-8') as f:
         f.write("text,label\n")

@@ -88,27 +88,55 @@ while true; do
             source venv/bin/activate
             # Ensure deps
             pip install -q -r requirements.txt
+
+            BASE_MODEL="model_production.pth"
+            FINETUNED_MODEL="model_production_he_qwerty.pth"
             
             # Generate data
-            echo "Generating training data from corpus (5M samples, balanced, up to 5 words)..."
-            # Path to corpus is ../../data/processed relative to Tools/CoreMLTrainer
-            python3 generate_data.py --count 5000000 --balance 0.5 --max-phrase-len 5 --output training_data_real.csv --corpus_dir "../../$PROCESSED_DIR"
-            
-            # Train with ALL advanced techniques
-            echo "Training ULTIMATE model (ensemble, augmentation, mixup)..."
-            echo "This will take 30-60 minutes..."
-            python3 train.py --epochs 100 --batch_size 512 --lr 0.001 --patience 15 \
-                --ensemble --augment --mixup \
-                --data training_data_real.csv --model_out model_production.pth
+            if [ ! -f "$BASE_MODEL" ]; then
+                echo -e "${YELLOW}Base model not found (${BASE_MODEL}). Training from scratch...${NC}"
+                echo "Generating training data from corpus (5M samples, balanced, up to 5 words)..."
+                # Path to corpus is ../../data/processed relative to Tools/CoreMLTrainer
+                python3 generate_data.py --count 5000000 --balance 0.5 --max-phrase-len 5 --output training_data_real.csv --corpus_dir "../../$PROCESSED_DIR"
+                
+                # Train with ALL advanced techniques
+                echo "Training base model (ensemble, augmentation, mixup)..."
+                echo "This will take 30-60 minutes..."
+                python3 train.py --epochs 100 --batch_size 512 --lr 0.001 --patience 15 \
+                    --ensemble --augment --mixup \
+                    --data training_data_real.csv --model_out "$BASE_MODEL"
+            else
+                echo -e "${GREEN}Found base model: ${BASE_MODEL}${NC}"
+            fi
+
+            echo -e "${BLUE}--- Fine-tuning for Hebrew QWERTY sofits (Ticket 23) ---${NC}"
+            echo "Generating focused he_qwerty data (200k samples)..."
+            python3 generate_data.py \
+                --count 200000 \
+                --balance 0.3 \
+                --max-phrase-len 5 \
+                --output training_data_he_qwerty.csv \
+                --corpus_dir "../../$PROCESSED_DIR" \
+                --focus-layout he_qwerty
+
+            echo "Fine-tuning (lr=0.0001, epochs=20)..."
+            python3 train.py --epochs 20 --batch_size 512 --lr 0.0001 --patience 5 \
+                --ensemble --finetune --model_in "$BASE_MODEL" \
+                --data training_data_he_qwerty.csv --model_out "$FINETUNED_MODEL"
             
             # Export
             echo "Exporting to CoreML..."
-            python3 export.py --model_in model_production.pth --output LayoutClassifier.mlmodel --ensemble
+            python3 export.py --model_in "$FINETUNED_MODEL" --output LayoutClassifier.mlmodel --ensemble
+
+            echo "Validating CoreML export vs PyTorch..."
+            python3 validate_export.py --ensemble --model_in "$FINETUNED_MODEL" --mlmodel LayoutClassifier.mlmodel --samples 20 --tol 0.01
             
             # Install
             cp LayoutClassifier.mlmodel "../../$RESOURCES_DIR/"
             
             cd ../..
+            echo "Running CoreML smoke tests..."
+            swift test --filter CoreMLLayoutClassifierTests
             echo -e "${GREEN}CoreML model trained and installed!${NC}"
             ;;
             

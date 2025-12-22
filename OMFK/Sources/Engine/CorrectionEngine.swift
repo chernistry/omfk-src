@@ -28,6 +28,8 @@ actor CorrectionEngine {
         var currentIndex: Int
         let wasAutomatic: Bool
         let autoHypothesis: LanguageHypothesis?
+        let timestamp: Date
+        let hadTrailingSpace: Bool  // Whether the original had a trailing space
         
         struct Alternative {
             let text: String
@@ -41,6 +43,11 @@ actor CorrectionEngine {
         
         var current: Alternative {
             alternatives[currentIndex]
+        }
+        
+        /// Check if cycling state is still valid (within 10 seconds)
+        var isValid: Bool {
+            Date().timeIntervalSince(timestamp) < 10.0
         }
     }
     
@@ -158,7 +165,9 @@ actor CorrectionEngine {
                 alternatives: alternatives,
                 currentIndex: 1,  // Start at corrected version
                 wasAutomatic: true,
-                autoHypothesis: decision.layoutHypothesis
+                autoHypothesis: decision.layoutHypothesis,
+                timestamp: Date(),
+                hadTrailingSpace: true  // Auto-correction triggers on space
             )
             
             let result = await applyCorrection(original: text, corrected: corrected, from: sourceLayout, to: decision.language, hypothesis: decision.layoutHypothesis)
@@ -251,7 +260,9 @@ actor CorrectionEngine {
             alternatives: alternatives,
             currentIndex: 0,
             wasAutomatic: false,
-            autoHypothesis: decision.layoutHypothesis
+            autoHypothesis: decision.layoutHypothesis,
+            timestamp: Date(),
+            hadTrailingSpace: false  // Manual correction - no trailing space
         )
         
         return await cycleCorrection(bundleId: bundleId)
@@ -259,8 +270,8 @@ actor CorrectionEngine {
     
     /// Cycle to next alternative on repeated hotkey press
     func cycleCorrection(bundleId: String? = nil) async -> String? {
-        guard var state = cyclingState else {
-            logger.warning("❌ No cycling state")
+        guard var state = cyclingState, state.isValid else {
+            logger.warning("❌ No cycling state or expired")
             return nil
         }
         
@@ -290,6 +301,22 @@ actor CorrectionEngine {
     /// Reset cycling state (called when new text is typed)
     func resetCycling() {
         cyclingState = nil
+    }
+    
+    /// Check if there's an active and valid cycling state
+    func hasCyclingState() -> Bool {
+        guard let state = cyclingState else { return false }
+        return state.isValid
+    }
+    
+    /// Get the length of current cycling text (for replacement)
+    func getCurrentCyclingTextLength() -> Int {
+        return cyclingState?.current.text.count ?? 0
+    }
+    
+    /// Check if cycling state had trailing space
+    func cyclingHadTrailingSpace() -> Bool {
+        return cyclingState?.hadTrailingSpace ?? false
     }
     
     private func hypothesisFor(source: Language, target: Language) -> LanguageHypothesis {

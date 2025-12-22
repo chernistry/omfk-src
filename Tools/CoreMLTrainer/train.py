@@ -466,6 +466,17 @@ def train(args):
     else:
         model = LayoutClassifier().to(device)
         print("Using LayoutClassifier (basic)")
+
+    # Fine-tune from an existing checkpoint
+    if args.finetune:
+        if not args.model_in:
+            raise ValueError("--model_in is required when using --finetune")
+        print(f"Fine-tuning from: {args.model_in}")
+        try:
+            state = torch.load(args.model_in, map_location="cpu", weights_only=True)
+        except TypeError:
+            state = torch.load(args.model_in, map_location="cpu")
+        model.load_state_dict(state)
     
     # Count parameters
     total_params = sum(p.numel() for p in model.parameters())
@@ -473,7 +484,7 @@ def train(args):
     
     criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
     optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.01)
-    scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=2)
+    scheduler = None if args.finetune else optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=2)
     
     print(f"Training on {len(train_dataset)} samples, validating on {len(val_dataset)}")
     print(f"Batch: {args.batch_size}, Epochs: {args.epochs}, LR: {args.lr}")
@@ -530,7 +541,8 @@ def train(args):
                 val_correct += (predicted == labels).sum().item()
         
         val_acc = 100 * val_correct / val_total
-        scheduler.step()
+        if scheduler is not None:
+            scheduler.step()
         
         print(f"Epoch {epoch+1}/{args.epochs} | Loss: {total_loss/len(train_loader):.4f} | Train: {train_acc:.2f}% | Val: {val_acc:.2f}%")
         
@@ -543,7 +555,8 @@ def train(args):
             print(f"  → Best model saved! (Val: {val_acc:.2f}%)")
         else:
             patience_counter += 1
-            if patience_counter >= args.patience and epoch >= 20:
+            min_epochs_before_stop = 3 if args.finetune else 20
+            if patience_counter >= args.patience and epoch >= min_epochs_before_stop:
                 print(f"Early stopping at epoch {epoch+1}")
                 break
     
@@ -557,6 +570,8 @@ if __name__ == "__main__":
     parser.add_argument('--batch_size', type=int, default=512)
     parser.add_argument('--lr', type=float, default=0.001)
     parser.add_argument('--patience', type=int, default=10)
+    parser.add_argument('--finetune', action='store_true', help="Fine-tune from an existing checkpoint")
+    parser.add_argument('--model_in', default=None, help="Input checkpoint for --finetune (state_dict)")
     parser.add_argument('--model_out', default='model.pth')
     parser.add_argument('--model_v2', action='store_true', help="Use enhanced CNN")
     parser.add_argument('--transformer', action='store_true', help="Use Transformer")

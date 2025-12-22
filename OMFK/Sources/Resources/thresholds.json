@@ -1,0 +1,28 @@
+{
+  "detection": {
+    "description": "Thresholds for language detection confidence",
+    "correctionThreshold": 0.45,
+    "deepConfidenceMin": 0.7,
+    "fallbackConfidence": 0.5
+  },
+  "validation": {
+    "description": "Thresholds for conversion validation",
+    "targetWordMin": 0.80,
+    "targetWordMargin": 0.20,
+    "targetFreqMargin": 0.25,
+    "targetNormMin": 0.75,
+    "targetNormMargin": 0.15,
+    "shortWordFreqMin": 0.60
+  },
+  "scoring": {
+    "description": "Thresholds for scored decision",
+    "shortWordMargin": 0.25,
+    "longWordMargin": 0.70,
+    "wordConfidenceMin": 0.80
+  },
+  "heuristic": {
+    "description": "Thresholds for heuristic correction",
+    "sourceWordConfMax": 0.80,
+    "baseConfMin": 0.75
+  }
+}

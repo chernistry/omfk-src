@@ -39,7 +39,6 @@ actor ConfidenceRouter {
         self.settings = settings
         self.wordValidator = HybridWordValidator()
         self.ensemble = LanguageEnsemble()
-        // We load models separately for the Fast Path to ensure independence
         self.ruModel = try? NgramLanguageModel.loadLanguage("ru")
         self.enModel = try? NgramLanguageModel.loadLanguage("en")
         self.heModel = try? NgramLanguageModel.loadLanguage("he")
@@ -47,6 +46,7 @@ actor ConfidenceRouter {
     }
     
     private let whitelist = WhitelistConfig.shared
+    private let thresholds = ThresholdsConfig.shared
     
     /// Main entry point for detection
     /// 
@@ -116,8 +116,7 @@ actor ConfidenceRouter {
         }
         
         guard let baseline = baselineDecision else {
-            // Shouldn't happen, but be safe
-            let fallback = LanguageDecision(language: .english, layoutHypothesis: .en, confidence: 0.5, scores: [:])
+            let fallback = LanguageDecision(language: .english, layoutHypothesis: .en, confidence: thresholds.fallbackConfidence, scores: [:])
             DecisionLogger.shared.logDecision(token: token, path: "ERROR", result: fallback)
             return fallback
         }
@@ -148,9 +147,7 @@ actor ConfidenceRouter {
                 // CoreML thinks this is a layout mismatch (e.g. "en_from_ru").
                 // VALIDATION: Before accepting, convert the text and verify the result
                 // is actually valid in the target language using N-gram scoring.
-                // Allow lower CoreML confidence when conversion validation is strong.
-                let correctionThreshold = 0.45
-                if deepConf > correctionThreshold {
+                if deepConf > thresholds.correctionThreshold {
                     // Determine source and target layouts
                     let sourceLayout: Language
                     let targetLanguage = deepHypothesis.targetLanguage
@@ -181,26 +178,22 @@ actor ConfidenceRouter {
                         let targetFreq = frequencyScore(converted, language: targetLanguage)
                         let shortLetters = converted.filter { $0.isLetter }.count <= 3
                         if shortLetters {
-                            // Avoid false positives on 2–3 letter tokens by requiring a strong frequency improvement.
-                            return targetWordConfidence >= 0.80 && targetFreq >= sourceFreq + 0.25
+                            return targetWordConfidence >= thresholds.targetWordMin && targetFreq >= sourceFreq + thresholds.targetFreqMargin
                         }
 
                         let targetNorm = scoreWithNgramNormalized(converted, language: targetLanguage)
 
                         DecisionLogger.shared.log("VALID_CHECK: \(converted) wordConf=\(String(format: "%.2f", targetWordConfidence)) srcWordConf=\(String(format: "%.2f", sourceWordConfidence)) tgtNorm=\(String(format: "%.2f", targetNorm)) srcNorm=\(String(format: "%.2f", sourceNorm))")
 
-                        // Prefer real words/phrases in the target language when it is notably stronger
-                        // than the source according to word validation / n-gram.
-                        if targetWordConfidence >= 0.80 && targetWordConfidence >= sourceWordConfidence + 0.20 {
+                        if targetWordConfidence >= thresholds.targetWordMin && targetWordConfidence >= sourceWordConfidence + thresholds.targetWordMargin {
                             return true
                         }
 
-                        // Also accept when unigram frequency jumps significantly even if spellcheck is permissive.
-                        if targetFreq >= sourceFreq + 0.25 && targetWordConfidence >= 0.60 {
+                        if targetFreq >= sourceFreq + thresholds.targetFreqMargin && targetWordConfidence >= thresholds.shortWordFreqMin {
                             return true
                         }
 
-                        return targetNorm >= 0.75 && targetNorm >= sourceNorm + 0.15 && (targetFreq >= sourceFreq || targetWordConfidence >= 0.60)
+                        return targetNorm >= thresholds.targetNormMin && targetNorm >= sourceNorm + thresholds.targetNormMargin && (targetFreq >= sourceFreq || targetWordConfidence >= thresholds.shortWordFreqMin)
                     }
 
                     // Prefer conversion using the user-selected/detected active layouts first.
@@ -248,13 +241,13 @@ actor ConfidenceRouter {
                         DecisionLogger.shared.log(rejectedMsg)
                     }
                 } else {
-                    let rejectedMsg = "REJECTED_DEEP_CORRECTION: \(deepHypothesis.rawValue) (\(String(format: "%.2f", deepConf))) < \(correctionThreshold)"
+                    let rejectedMsg = "REJECTED_DEEP_CORRECTION: \(deepHypothesis.rawValue) (\(String(format: "%.2f", deepConf))) < \(thresholds.correctionThreshold)"
                     DecisionLogger.shared.log(rejectedMsg)
                 }
             } else {
                 // CoreML just confirms the script (e.g. "ru" for Cyrillic).
                 // Only prefer CoreML if it's more confident than baseline.
-                if deepConf > baseline.confidence && deepConf > 0.7 {
+                if deepConf > baseline.confidence && deepConf > thresholds.deepConfidenceMin {
                     let deepResult = LanguageDecision(
                         language: deepHypothesis.targetLanguage, 
                         layoutHypothesis: deepHypothesis,
@@ -457,18 +450,17 @@ actor ConfidenceRouter {
             return LanguageDecision(language: targetLanguage, layoutHypothesis: hypothesis, confidence: max(confidence, 0.90), scores: [:])
         }
 
-        if targetWord >= 0.80 && (targetWord >= sourceWord + 0.20 || targetFreq >= sourceFreq + 0.20) {
+        if targetWord >= thresholds.targetWordMin && (targetWord >= sourceWord + thresholds.targetWordMargin || targetFreq >= sourceFreq + thresholds.targetWordMargin) {
             return LanguageDecision(language: targetLanguage, layoutHypothesis: hypothesis, confidence: max(confidence, 0.85), scores: [:])
         }
 
-        // For very short tokens, require a strong unigram-frequency improvement to avoid false positives
-        // from permissive spellcheckers on 2-letter strings.
-        if isShort, targetFreq >= 0.45, targetFreq >= sourceFreq + 0.25 {
+        // For very short tokens, require a strong unigram-frequency improvement
+        if isShort, targetFreq >= 0.45, targetFreq >= sourceFreq + thresholds.targetFreqMargin {
             return LanguageDecision(language: targetLanguage, layoutHypothesis: hypothesis, confidence: max(confidence, 0.85), scores: [:])
         }
 
-        // Fallback: accept when n-gram quality improves significantly (normalized per-language).
-        if targetNorm >= 0.75 && targetNorm >= sourceNorm + 0.15 && (targetFreq >= sourceFreq || targetWord >= 0.60) {
+        // Fallback: accept when n-gram quality improves significantly
+        if targetNorm >= thresholds.targetNormMin && targetNorm >= sourceNorm + thresholds.targetNormMargin && (targetFreq >= sourceFreq || targetWord >= thresholds.shortWordFreqMin) {
             return LanguageDecision(language: targetLanguage, layoutHypothesis: hypothesis, confidence: max(confidence, 0.80), scores: [:])
         }
 
@@ -484,7 +476,7 @@ actor ConfidenceRouter {
 
         // If the token already looks like a valid word/phrase in its dominant script,
         // don't attempt layout correction (avoid false positives).
-        if wordValidator.confidence(for: token, language: dominant) >= 0.80 {
+        if wordValidator.confidence(for: token, language: dominant) >= thresholds.sourceWordConfMax {
             return nil
         }
 
@@ -500,7 +492,7 @@ actor ConfidenceRouter {
             candidates = [.enFromHeLayout, .ruFromHeLayout]
         }
 
-        let baseConf = max(0.75, baseline.confidence)
+        let baseConf = max(thresholds.baseConfMin, baseline.confidence)
 
         for hyp in candidates {
             if let validated = validateCorrection(token: token, hypothesis: hyp, confidence: baseConf, activeLayouts: activeLayouts) {
@@ -571,9 +563,9 @@ actor ConfidenceRouter {
 
         // Only accept if the best mapped hypothesis is substantially better than any as-is option.
         let letterCount = token.filter { $0.isLetter }.count
-        let requiredMargin = letterCount <= 3 ? 0.25 : 0.70
+        let requiredMargin = letterCount <= 3 ? thresholds.shortWordMargin : thresholds.longWordMargin
         guard best.q >= bestAsIs + requiredMargin else { return nil }
-        guard best.targetWord >= 0.80 else { return nil }
+        guard best.targetWord >= thresholds.wordConfidenceMin else { return nil }
 
         return LanguageDecision(language: best.target, layoutHypothesis: best.hypothesis, confidence: 0.95, scores: [:])
     }

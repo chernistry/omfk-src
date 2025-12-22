@@ -20,11 +20,14 @@ on:
 jobs:
   build:
     runs-on: macos-15
+    permissions:
+      contents: write
     
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0  # Need full history for tags
+          token: ${{ secrets.GITHUB_TOKEN }}
       
       - name: Setup Xcode 26
         uses: maxim-lobanov/setup-xcode@v1

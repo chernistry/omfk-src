@@ -5,20 +5,47 @@ struct SettingsView: View {
     @State private var selectedTab = 0
     
     var body: some View {
-        TabView(selection: $selectedTab) {
-            GeneralTab(settings: settings)
-                .tabItem { Label("General", systemImage: "gearshape") }
-                .tag(0)
+        VStack(spacing: 0) {
+            // Header
+            VStack(spacing: 20) {
+                // App icon
+                ZStack {
+                    Circle()
+                        .fill(.linearGradient(colors: [.blue.opacity(0.8), .purple.opacity(0.6)], startPoint: .topLeading, endPoint: .bottomTrailing))
+                        .frame(width: 56, height: 56)
+                    Image(systemName: "keyboard")
+                        .font(.system(size: 24, weight: .light))
+                        .foregroundStyle(.white)
+                }
+                
+                VStack(spacing: 4) {
+                    Text("OMFK").font(.system(size: 20, weight: .semibold, design: .rounded))
+                    Text("v1.0").font(.system(size: 11)).foregroundStyle(.tertiary)
+                }
+                
+                // Segmented control
+                Picker("", selection: $selectedTab) {
+                    Text("General").tag(0)
+                    Text("Hotkey").tag(1)
+                    Text("Apps").tag(2)
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 40)
+            }
+            .padding(.top, 28)
+            .padding(.bottom, 20)
             
-            HotkeyTab(settings: settings)
-                .tabItem { Label("Hotkey", systemImage: "command") }
-                .tag(1)
-            
-            AppsTab(settings: settings)
-                .tabItem { Label("Apps", systemImage: "app.badge") }
-                .tag(2)
+            // Content
+            Group {
+                switch selectedTab {
+                case 0: GeneralTab(settings: settings)
+                case 1: HotkeyTab(settings: settings)
+                default: AppsTab(settings: settings)
+                }
+            }
         }
-        .frame(width: 420, height: 320)
+        .frame(width: 380, height: 460)
+        .background(.ultraThinMaterial)
     }
 }
 
@@ -28,26 +55,47 @@ struct GeneralTab: View {
     @ObservedObject var settings: SettingsManager
     
     var body: some View {
-        Form {
-            Section {
-                Toggle("Auto-correction", isOn: $settings.isEnabled)
-                Toggle("Auto-switch layout", isOn: $settings.autoSwitchLayout)
-            } header: {
-                Text("Behavior")
+        VStack(spacing: 14) {
+            GlassCard {
+                SettingRow(
+                    icon: "wand.and.stars",
+                    iconColor: .green,
+                    title: "Auto-correction",
+                    subtitle: "Fix wrong layout automatically",
+                    toggle: $settings.isEnabled
+                )
             }
             
-            Section {
-                Picker("Preferred language", selection: $settings.preferredLanguage) {
-                    Text("🇺🇸 English").tag(Language.english)
-                    Text("🇷🇺 Russian").tag(Language.russian)
-                    Text("🇮🇱 Hebrew").tag(Language.hebrew)
-                }
-            } header: {
-                Text("Language")
+            GlassCard {
+                SettingRow(
+                    icon: "arrow.left.arrow.right",
+                    iconColor: .blue,
+                    title: "Auto-switch layout",
+                    subtitle: "Change system layout after fix",
+                    toggle: $settings.autoSwitchLayout
+                )
             }
+            
+            GlassCard {
+                VStack(spacing: 12) {
+                    Label {
+                        Text("Preferred language").font(.system(size: 13, weight: .medium))
+                    } icon: {
+                        Image(systemName: "globe").foregroundStyle(.orange)
+                    }
+                    
+                    HStack(spacing: 10) {
+                        LangPill(label: "EN", flag: "🇺🇸", isSelected: settings.preferredLanguage == .english) { settings.preferredLanguage = .english }
+                        LangPill(label: "RU", flag: "🇷🇺", isSelected: settings.preferredLanguage == .russian) { settings.preferredLanguage = .russian }
+                        LangPill(label: "HE", flag: "🇮🇱", isSelected: settings.preferredLanguage == .hebrew) { settings.preferredLanguage = .hebrew }
+                    }
+                }
+                .frame(maxWidth: .infinity)
+            }
+            
+            Spacer()
         }
-        .formStyle(.grouped)
-        .scrollDisabled(true)
+        .padding(20)
     }
 }
 
@@ -57,30 +105,51 @@ struct HotkeyTab: View {
     @ObservedObject var settings: SettingsManager
     
     var body: some View {
-        Form {
-            Section {
-                Toggle("Enable hotkey", isOn: $settings.hotkeyEnabled)
-                
-                if settings.hotkeyEnabled {
-                    LabeledContent("Key") {
-                        Text(keyName(settings.hotkeyKeyCode))
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            } header: {
-                Text("Manual Correction")
+        VStack(spacing: 16) {
+            GlassCard {
+                SettingRow(
+                    icon: "option",
+                    iconColor: .purple,
+                    title: "Manual correction",
+                    subtitle: "Cycle through alternatives",
+                    toggle: $settings.hotkeyEnabled
+                )
             }
             
-            Section {
-                Text("Press the hotkey to cycle through layout alternatives for selected text or last typed word.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            } header: {
-                Text("How it works")
+            GlassCard {
+                HStack {
+                    Label {
+                        Text("Hotkey").font(.system(size: 13, weight: .medium))
+                    } icon: {
+                        Image(systemName: "command").foregroundStyle(.indigo)
+                    }
+                    
+                    Spacer()
+                    
+                    Text(keyName(settings.hotkeyKeyCode))
+                        .font(.system(size: 12, weight: .medium, design: .rounded))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(.ultraThinMaterial, in: Capsule())
+                }
             }
+            .opacity(settings.hotkeyEnabled ? 1 : 0.5)
+            
+            // Tip
+            HStack(spacing: 10) {
+                Image(systemName: "lightbulb.fill")
+                    .foregroundStyle(.yellow)
+                Text("Press hotkey to undo or cycle corrections")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.yellow.opacity(0.1), in: RoundedRectangle(cornerRadius: 12))
+            
+            Spacer()
         }
-        .formStyle(.grouped)
-        .scrollDisabled(true)
+        .padding(20)
     }
     
     private func keyName(_ code: UInt16) -> String {
@@ -98,34 +167,56 @@ struct AppsTab: View {
     @ObservedObject var settings: SettingsManager
     
     var body: some View {
-        Form {
-            Section {
-                if settings.excludedApps.isEmpty {
-                    ContentUnavailableView {
-                        Label("No Excluded Apps", systemImage: "checkmark.circle")
-                    } description: {
-                        Text("All apps will use auto-correction")
+        VStack(spacing: 16) {
+            // Tip
+            HStack(spacing: 10) {
+                Image(systemName: "app.badge.checkmark")
+                    .foregroundStyle(.blue)
+                Text("Exclude apps from auto-correction")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.blue.opacity(0.1), in: RoundedRectangle(cornerRadius: 12))
+            
+            GlassCard {
+                VStack(spacing: 12) {
+                    HStack {
+                        Text("Excluded").font(.system(size: 13, weight: .medium))
+                        Spacer()
+                        Button(action: addCurrentApp) {
+                            Label("Add current", systemImage: "plus")
+                                .font(.system(size: 11, weight: .medium))
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.blue)
                     }
-                } else {
-                    ForEach(Array(settings.excludedApps), id: \.self) { bundleId in
-                        AppRow(bundleId: bundleId) {
-                            settings.toggleApp(bundleId)
+                    
+                    if settings.excludedApps.isEmpty {
+                        VStack(spacing: 8) {
+                            Image(systemName: "checkmark.circle")
+                                .font(.system(size: 28, weight: .light))
+                                .foregroundStyle(.tertiary)
+                            Text("No excluded apps")
+                                .font(.system(size: 12))
+                                .foregroundStyle(.tertiary)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 24)
+                    } else {
+                        VStack(spacing: 8) {
+                            ForEach(Array(settings.excludedApps), id: \.self) { bundleId in
+                                AppRow(bundleId: bundleId) { settings.toggleApp(bundleId) }
+                            }
                         }
                     }
                 }
-            } header: {
-                HStack {
-                    Text("Excluded Apps")
-                    Spacer()
-                    Button("Add Current App") {
-                        addCurrentApp()
-                    }
-                    .buttonStyle(.borderless)
-                    .font(.callout)
-                }
             }
+            
+            Spacer()
         }
-        .formStyle(.grouped)
+        .padding(20)
     }
     
     private func addCurrentApp() {
@@ -138,33 +229,95 @@ struct AppsTab: View {
 
 // MARK: - Components
 
+struct GlassCard<Content: View>: View {
+    @ViewBuilder let content: Content
+    var body: some View {
+        content
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .liquidGlass()
+    }
+}
+
+struct SettingRow: View {
+    let icon: String
+    let iconColor: Color
+    let title: String
+    let subtitle: String
+    @Binding var toggle: Bool
+    
+    var body: some View {
+        HStack(spacing: 14) {
+            Image(systemName: icon)
+                .font(.system(size: 16, weight: .medium))
+                .foregroundStyle(iconColor)
+                .frame(width: 28)
+            
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.system(size: 13, weight: .medium))
+                Text(subtitle).font(.system(size: 11)).foregroundStyle(.secondary)
+            }
+            
+            Spacer()
+            
+            Toggle("", isOn: $toggle)
+                .toggleStyle(.switch)
+                .labelsHidden()
+        }
+    }
+}
+
+struct LangPill: View {
+    let label: String
+    let flag: String
+    let isSelected: Bool
+    let action: () -> Void
+    
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Text(flag)
+                Text(label).font(.system(size: 12, weight: .medium))
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(isSelected ? .blue : .clear, in: Capsule())
+            .background(.ultraThinMaterial, in: Capsule())
+            .foregroundStyle(isSelected ? .white : .primary)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
 struct AppRow: View {
     let bundleId: String
     let onRemove: () -> Void
+    @State private var isHovered = false
     
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) {
                 Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
                     .resizable()
                     .frame(width: 24, height: 24)
             } else {
-                Image(systemName: "app")
-                    .frame(width: 24, height: 24)
-                    .foregroundStyle(.secondary)
+                Image(systemName: "app").frame(width: 24, height: 24).foregroundStyle(.secondary)
             }
             
-            Text(appName)
-                .lineLimit(1)
-            
+            Text(appName).font(.system(size: 12)).lineLimit(1)
             Spacer()
             
-            Button(action: onRemove) {
-                Image(systemName: "xmark.circle.fill")
-                    .foregroundStyle(.secondary)
+            if isHovered {
+                Button(action: onRemove) {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
         }
+        .padding(10)
+        .background(isHovered ? .white.opacity(0.05) : .clear, in: RoundedRectangle(cornerRadius: 8))
+        .onHover { isHovered = $0 }
     }
     
     private var appName: String {
@@ -180,19 +333,9 @@ struct AppRow: View {
 extension View {
     /// Apply Liquid Glass effect on macOS 26+, fallback to ultraThinMaterial on older versions
     @ViewBuilder
-    func liquidGlass(in shape: some Shape = RoundedRectangle(cornerRadius: 12)) -> some View {
+    func liquidGlass(in shape: some Shape = RoundedRectangle(cornerRadius: 14)) -> some View {
         if #available(macOS 26.0, *) {
             self.glassEffect(.regular, in: shape)
-        } else {
-            self.background(.ultraThinMaterial, in: shape)
-        }
-    }
-    
-    /// Apply interactive Liquid Glass effect on macOS 26+
-    @ViewBuilder
-    func liquidGlassInteractive(in shape: some Shape = RoundedRectangle(cornerRadius: 12)) -> some View {
-        if #available(macOS 26.0, *) {
-            self.glassEffect(.regular.interactive(), in: shape)
         } else {
             self.background(.ultraThinMaterial, in: shape)
         }

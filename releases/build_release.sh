@@ -103,8 +103,9 @@ echo "✅ App bundle created: $APP_PATH"
 echo "💿 Creating DMG..."
 rm -f "$DMG_PATH"
 
-# Create temp DMG folder
+# Create temp DMG folder (clean first)
 DMG_TEMP="$BUILD_DIR/dmg_temp"
+rm -rf "$DMG_TEMP"
 mkdir -p "$DMG_TEMP"
 cp -r "$APP_PATH" "$DMG_TEMP/"
 

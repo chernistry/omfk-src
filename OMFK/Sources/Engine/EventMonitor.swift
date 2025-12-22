@@ -190,6 +190,27 @@ final class EventMonitor {
     private func processBufferContent(_ bufferContent: String) async {
         let text = bufferContent.trimmingCharacters(in: .whitespacesAndNewlines)
         let letterCount = text.filter { $0.isLetter }.count
+        
+        // Special case: single Latin letters that are likely Russian prepositions/conjunctions
+        // d→в, c→с, r→к, j→о, e→у, b→и, z→я (typed on EN keyboard instead of RU)
+        let singleLetterRuPrepositions: [Character: Character] = [
+            "d": "в", "c": "с", "r": "к", "j": "о", "e": "у", "b": "и", "z": "я"
+        ]
+        
+        if letterCount == 1, text.count == 1,
+           let char = text.first,
+           let ruPreposition = singleLetterRuPrepositions[Character(char.lowercased())] {
+            // Check if preferred language is Russian
+            if settings.preferredLanguage == .russian {
+                let corrected = char.isUppercase ? String(ruPreposition).uppercased() : String(ruPreposition)
+                logger.info("✅ Single letter preposition: '\(text)' → '\(corrected)'")
+                await replaceText(with: corrected + " ", originalLength: 2) // +1 for space
+                lastCorrectedLength = corrected.count + 1
+                lastCorrectedText = corrected
+                return
+            }
+        }
+        
         guard letterCount >= 2 else {
             logger.debug("⏭️ Buffer too short (\(text.count) chars / \(letterCount) letters), skipping: \(DecisionLogger.tokenSummary(text), privacy: .public)")
             return

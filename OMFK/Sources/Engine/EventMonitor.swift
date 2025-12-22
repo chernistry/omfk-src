@@ -219,8 +219,9 @@ final class EventMonitor {
         if let corrected = await engine.correctText(text, expectedLayout: expectedLayout) {
             logger.info("✅ CORRECTION APPLIED: \(DecisionLogger.tokenSummary(text), privacy: .public) → \(DecisionLogger.tokenSummary(corrected), privacy: .public)")
             // Delete word + the space that triggered (cursor is after space)
-            await replaceText(with: corrected + " ", originalLength: wordLength + 1)
-            lastCorrectedLength = corrected.count + 1
+            let textWithSpace = corrected + " "
+            await replaceText(with: textWithSpace, originalLength: wordLength + 1)
+            lastCorrectedLength = textWithSpace.count
             lastCorrectedText = corrected
         } else {
             logger.info("ℹ️ No correction needed for: \(DecisionLogger.tokenSummary(text), privacy: .public)")
@@ -236,43 +237,54 @@ final class EventMonitor {
         if await engine.hasCyclingState() {
             logger.info("🔄 Cycling through alternatives for recent correction")
             if let corrected = await engine.cycleCorrection(bundleId: NSWorkspace.shared.frontmostApplication?.bundleIdentifier) {
-                let hadSpace = await engine.cyclingHadTrailingSpace()
+                // CRITICAL: Use lastCorrectedLength which tracks what we actually typed last time
                 let lengthToDelete = lastCorrectedLength
-                let textToType = hadSpace ? corrected + " " : corrected
-                logger.info("✅ CYCLING: → \(DecisionLogger.tokenSummary(corrected), privacy: .public) (deleting \(lengthToDelete) chars, space: \(hadSpace))")
-                await replaceText(with: textToType, originalLength: lengthToDelete)
-                lastCorrectedLength = textToType.count
+                logger.info("✅ CYCLING: → \(DecisionLogger.tokenSummary(corrected), privacy: .public) (deleting \(lengthToDelete) chars)")
+                await replaceText(with: corrected, originalLength: lengthToDelete)
+                lastCorrectedLength = corrected.count
                 lastCorrectedText = corrected
             }
             return
         }
         
-        // Get text to convert
-        let text: String
+        // Get text to convert - preserve original with whitespace for accurate replacement
+        let rawText: String
         if convertPhrase {
-            // Shift+Option: use entire phrase buffer
-            text = phraseBuffer.trimmingCharacters(in: .whitespacesAndNewlines)
-            logger.info("📝 Phrase mode - using phraseBuffer: \(DecisionLogger.tokenSummary(text), privacy: .public)")
+            rawText = phraseBuffer
+            logger.info("📝 Phrase mode - raw: \(rawText.count) chars")
         } else {
-            // Option only: get last word
-            text = await getSelectedOrLastWord()
+            rawText = await getSelectedTextRaw()
         }
         
-        guard !text.isEmpty else {
+        // For conversion, we can trim but keep rawText for deletion length
+        let textToConvert = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        guard !textToConvert.isEmpty else {
             logger.warning("⚠️ No text to correct")
             return
         }
         
-        logger.info("📝 Text for manual correction: \(DecisionLogger.tokenSummary(text), privacy: .public)")
+        logger.info("📝 Text for manual correction: \(DecisionLogger.tokenSummary(textToConvert), privacy: .public) (raw len: \(rawText.count))")
         
         let bundleId = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
         
-        if let corrected = await engine.correctLastWord(text, bundleId: bundleId) {
-            logger.info("✅ MANUAL CORRECTION: \(DecisionLogger.tokenSummary(text), privacy: .public) → \(DecisionLogger.tokenSummary(corrected), privacy: .public)")
-            let lengthToDelete = convertPhrase ? phraseBuffer.count : text.count
-            await replaceText(with: corrected, originalLength: lengthToDelete)
-            lastCorrectedLength = corrected.count
-            lastCorrectedText = corrected
+        if let corrected = await engine.correctLastWord(textToConvert, bundleId: bundleId) {
+            // Preserve leading/trailing whitespace from original
+            let leadingWS = String(rawText.prefix(while: { $0.isWhitespace }))
+            let trailingWS = String(rawText.reversed().prefix(while: { $0.isWhitespace }).reversed())
+            let finalText = leadingWS + corrected + trailingWS
+            
+            logger.info("✅ MANUAL CORRECTION: \(DecisionLogger.tokenSummary(textToConvert), privacy: .public) → \(DecisionLogger.tokenSummary(corrected), privacy: .public)")
+            // Delete exactly what's in the buffer (including any whitespace)
+            let lengthToDelete = rawText.count
+            await replaceText(with: finalText, originalLength: lengthToDelete)
+            lastCorrectedLength = finalText.count
+            lastCorrectedText = corrected  // Store without whitespace for cycling
+            
+            // Clear phrase buffer after successful phrase correction
+            if convertPhrase {
+                phraseBuffer = ""
+            }
             
             // Switch system layout to match the corrected text language
             if let targetLang = await engine.getLastCorrectionTargetLanguage() {
@@ -280,35 +292,32 @@ final class EventMonitor {
                 logger.info("🔄 Switched system layout to: \(targetLang.rawValue)")
             }
         } else {
-            logger.warning("❌ Manual correction failed for: \(DecisionLogger.tokenSummary(text), privacy: .public)")
+            logger.warning("❌ Manual correction failed for: \(DecisionLogger.tokenSummary(textToConvert), privacy: .public)")
         }
     }
     
-    private func getSelectedOrLastWord() async -> String {
-        logger.debug("🔍 Attempting to get selected text or last word...")
+    /// Get selected text preserving whitespace (for accurate replacement)
+    private func getSelectedTextRaw() async -> String {
+        logger.debug("🔍 Attempting to get selected text (raw)...")
         
-        // Priority 1: Use our own buffer (most reliable, no external dependencies)
+        // Priority 1: Use our own buffer
         if !lastCorrectedText.isEmpty {
             logger.info("✅ Using last corrected text: \(DecisionLogger.tokenSummary(self.lastCorrectedText), privacy: .public)")
             return lastCorrectedText
         }
         
-        let text = buffer.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !text.isEmpty {
-            logger.info("✅ Using buffer text: \(DecisionLogger.tokenSummary(text), privacy: .public)")
-            return text
+        if !buffer.isEmpty {
+            logger.info("✅ Using buffer text: \(DecisionLogger.tokenSummary(self.buffer), privacy: .public)")
+            return buffer
         }
         
-        // Priority 2: Try Accessibility API (kAXSelectedTextAttribute)
-        if let axText = getSelectedTextViaAccessibility() {
-            let trimmed = axText.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty {
-                logger.info("✅ Using AX selected text: \(DecisionLogger.tokenSummary(trimmed), privacy: .public)")
-                return trimmed
-            }
+        // Priority 2: Try Accessibility API (preserves whitespace)
+        if let axText = getSelectedTextViaAccessibility(), !axText.isEmpty {
+            logger.info("✅ Using AX selected text (raw): \(DecisionLogger.tokenSummary(axText), privacy: .public)")
+            return axText
         }
         
-        // Priority 3: Fallback to clipboard (for apps where AX doesn't work)
+        // Priority 3: Fallback to clipboard
         logger.debug("⚠️ No buffer or AX selection, falling back to clipboard...")
         let pb = NSPasteboard.general
         let originalContents = pb.string(forType: .string)
@@ -318,11 +327,10 @@ final class EventMonitor {
         try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
         
         if let selected = pb.string(forType: .string), 
-           !selected.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           !selected.isEmpty,
            selected != originalContents {
-            let trimmed = selected.trimmingCharacters(in: .whitespacesAndNewlines)
-            logger.info("✅ Using clipboard selection: \(DecisionLogger.tokenSummary(trimmed), privacy: .public)")
-            return trimmed
+            logger.info("✅ Using clipboard selection (raw): \(DecisionLogger.tokenSummary(selected), privacy: .public)")
+            return selected
         }
         
         // Priority 4: Select word backward and copy
@@ -334,7 +342,7 @@ final class EventMonitor {
         postKeyEvent(keyCode: 0x08, flags: .maskCommand) // Cmd+C
         try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
         
-        let result = pb.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let result = pb.string(forType: .string) ?? ""
         
         // Restore original clipboard if we got nothing
         if result.isEmpty, let original = originalContents {
@@ -343,7 +351,7 @@ final class EventMonitor {
         }
         
         if !result.isEmpty {
-            logger.info("✅ Selected word backward: \(DecisionLogger.tokenSummary(result), privacy: .public)")
+            logger.info("✅ Selected word backward (raw): \(DecisionLogger.tokenSummary(result), privacy: .public)")
         } else {
             logger.warning("❌ Failed to get any text")
         }
@@ -408,8 +416,22 @@ final class EventMonitor {
     }
     
     /// Type a string using CGEvent's Unicode string capability
+    /// Filters out control characters to prevent corruption (0x00-0x1F except tab/newline, 0x7F)
     private func typeUnicodeString(_ string: String) {
-        let chars = Array(string.utf16)
+        // Filter out control characters that can corrupt text
+        let filtered = string.unicodeScalars.filter { scalar in
+            let value = scalar.value
+            // Allow printable characters, tab (0x09), newline (0x0A), carriage return (0x0D)
+            return value >= 0x20 || value == 0x09 || value == 0x0A || value == 0x0D
+        }
+        let safeString = String(String.UnicodeScalarView(filtered))
+        
+        if safeString.count != string.count {
+            logger.warning("⚠️ Filtered \(string.count - safeString.count) control characters from output")
+        }
+        
+        let chars = Array(safeString.utf16)
+        guard !chars.isEmpty else { return }
         
         // CGEvent can handle up to ~20 characters at once
         let chunkSize = 20

@@ -81,7 +81,14 @@ public final class LayoutMapper: @unchecked Sendable {
     }
     
     private func buildMaps() {
-        guard let map = layoutData?.map else { return }
+        guard let map = layoutData?.map,
+              let layouts = layoutData?.layouts else { return }
+
+        // Build layout language lookup
+        var layoutLang: [String: String] = [:]
+        for layout in layouts {
+            layoutLang[layout.id] = layout.language
+        }
 
         func modRank(_ mod: String) -> Int {
             // Prefer mappings that do not require modifiers. This improves reversibility
@@ -94,14 +101,28 @@ public final class LayoutMapper: @unchecked Sendable {
             default: return 99
             }
         }
+
+        // Latin letters for filtering "escape hatch" mappings
+        let latinLetters = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
         
         for (keyCode, layoutsMap) in map {
             for (layoutID, mapping) in layoutsMap {
                 if charToKeyMap[layoutID] == nil { charToKeyMap[layoutID] = [:] }
                 if charToKeyCandidates[layoutID] == nil { charToKeyCandidates[layoutID] = [:] }
                 
+                let lang = layoutLang[layoutID] ?? "en"
+                let isNonLatinLayout = (lang == "ru" || lang == "he")
+                
                 for (mod, charString) in [("n", mapping.n), ("s", mapping.s), ("a", mapping.a), ("sa", mapping.sa)] {
                     if let s = charString, let char = s.first, s.count == 1 {
+                        // Skip Latin letters with Alt modifiers in non-Latin layouts
+                        // These are "escape hatches" for typing Latin, not real layout mappings
+                        if isNonLatinLayout && (mod == "a" || mod == "sa") {
+                            if let scalar = char.unicodeScalars.first, latinLetters.contains(scalar) {
+                                continue
+                            }
+                        }
+                        
                         charToKeyCandidates[layoutID]?[char, default: []].append((key: keyCode, mod: mod))
                         if let existing = charToKeyMap[layoutID]?[char] {
                             if modRank(mod) < modRank(existing.mod) {

@@ -231,21 +231,31 @@ actor CorrectionEngine {
             return await cycleCorrection(bundleId: bundleId)
         }
         
-        // New text - build alternatives with "undo-first" semantics:
-        // [0] = original (undo target)
-        // [1] = best guess (most likely intended)
-        // [2+] = other alternatives sorted by likelihood
-        
-        var alternatives: [CyclingState.Alternative] = []
         let activeLayouts = await settings.activeLayouts
         
-        // Detect what the text likely is
+        // Try smart per-segment correction first
+        let smartCorrected = await correctPerSegment(text, activeLayouts: activeLayouts)
+        
+        // Build alternatives with "undo-first" semantics:
+        // [0] = original (undo target)
+        // [1] = smart correction (per-segment) if different from original
+        // [2+] = whole-text conversions
+        
+        var alternatives: [CyclingState.Alternative] = []
+        
+        // Detect what the text likely is (for whole-text fallback)
         let decision = await router.route(token: text, context: DetectorContext(lastLanguage: nil))
         
         // [0] Original text (undo target)
         alternatives.append(CyclingState.Alternative(text: text, hypothesis: nil))
         
-        // Generate all possible conversions
+        // [1] Smart per-segment correction (if different)
+        if let smart = smartCorrected, smart != text {
+            alternatives.append(CyclingState.Alternative(text: smart, hypothesis: .ru)) // Best guess
+            logger.info("🧠 Smart correction: \(DecisionLogger.tokenSummary(smart), privacy: .public)")
+        }
+        
+        // Generate whole-text conversions as fallback alternatives
         let conversions: [(from: Language, to: Language)] = [
             (.english, .russian),
             (.english, .hebrew),
@@ -263,22 +273,17 @@ actor CorrectionEngine {
                !alternatives.contains(where: { $0.text == converted }),
                !otherAlternatives.contains(where: { $0.text == converted }) {
                 let hyp = hypothesisFor(source: from, target: to)
-                // Score: higher if matches detected hypothesis
                 let score = (hyp == decision.layoutHypothesis) ? 1.0 : 0.5
                 otherAlternatives.append((text: converted, hyp: hyp, score: score))
             }
         }
         
-        // Sort by score (best guess first)
         otherAlternatives.sort { $0.score > $1.score }
         
-        // Add to alternatives
         for alt in otherAlternatives {
             alternatives.append(CyclingState.Alternative(text: alt.text, hypothesis: alt.hyp))
         }
         
-        // For manual correction, we need at least the original + one alternative
-        // If no conversions found, still allow cycling back to original
         guard alternatives.count > 1 else {
             logger.warning("❌ No conversions possible for: \(text)")
             DecisionLogger.shared.log("CORRECTION: No alternatives for '\(text)'")
@@ -286,9 +291,8 @@ actor CorrectionEngine {
         }
         
         DecisionLogger.shared.log("CORRECTION: Built \(alternatives.count) alternatives for '\(text.prefix(30))...'")
-        logger.info("🔄 Built \(alternatives.count) alternatives: original → best guess → others")
+        logger.info("🔄 Built \(alternatives.count) alternatives: original → smart → others")
         
-        // Start at index 0 (original), first next() will go to 1 (best guess)
         cyclingState = CyclingState(
             originalText: text,
             alternatives: alternatives,
@@ -300,6 +304,90 @@ actor CorrectionEngine {
         )
         
         return await cycleCorrection(bundleId: bundleId)
+    }
+    
+    /// Smart per-segment correction: analyze each word/segment and correct only wrong-layout parts
+    private func correctPerSegment(_ text: String, activeLayouts: [String: String]) async -> String? {
+        // Split into segments preserving whitespace
+        let segments = splitIntoSegments(text)
+        guard segments.count > 1 else {
+            // Single segment - no benefit from per-segment analysis
+            return nil
+        }
+        
+        var result: [String] = []
+        var anyChanged = false
+        
+        for segment in segments {
+            // Preserve whitespace as-is
+            if segment.allSatisfy({ $0.isWhitespace || $0.isNewline }) {
+                result.append(segment)
+                continue
+            }
+            
+            // Analyze this segment
+            let decision = await router.route(token: segment, context: DetectorContext(lastLanguage: nil))
+            
+            // Check if segment needs correction
+            let needsCorrection: Bool
+            let sourceLayout: Language
+            
+            switch decision.layoutHypothesis {
+            case .ru, .en, .he:
+                needsCorrection = false
+                sourceLayout = decision.language
+            case .ruFromEnLayout:
+                needsCorrection = true
+                sourceLayout = .english
+            case .heFromEnLayout:
+                needsCorrection = true
+                sourceLayout = .english
+            case .enFromRuLayout:
+                needsCorrection = true
+                sourceLayout = .russian
+            case .enFromHeLayout:
+                needsCorrection = true
+                sourceLayout = .hebrew
+            case .heFromRuLayout:
+                needsCorrection = true
+                sourceLayout = .russian
+            case .ruFromHeLayout:
+                needsCorrection = true
+                sourceLayout = .hebrew
+            }
+            
+            if needsCorrection, decision.confidence > 0.4,
+               let corrected = LayoutMapper.shared.convertBest(segment, from: sourceLayout, to: decision.language, activeLayouts: activeLayouts) {
+                result.append(corrected)
+                anyChanged = true
+                logger.debug("📝 Segment '\(segment)' → '\(corrected)' (\(decision.layoutHypothesis.rawValue))")
+            } else {
+                result.append(segment)
+            }
+        }
+        
+        return anyChanged ? result.joined() : nil
+    }
+    
+    /// Split text into segments (words + whitespace preserved separately)
+    private func splitIntoSegments(_ text: String) -> [String] {
+        var segments: [String] = []
+        var current = ""
+        var inWhitespace = false
+        
+        for char in text {
+            let isWS = char.isWhitespace || char.isNewline
+            if isWS != inWhitespace && !current.isEmpty {
+                segments.append(current)
+                current = ""
+            }
+            current.append(char)
+            inWhitespace = isWS
+        }
+        if !current.isEmpty {
+            segments.append(current)
+        }
+        return segments
     }
     
     /// Cycle to next alternative on repeated hotkey press

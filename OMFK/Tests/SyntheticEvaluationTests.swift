@@ -161,9 +161,9 @@ final class SyntheticEvaluationTests: XCTestCase {
     ) -> [Case] {
         var rng = SplitMix64(seed: seed)
 
-        let en = SeedLexicon.english
-        let ru = SeedLexicon.russian
-        let he = SeedLexicon.hebrew
+        let en = UnigramLexicon.load(lang: "en", minLen: 2, maxLen: 12, take: 200_000)
+        let ru = UnigramLexicon.load(lang: "ru", minLen: 2, maxLen: 14, take: 200_000)
+        let he = UnigramLexicon.load(lang: "he", minLen: 2, maxLen: 12, take: 200_000)
 
         let intendedSamples: [(Language, [String])] = [
             (.english, generateIntendedSamples(words: en, count: casesPerLanguage, rng: &rng)),
@@ -204,25 +204,79 @@ final class SyntheticEvaluationTests: XCTestCase {
     }
 
     private func generateIntendedSamples(words: [String], count: Int, rng: inout SplitMix64) -> [String] {
-        let filtered = words
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
+        let filtered = words.filter { !$0.isEmpty }
 
         var out: [String] = []
         out.reserveCapacity(count)
 
-        for i in 0..<count {
-            if i % 3 == 0 {
-                // Phrase (2-4 words)
-                let n = 2 + Int(rng.next() % 3)
+        for _ in 0..<count {
+            let roll = Int(rng.next() % 100)
+
+            // Mix coverage:
+            // - short words (2-3)
+            // - medium words (4-8)
+            // - phrases with spaces
+            // - phrases with punctuation inside/around words
+
+            func pick(from slice: ArraySlice<String>) -> String {
+                let idx = Int(rng.next() % UInt64(slice.count))
+                return slice[slice.startIndex + idx]
+            }
+
+            // Rank-stratified slices to avoid only "top-10" words.
+            let top = filtered.prefix(min(filtered.count, 4000))
+            let midStart = min(filtered.count, 20_000)
+            let midEnd = min(filtered.count, 40_000)
+            let tailStart = min(filtered.count, 150_000)
+            let mid = midStart < midEnd ? filtered[midStart..<midEnd] : filtered[...]
+            let tail = tailStart < filtered.count ? filtered[tailStart..<filtered.count] : filtered[...]
+
+            func pickRankedWord(minLen: Int, maxLen: Int) -> String {
+                // Pick which band first, then pick words until length fits (cap attempts).
+                let bandRoll = Int(rng.next() % 100)
+                let band: ArraySlice<String>
+                if bandRoll < 50 { band = top }
+                else if bandRoll < 85 { band = mid }
+                else { band = tail }
+
+                for _ in 0..<40 {
+                    let w = pick(from: band)
+                    let len = w.filter { $0.isLetter }.count
+                    if len >= minLen && len <= maxLen { return w }
+                }
+                return pick(from: top)
+            }
+
+            if roll < 25 {
+                out.append(pickRankedWord(minLen: 2, maxLen: 3))
+            } else if roll < 55 {
+                out.append(pickRankedWord(minLen: 4, maxLen: 8))
+            } else if roll < 80 {
+                // Phrase (2-6 words)
+                let n = 2 + Int(rng.next() % 5)
                 var parts: [String] = []
                 parts.reserveCapacity(n)
-                for _ in 0..<n {
-                    parts.append(filtered[Int(rng.next() % UInt64(filtered.count))])
+                for j in 0..<n {
+                    let w = pickRankedWord(minLen: j == 0 ? 2 : 2, maxLen: 10)
+                    parts.append(w)
                 }
                 out.append(parts.joined(separator: " "))
             } else {
-                out.append(filtered[Int(rng.next() % UInt64(filtered.count))])
+                // Punctuation-heavy phrase.
+                // Examples:
+                //   "word,word" / "word, word" / "word—word" / "word'word" / "(word) word"
+                let w1 = pickRankedWord(minLen: 2, maxLen: 8)
+                let w2 = pickRankedWord(minLen: 2, maxLen: 10)
+                let w3 = pickRankedWord(minLen: 2, maxLen: 10)
+                let punctRoll = Int(rng.next() % 6)
+                switch punctRoll {
+                case 0: out.append("\(w1), \(w2)")
+                case 1: out.append("\(w1),\(w2)")
+                case 2: out.append("\(w1) — \(w2)")
+                case 3: out.append("(\(w1)) \(w2)")
+                case 4: out.append("\(w1) \(w2)! \(w3)")
+                default: out.append("\(w1) \(w2)")
+                }
             }
         }
 
@@ -269,23 +323,47 @@ final class SyntheticEvaluationTests: XCTestCase {
     }
 }
 
-private enum SeedLexicon {
-    static let english: [String] = [
-        "hi", "ok", "yes", "no", "what", "why", "hello", "thanks", "please", "sorry",
-        "good", "great", "cool", "nice", "maybe", "tomorrow", "today", "work", "home",
-        "friend", "where", "when", "how", "fast", "slow", "right", "left"
-    ]
+private enum UnigramLexicon {
+    static func load(lang: String, minLen: Int, maxLen: Int, take: Int) -> [String] {
+        #if SWIFT_PACKAGE
+        let url = Bundle.module.url(forResource: "\(lang)_unigrams", withExtension: "tsv", subdirectory: "LanguageModels")
+        #else
+        let url = Bundle.main.url(forResource: "\(lang)_unigrams", withExtension: "tsv", subdirectory: "LanguageModels")
+        #endif
 
-    static let russian: [String] = [
-        "да", "нет", "что", "как", "где", "когда", "пока", "привет", "спасибо", "пожалуйста",
-        "хорошо", "плохо", "дом", "работа", "сегодня", "завтра", "вчера", "друг", "люди",
-        "очень", "быстро", "медленно", "право", "лево"
-    ]
+        guard let url else {
+            // Fallback: tiny built-in list (keeps tests runnable even if resources missing).
+            switch lang {
+            case "ru": return Array(BuiltinLexicon.russian)
+            case "he": return Array(BuiltinLexicon.hebrew)
+            default: return Array(BuiltinLexicon.english)
+            }
+        }
 
-    static let hebrew: [String] = [
-        "מה", "לא", "כן", "שלום", "טוב", "תודה", "בבקשה", "איפה", "מתי", "למה",
-        "איך", "כאן", "שם", "עכשיו", "מחר", "היום", "בית", "עבודה", "חבר", "אנשים"
-    ]
+        guard let data = try? Data(contentsOf: url),
+              let text = String(data: data, encoding: .utf8) else {
+            return lang == "ru" ? Array(BuiltinLexicon.russian) : (lang == "he" ? Array(BuiltinLexicon.hebrew) : Array(BuiltinLexicon.english))
+        }
+
+        var out: [String] = []
+        out.reserveCapacity(min(take, 200_000))
+
+        for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
+            if out.count >= take { break }
+            let parts = line.split(separator: "\t", maxSplits: 1, omittingEmptySubsequences: true)
+            guard let wordRaw = parts.first, !wordRaw.isEmpty else { continue }
+            let w = String(wordRaw)
+            let len = w.filter { $0.isLetter }.count
+            if len < minLen || len > maxLen { continue }
+            out.append(w)
+        }
+
+        if out.isEmpty {
+            return lang == "ru" ? Array(BuiltinLexicon.russian) : (lang == "he" ? Array(BuiltinLexicon.hebrew) : Array(BuiltinLexicon.english))
+        }
+
+        return out
+    }
 }
 
 private struct SplitMix64 {

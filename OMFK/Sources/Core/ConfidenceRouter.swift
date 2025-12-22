@@ -151,6 +151,14 @@ actor ConfidenceRouter {
                     case .enFromHeLayout, .ruFromHeLayout: sourceLayout = .hebrew
                     default: sourceLayout = .english
                     }
+
+                    // Reject corrections where the token's dominant script doesn't match the hypothesis source.
+                    if let dominant = dominantScriptLanguage(token), dominant != sourceLayout {
+                        let rejectedMsg = "REJECTED_SCRIPT: \(deepHypothesis.rawValue) | dominant=\(dominant.rawValue) source=\(sourceLayout.rawValue)"
+                        DecisionLogger.shared.log(rejectedMsg)
+                        DecisionLogger.shared.logDecision(token: token, path: "DEEP", result: baseline)
+                        return baseline
+                    }
                     
                     let sourceScore = scoreWithNgram(token, language: sourceLayout)
                     let sourceNorm = scoreWithNgramNormalized(token, language: sourceLayout)
@@ -410,6 +418,12 @@ actor ConfidenceRouter {
         default: sourceLayout = .english
         }
 
+        // Script gate: if the token clearly belongs to a different script than the hypothesis source,
+        // reject to avoid false positives (e.g. valid English with punctuation being "corrected" as en_from_he).
+        if let dominant = dominantScriptLanguage(token), dominant != sourceLayout {
+            return nil
+        }
+
         guard let converted = LayoutMapper.shared.convertBest(token, from: sourceLayout, to: targetLanguage, activeLayouts: activeLayouts),
               converted != token else { return nil }
 
@@ -520,8 +534,14 @@ actor ConfidenceRouter {
             (.ruFromHeLayout, .hebrew, .russian),
         ]
 
+        let dominant = dominantScriptLanguage(token)
+
         var best: Candidate? = nil
         for (hyp, source, target) in mapped {
+            // Script gate: don't consider hypotheses whose source script doesn't match the token.
+            // This prevents false positives for already-correct text with punctuation (e.g. "how,what").
+            if let dominant, dominant != source { continue }
+
             guard let converted = LayoutMapper.shared.convertBest(token, from: source, to: target, activeLayouts: activeLayouts),
                   converted != token else { continue }
             let targetWord = wordValidator.confidence(for: converted, language: target)

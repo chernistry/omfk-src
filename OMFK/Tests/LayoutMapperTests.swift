@@ -45,6 +45,27 @@ final class LayoutMapperTests: XCTestCase {
         let result = LayoutMapper.shared.convert("Ghbdtn", from: .english, to: .russian)
         XCTAssertEqual(result, "Привет")
     }
+
+    func testPunctuationRoundTripRussianEnglish() {
+        let activeLayouts = ["en": "us", "ru": "russianwin", "he": "hebrew_qwerty"]
+        let original = "(what) ok, no!"
+        guard let typedOnRu = LayoutMapper.shared.convert(original, from: .english, to: .russian, activeLayouts: activeLayouts),
+              let backToEn = LayoutMapper.shared.convert(typedOnRu, from: .russian, to: .english, activeLayouts: activeLayouts) else {
+            XCTFail("Conversion failed")
+            return
+        }
+        XCTAssertEqual(backToEn, original)
+    }
+
+    func testPunctuationRussianToEnglishMappings() {
+        let activeLayouts = ["en": "us", "ru": "russianwin", "he": "hebrew_qwerty"]
+        XCTAssertEqual(LayoutMapper.shared.convert("б", from: .russian, to: .english, activeLayouts: activeLayouts), ",")
+        XCTAssertEqual(LayoutMapper.shared.convert("ю", from: .russian, to: .english, activeLayouts: activeLayouts), ".")
+        XCTAssertEqual(LayoutMapper.shared.convert(")", from: .russian, to: .english, activeLayouts: activeLayouts), ")")
+        XCTAssertEqual(LayoutMapper.shared.convert("(", from: .russian, to: .english, activeLayouts: activeLayouts), "(")
+        XCTAssertEqual(LayoutMapper.shared.convert("сщщдбдуае", from: .russian, to: .english, activeLayouts: activeLayouts), "cool,left")
+        XCTAssertEqual(LayoutMapper.shared.convertBest("сщщдбдуае", from: .russian, to: .english, activeLayouts: activeLayouts), "cool,left")
+    }
     
     func testRussianToHebrew() {
         // RU→HE via composition (RU→EN→HE)

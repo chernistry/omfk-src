@@ -43,7 +43,17 @@ public final class LayoutMapper: @unchecked Sendable {
         loadLayoutData()
         buildMaps()
         buildAllLayoutsPerLanguage()
-        detectActiveLayouts()
+        // HIToolbox input-source APIs must be queried on the main queue.
+        // LayoutMapper can be initialized from background queues (e.g. during detection),
+        // so we defer detection safely.
+        setDefaults()
+        if Thread.isMainThread {
+            detectActiveLayouts()
+        } else {
+            DispatchQueue.main.async { [weak self] in
+                self?.detectActiveLayouts()
+            }
+        }
     }
     
     private func buildAllLayoutsPerLanguage() {
@@ -105,9 +115,16 @@ public final class LayoutMapper: @unchecked Sendable {
             }
         }
 
-        // Identify layouts with ambiguous reverse-mapping (same character on multiple keys).
+        // Identify layouts with ambiguous reverse-mapping for LETTERS (same letter on multiple keys).
+        // Some layouts may repeat punctuation across modifiers on the same key; that is not the
+        // ambiguity we want to disambiguate in `convertBest`.
         for (layoutID, chars) in charToKeyCandidates {
-            if chars.values.contains(where: { $0.count > 1 }) {
+            let hasAmbiguousLetters = chars.contains { (ch, candidates) in
+                guard ch.isLetter else { return false }
+                let distinctKeys = Set(candidates.map { $0.key })
+                return distinctKeys.count > 1
+            }
+            if hasAmbiguousLetters {
                 ambiguousLayoutIds.insert(layoutID)
             }
         }
@@ -115,6 +132,12 @@ public final class LayoutMapper: @unchecked Sendable {
     
     /// Detects user's active keyboard layouts from macOS
     private func detectActiveLayouts() {
+        // HIToolbox enforces main-queue usage.
+        if !Thread.isMainThread {
+            setDefaults()
+            return
+        }
+
         let conditions: CFDictionary = [
             kTISPropertyInputSourceCategory as String: kTISCategoryKeyboardInputSource as Any,
             kTISPropertyInputSourceIsSelectCapable as String: true

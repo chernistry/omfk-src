@@ -17,4 +17,3 @@ data/processed/*
 .sdd/layouts.json
 
 Tools/CoreMLTrainer/training_data_real.csv
-Tools/CoreMLTrainer/training_data_real.csv

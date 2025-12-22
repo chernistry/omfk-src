@@ -61,6 +61,27 @@ final class SettingsManager: ObservableObject {
         
         self.fastPathThreshold = UserDefaults.standard.object(forKey: "fastPathThreshold") as? Double ?? 0.95
         self.standardPathThreshold = UserDefaults.standard.object(forKey: "standardPathThreshold") as? Double ?? 0.70
+        
+        // Auto-detect installed keyboard layouts
+        detectAndUpdateLayouts()
+    }
+    
+    /// Auto-detect keyboard layout variants from macOS
+    private func detectAndUpdateLayouts() {
+        let detected = InputSourceManager.shared.detectInstalledLayouts()
+        var updated = false
+        
+        for (lang, layoutID) in detected {
+            if activeLayouts[lang] != layoutID {
+                activeLayouts[lang] = layoutID
+                updated = true
+            }
+        }
+        
+        if updated {
+            // Persist the detected layouts
+            UserDefaults.standard.set(activeLayouts, forKey: "activeLayouts")
+        }
     }
     
     func isExcluded(bundleId: String) -> Bool {

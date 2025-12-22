@@ -8,8 +8,64 @@ final class InputSourceManager {
     
     private let logger = Logger.inputSource
     
+    /// Maps macOS layout IDs to our layout IDs
+    private let macOSToLayoutID: [String: String] = [
+        // Russian
+        "com.apple.keylayout.Russian": "ru_pc",
+        "com.apple.keylayout.RussianWin": "ru_pc",
+        "com.apple.keylayout.Russian-Phonetic": "ru_phonetic_yasherty",
+        // Hebrew
+        "com.apple.keylayout.Hebrew": "he_standard",
+        "com.apple.keylayout.Hebrew-QWERTY": "he_qwerty",
+        "com.apple.keylayout.Hebrew-PC": "he_pc",
+        // English
+        "com.apple.keylayout.US": "en_us",
+        "com.apple.keylayout.ABC": "en_us",
+    ]
+    
     private init() {
         logger.info("InputSourceManager initialized")
+    }
+    
+    /// Detects all installed keyboard layouts and returns our layout IDs
+    func detectInstalledLayouts() -> [String: String] {
+        var result: [String: String] = [
+            "en": "en_us",
+            "ru": "ru_pc", 
+            "he": "he_standard"
+        ]
+        
+        let filter: [CFString: Any] = [
+            kTISPropertyInputSourceType: kTISTypeKeyboardLayout as Any
+        ]
+        
+        guard let list = TISCreateInputSourceList(filter as CFDictionary, false)?.takeRetainedValue() else {
+            logger.warning("Failed to get input source list")
+            return result
+        }
+        
+        for i in 0..<CFArrayGetCount(list) {
+            guard let src = CFArrayGetValueAtIndex(list, i) else { continue }
+            let source = unsafeBitCast(src, to: TISInputSource.self)
+            
+            guard let idPtr = TISGetInputSourceProperty(source, kTISPropertyInputSourceID) else { continue }
+            let macOSID = unsafeBitCast(idPtr, to: CFString.self) as String
+            
+            if let ourID = macOSToLayoutID[macOSID] {
+                // Determine language from our ID
+                if ourID.hasPrefix("ru") {
+                    result["ru"] = ourID
+                    logger.info("Detected Russian layout: \(ourID)")
+                } else if ourID.hasPrefix("he") {
+                    result["he"] = ourID
+                    logger.info("Detected Hebrew layout: \(ourID)")
+                } else if ourID.hasPrefix("en") {
+                    result["en"] = ourID
+                }
+            }
+        }
+        
+        return result
     }
     
     func currentLanguage() -> Language? {

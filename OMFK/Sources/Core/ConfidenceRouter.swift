@@ -1,6 +1,13 @@
 import Foundation
 import os.log
 
+enum DetectionMode: Sendable {
+    /// Used for background/automatic corrections. Prefer precision; avoid risky corrections.
+    case automatic
+    /// Used for user-invoked hotkey corrections. Prefer recall; ambiguity is acceptable.
+    case manual
+}
+
 /// Orchestrates language detection by routing requests through Fast (N-gram) and Standard (Ensemble) paths
 /// based on confidence thresholds.
 actor ConfidenceRouter {
@@ -54,7 +61,7 @@ actor ConfidenceRouter {
     /// - N-gram/Ensemble detect the SCRIPT of the text (Cyrillic -> "Russian").
     /// - CoreML detects LAYOUT MISMATCH ("this Cyrillic is gibberish Russian, but valid Hebrew from RU layout").
     /// - We ALWAYS invoke CoreML to check for `_from_` hypotheses, even if Fast/Standard is confident.
-    func route(token: String, context: DetectorContext) async -> LanguageDecision {
+    func route(token: String, context: DetectorContext, mode: DetectionMode = .automatic) async -> LanguageDecision {
         // Whitelist check - don't convert common words/slang
         if let lang = whitelist.whitelistedLanguage(token) {
             let hyp: LanguageHypothesis = lang == .english ? .en : (lang == .russian ? .ru : .he)
@@ -75,7 +82,7 @@ actor ConfidenceRouter {
 
         // -- STEP 0: Score-based decision (layout + language via conversions + n-grams + lexicon) --
         // This is deterministic and fixes cases where CoreML/NL miss the layout mismatch.
-        if let scored = scoredDecision(token: token, activeLayouts: activeLayouts) {
+        if let scored = scoredDecision(token: token, activeLayouts: activeLayouts, mode: mode) {
             let stdThreshold = await settings.standardPathThreshold
             if scored.confidence >= stdThreshold {
                 DecisionLogger.shared.logDecision(token: token, path: "SCORE", result: scored)
@@ -173,7 +180,7 @@ actor ConfidenceRouter {
                     let sourceWordConfidence = wordValidator.confidence(for: token, language: sourceLayout)
                     let sourceFreq = frequencyScore(token, language: sourceLayout)
 
-                    func isValidConversion(_ converted: String) -> Bool {
+                    func isValidConversion(_ converted: String, targetLanguage: Language) -> Bool {
                         let targetWordConfidence = wordValidator.confidence(for: converted, language: targetLanguage)
                         let targetFreq = frequencyScore(converted, language: targetLanguage)
                         let shortLetters = converted.filter { $0.isLetter }.count <= 3
@@ -196,10 +203,99 @@ actor ConfidenceRouter {
                         return targetNorm >= thresholds.targetNormMin && targetNorm >= sourceNorm + thresholds.targetNormMargin && (targetFreq >= sourceFreq || targetWordConfidence >= thresholds.shortWordFreqMin)
                     }
 
+                    func correctionHypotheses(for sourceLayout: Language) -> [LanguageHypothesis] {
+                        switch sourceLayout {
+                        case .english: return [.ruFromEnLayout, .heFromEnLayout]
+                        case .russian: return [.enFromRuLayout, .heFromRuLayout]
+                        case .hebrew: return [.enFromHeLayout, .ruFromHeLayout]
+                        }
+                    }
+
+                    struct ValidatedCandidate {
+                        let hypothesis: LanguageHypothesis
+                        let targetLanguage: Language
+                        let converted: String
+                        let quality: Double
+                    }
+
+                    func bestValidatedCandidate(hypothesis: LanguageHypothesis) -> ValidatedCandidate? {
+                        let src: Language
+                        let tgt = hypothesis.targetLanguage
+                        switch hypothesis {
+                        case .ruFromEnLayout, .heFromEnLayout: src = .english
+                        case .enFromRuLayout, .heFromRuLayout: src = .russian
+                        case .enFromHeLayout, .ruFromHeLayout: src = .hebrew
+                        default: return nil
+                        }
+
+                        guard let dominant = dominantScriptLanguage(token), dominant == src else { return nil }
+
+                        func consider(_ converted: String) -> ValidatedCandidate? {
+                            guard converted != token else { return nil }
+                            guard isValidConversion(converted, targetLanguage: tgt) else { return nil }
+                            return ValidatedCandidate(
+                                hypothesis: hypothesis,
+                                targetLanguage: tgt,
+                                converted: converted,
+                                quality: qualityScore(converted, lang: tgt) + correctionPriorBonus(for: hypothesis)
+                            )
+                        }
+
+                        if let primary = LayoutMapper.shared.convertBest(token, from: src, to: tgt, activeLayouts: activeLayouts),
+                           let cand = consider(primary) {
+                            return cand
+                        }
+
+                        let variants = LayoutMapper.shared.convertAllVariants(token, from: src, to: tgt, activeLayouts: activeLayouts)
+                        var best: ValidatedCandidate? = nil
+                        for (_, converted) in variants {
+                            if let cand = consider(converted), (best == nil || cand.quality > best!.quality) {
+                                best = cand
+                            }
+                        }
+                        return best
+                    }
+
+                    // Cross-check competing correction hypotheses for the same source script.
+                    // This reduces cases like RU→EN being mistaken as RU→HE when both conversions look plausible.
+                    let correctionCandidates = correctionHypotheses(for: sourceLayout)
+                    var validated: [ValidatedCandidate] = []
+                    validated.reserveCapacity(correctionCandidates.count)
+                    for hyp in correctionCandidates {
+                        if let cand = bestValidatedCandidate(hypothesis: hyp) { validated.append(cand) }
+                    }
+
+                    if !validated.isEmpty {
+                        let bestOverall = validated.max(by: { $0.quality < $1.quality })!
+                        let bestIsModel = bestOverall.hypothesis == deepHypothesis
+
+                        // Only override CoreML when the alternative is clearly better.
+                        if !bestIsModel {
+                            if let modelCand = validated.first(where: { $0.hypothesis == deepHypothesis }) {
+                                if bestOverall.quality < modelCand.quality + 0.12 {
+                                    // Not a strong enough reason to override; keep CoreML's choice.
+                                    validated = [modelCand]
+                                }
+                            }
+                        }
+
+                        let chosen = validated.max(by: { $0.quality < $1.quality })!
+                        let chosenConf = max(deepConf, 0.90)
+                        let deepResult = LanguageDecision(
+                            language: chosen.targetLanguage,
+                            layoutHypothesis: chosen.hypothesis,
+                            confidence: chosenConf,
+                            scores: [:]
+                        )
+                        DecisionLogger.shared.log("DEEP_BEST: \(chosen.hypothesis.rawValue) via \(chosen.converted)")
+                        DecisionLogger.shared.logDecision(token: token, path: "DEEP_CORRECTION", result: deepResult)
+                        return deepResult
+                    }
+
                     // Prefer conversion using the user-selected/detected active layouts first.
                     if let primary = LayoutMapper.shared.convertBest(token, from: sourceLayout, to: targetLanguage, activeLayouts: activeLayouts),
                        primary != token,
-                       isValidConversion(primary) {
+                       isValidConversion(primary, targetLanguage: targetLanguage) {
                         let deepResult = LanguageDecision(
                             language: targetLanguage,
                             layoutHypothesis: deepHypothesis,
@@ -220,7 +316,7 @@ actor ConfidenceRouter {
                         let targetNorm = scoreWithNgramNormalized(converted, language: targetLanguage)
                         DecisionLogger.shared.log("VARIANT[\(layoutId)]: \(token) → \(converted) | src=\(String(format: "%.2f", sourceScore)) tgt=\(String(format: "%.2f", targetScore)) tgtN=\(String(format: "%.2f", targetNorm))")
 
-                        if isValidConversion(converted) {
+                        if isValidConversion(converted, targetLanguage: targetLanguage) {
                             if bestConversion == nil || targetNorm > bestConversion!.score {
                                 bestConversion = (converted, targetNorm)
                             }
@@ -503,22 +599,43 @@ actor ConfidenceRouter {
         return nil
     }
 
-    private func scoredDecision(token: String, activeLayouts: [String: String]) -> LanguageDecision? {
-        func quality(_ text: String, lang: Language) -> Double {
-            let letters = text.filter { $0.isLetter }
-            let isShort = letters.count <= 3
+    private func qualityScore(_ text: String, lang: Language) -> Double {
+        let letters = text.filter { $0.isLetter }
+        let isShort = letters.count <= 3
 
-            let w = wordValidator.confidence(for: text, language: lang)
-            let n = isShort ? 0.0 : scoreWithNgramNormalized(text, language: lang)
-            let f = frequencyScore(text, language: lang)
+        let w = wordValidator.confidence(for: text, language: lang)
+        let n = isShort ? 0.0 : scoreWithNgramNormalized(text, language: lang)
+        let f = frequencyScore(text, language: lang)
 
-            return (isShort ? 1.6 : 1.2) * w + (isShort ? 1.6 : 1.0) * f + (isShort ? 0.0 : 0.6) * n
+        return (isShort ? 1.6 : 1.2) * w + (isShort ? 1.6 : 1.0) * f + (isShort ? 0.0 : 0.6) * n
+    }
+
+    private func correctionPriorBonus(for hypothesis: LanguageHypothesis) -> Double {
+        // Priors to reduce rare/undesired corrections in ambiguous cases.
+        // These are deliberately small; they shouldn't override strong evidence.
+        switch hypothesis {
+        case .heFromRuLayout:
+            return -0.08 // RU→HE is rarer than RU→EN for Cyrillic gibberish.
+        case .ruFromHeLayout:
+            return -0.03 // HE→RU is rarer than HE→EN for Hebrew gibberish.
+        default:
+            return 0.0
         }
+    }
+
+    private func endsWithHebrewNonFinalForm(_ text: String) -> Bool {
+        guard let last = text.trimmingCharacters(in: .whitespacesAndNewlines).last else { return false }
+        // Final forms: ך ם ן ף ץ. If a word ends with the non-final form (כ מ נ פ צ),
+        // it's often an artefact of layout mapping.
+        return ["כ", "מ", "נ", "פ", "צ"].contains(String(last))
+    }
+
+    private func scoredDecision(token: String, activeLayouts: [String: String], mode: DetectionMode) -> LanguageDecision? {
 
         // Best "as-is" quality across languages.
-        let asIsRu = quality(token, lang: .russian)
-        let asIsEn = quality(token, lang: .english)
-        let asIsHe = quality(token, lang: .hebrew)
+        let asIsRu = qualityScore(token, lang: .russian)
+        let asIsEn = qualityScore(token, lang: .english)
+        let asIsHe = qualityScore(token, lang: .hebrew)
         let bestAsIs = max(asIsRu, asIsEn, asIsHe)
 
         struct Candidate {
@@ -526,7 +643,9 @@ actor ConfidenceRouter {
             let target: Language
             let converted: String
             let targetWord: Double
+            let targetFreq: Double
             let q: Double
+            let isWhitelisted: Bool
         }
 
         let mapped: [(LanguageHypothesis, Language, Language)] = [
@@ -549,21 +668,69 @@ actor ConfidenceRouter {
             guard let converted = LayoutMapper.shared.convertBest(token, from: source, to: target, activeLayouts: activeLayouts),
                   converted != token else { continue }
             let targetWord = wordValidator.confidence(for: converted, language: target)
-            let q = quality(converted, lang: target) - 0.05 // small bias against corrections
+            let targetFreq = frequencyScore(converted, language: target)
+            let q = qualityScore(converted, lang: target) - 0.05 + correctionPriorBonus(for: hyp) // small bias against corrections
+            let whitelisted = whitelist.isWhitelisted(converted, language: target)
             let sourceBuiltin = builtinValidator.confidence(for: token, language: source)
             let targetBuiltin = builtinValidator.confidence(for: converted, language: target)
             if targetBuiltin >= 0.99 && sourceBuiltin <= 0.01 {
                 return LanguageDecision(language: target, layoutHypothesis: hyp, confidence: 0.95, scores: [:])
             }
-            let cand = Candidate(hypothesis: hyp, target: target, converted: converted, targetWord: targetWord, q: q)
+            let cand = Candidate(hypothesis: hyp, target: target, converted: converted, targetWord: targetWord, targetFreq: targetFreq, q: q, isWhitelisted: whitelisted)
             if best == nil || cand.q > best!.q { best = cand }
         }
 
         guard let best else { return nil }
 
+        // Collision handler for Hebrew-QWERTY: the typed Hebrew token can be a valid Hebrew word,
+        // but the mapped EN/RU candidate is also a very plausible, high-frequency word.
+        if dominant == .hebrew, best.hypothesis == .enFromHeLayout || best.hypothesis == .ruFromHeLayout {
+            let srcWord = wordValidator.confidence(for: token, language: .hebrew)
+            let srcFreq = frequencyScore(token, language: .hebrew)
+            let srcBuiltin = builtinValidator.confidence(for: token, language: .hebrew)
+
+            let letterCount = token.filter { $0.isLetter }.count
+            let isShort = letterCount <= 4
+
+            // If the mapped candidate is whitelisted in the target language, allow correction even when the
+            // source is a valid Hebrew word (this captures a lot of slang/abbreviations).
+            // In automatic mode, avoid overriding very common/strong Hebrew words to reduce false positives.
+            if best.isWhitelisted {
+                let strongHebrew = (srcBuiltin >= 0.99) || (srcWord >= 0.95 && srcFreq >= 0.55)
+                if mode == .automatic, strongHebrew {
+                    // Fall through to the regular margin-based logic.
+                } else {
+                    let conf: Double = mode == .manual ? 0.95 : 0.85
+                    return LanguageDecision(language: best.target, layoutHypothesis: best.hypothesis, confidence: conf, scores: [:])
+                }
+            }
+
+            // For auto mode: require very strong target evidence + clear frequency advantage.
+            // For manual mode: be a bit more permissive.
+            let minTargetWord = mode == .manual ? 0.92 : 0.96
+            let minTargetFreq = mode == .manual ? 0.30 : 0.45
+            let minFreqGain = mode == .manual ? 0.12 : 0.18
+
+            let sourceLooksIntentionallyHebrew = srcBuiltin >= 0.99 && srcWord >= 0.95
+            let sourceHasFinalArtefact = endsWithHebrewNonFinalForm(token)
+
+            if !sourceLooksIntentionallyHebrew,
+               best.targetWord >= minTargetWord,
+               best.targetFreq >= minTargetFreq,
+               best.targetFreq >= srcFreq + minFreqGain,
+               (isShort || sourceHasFinalArtefact || srcWord < 0.90) {
+                let conf: Double = mode == .manual ? 0.90 : 0.82
+                return LanguageDecision(language: best.target, layoutHypothesis: best.hypothesis, confidence: conf, scores: [:])
+            }
+        }
+
         // Only accept if the best mapped hypothesis is substantially better than any as-is option.
         let letterCount = token.filter { $0.isLetter }.count
-        let requiredMargin = letterCount <= 3 ? thresholds.shortWordMargin : thresholds.longWordMargin
+        var requiredMargin = letterCount <= 3 ? thresholds.shortWordMargin : thresholds.longWordMargin
+        if dominant == .hebrew, endsWithHebrewNonFinalForm(token) {
+            // Reduce the barrier a bit: Hebrew words ending in non-final forms are often mapping artefacts.
+            requiredMargin = max(0.10, requiredMargin - 0.10)
+        }
         guard best.q >= bestAsIs + requiredMargin else { return nil }
         guard best.targetWord >= thresholds.wordConfidenceMin else { return nil }
 

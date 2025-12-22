@@ -36,6 +36,7 @@ public final class LayoutMapper: @unchecked Sendable {
         if let he = try? WordFrequencyModel.loadLanguage("he") { out[.hebrew] = he }
         return out
     }()
+    private let whitelist = WhitelistConfig.shared
     
     public static let shared = LayoutMapper()
     
@@ -303,7 +304,7 @@ public final class LayoutMapper: @unchecked Sendable {
         convertibleCache.reserveCapacity(64)
 
         func isConvertibleWordChar(_ ch: Character) -> Bool {
-            if ch.isLetter { return true }
+            if ch.isLetter || ch.isNumber { return true }
             if let cached = convertibleCache[ch] { return cached }
 
             guard let keyCands = candidatesMap[ch], !keyCands.isEmpty else {
@@ -458,23 +459,22 @@ public final class LayoutMapper: @unchecked Sendable {
         }
 
         func fullScore(_ candidate: String) -> Double {
-            let wconf: Double
-            if let targetUnigram {
-                wconf = targetUnigram.contains(candidate) ? 1.0 : 0.0
-            } else {
-                wconf = targetLanguage.map { wordValidator.confidence(for: candidate, language: $0) } ?? 0.0
-            }
+            let lang = targetLanguage
+            let unigramHit = targetUnigram?.contains(candidate) ?? false
+            let whitelistHit = lang.map { whitelist.isWhitelisted(candidate, language: $0) } ?? false
+            let wconf: Double = (unigramHit || whitelistHit) ? 1.0 : 0.0
             let freq = targetUnigram?.score(candidate) ?? 0.0
             let ngram = targetNgram.normalizedScore(candidate)
             let ngramWeight = candidate.count >= 3 ? 0.8 : 0.0
             let freqWeight = candidate.count <= 3 ? 0.8 : 1.4
             let builtinBonus: Double
-            if let targetLanguage, BuiltinLexicon.contains(candidate, language: targetLanguage) {
+            if let lang, BuiltinLexicon.contains(candidate, language: lang) {
                 builtinBonus = candidate.count <= 3 ? 1.2 : 0.6
             } else {
                 builtinBonus = 0.0
             }
-            return (2.6 * wconf) + (freqWeight * freq) + (ngramWeight * ngram) + builtinBonus
+            let whitelistBonus = whitelistHit ? (candidate.count <= 3 ? 1.4 : 1.0) : 0.0
+            return (2.6 * wconf) + (freqWeight * freq) + (ngramWeight * ngram) + builtinBonus + whitelistBonus
         }
 
         // When ambiguity is limited, brute-force all candidates and choose the best by scoring.

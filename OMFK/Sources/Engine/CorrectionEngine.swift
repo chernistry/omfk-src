@@ -244,7 +244,7 @@ actor CorrectionEngine {
         var alternatives: [CyclingState.Alternative] = []
         
         // Detect what the text likely is (for whole-text fallback)
-        let decision = await router.route(token: text, context: DetectorContext(lastLanguage: nil))
+        let decision = await router.route(token: text, context: DetectorContext(lastLanguage: nil), mode: .manual)
         
         // [0] Original text (undo target)
         alternatives.append(CyclingState.Alternative(text: text, hypothesis: nil))
@@ -326,7 +326,7 @@ actor CorrectionEngine {
             }
             
             // Analyze this segment
-            let decision = await router.route(token: segment, context: DetectorContext(lastLanguage: nil))
+            let decision = await router.route(token: segment, context: DetectorContext(lastLanguage: nil), mode: .manual)
             
             // Check if segment needs correction
             let needsCorrection: Bool

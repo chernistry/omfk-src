@@ -235,8 +235,40 @@ public final class LayoutMapper: @unchecked Sendable {
             buffer.removeAll(keepingCapacity: true)
         }
 
+        var convertibleCache: [Character: Bool] = [:]
+        convertibleCache.reserveCapacity(64)
+
+        func isConvertibleWordChar(_ ch: Character) -> Bool {
+            if ch.isLetter { return true }
+            if let cached = convertibleCache[ch] { return cached }
+
+            guard let keyCands = candidatesMap[ch], !keyCands.isEmpty else {
+                convertibleCache[ch] = false
+                return false
+            }
+
+            for (key, mod) in keyCands {
+                guard let mapping = fullMap[key]?[toLayout] else { continue }
+                let targetChar: String?
+                switch mod {
+                case "n": targetChar = mapping.n
+                case "s": targetChar = mapping.s
+                case "a": targetChar = mapping.a
+                case "sa": targetChar = mapping.sa
+                default: targetChar = nil
+                }
+                if let s = targetChar, s.count == 1, let c = s.first, c.isLetter {
+                    convertibleCache[ch] = true
+                    return true
+                }
+            }
+
+            convertibleCache[ch] = false
+            return false
+        }
+
         for char in text {
-            if char.isLetter {
+            if isConvertibleWordChar(char) {
                 buffer.append(char)
                 continue
             }
@@ -302,14 +334,25 @@ public final class LayoutMapper: @unchecked Sendable {
         guard let targetNgram else { return nil }
         guard !word.isEmpty else { return "" }
 
-        // Build per-position candidate output characters.
-        var perPos: [[Character]] = []
+        func modPenalty(_ mod: String) -> Double {
+            // Prefer mappings without modifiers; avoid alt/option outputs for "word" decoding.
+            switch mod {
+            case "n": return 0.0
+            case "s": return 0.15
+            case "a": return 0.65
+            case "sa": return 0.80
+            default: return 1.0
+            }
+        }
+
+        // Build per-position candidate output characters with a penalty based on modifiers.
+        var perPos: [[(c: Character, penalty: Double)]] = []
         perPos.reserveCapacity(word.count)
 
         for ch in word {
             let keyCands = candidatesMap[ch] ?? []
-            var outs: [Character] = []
-            outs.reserveCapacity(max(1, keyCands.count))
+            var bestPenaltyByChar: [Character: Double] = [:]
+            bestPenaltyByChar.reserveCapacity(max(1, keyCands.count))
 
             for (key, mod) in keyCands {
                 guard let mapping = fullMap[key]?[toLayout] else { continue }
@@ -321,57 +364,78 @@ public final class LayoutMapper: @unchecked Sendable {
                 case "sa": targetChar = mapping.sa
                 default: targetChar = nil
                 }
-                if let s = targetChar, s.count == 1, let c = s.first {
-                    outs.append(c)
+                if let s = targetChar, s.count == 1, let c = s.first, c.isLetter {
+                    let p = modPenalty(mod)
+                    if let existing = bestPenaltyByChar[c] {
+                        if p < existing { bestPenaltyByChar[c] = p }
+                    } else {
+                        bestPenaltyByChar[c] = p
+                    }
                 }
             }
 
-            if outs.isEmpty {
-                outs = [ch]
+            if bestPenaltyByChar.isEmpty {
+                perPos.append([(c: ch, penalty: 0.0)])
             } else {
-                // Deduplicate while preserving order.
-                var seen: Set<Character> = []
-                outs = outs.filter { seen.insert($0).inserted }
+                // Deterministic order: lowest penalty first, then lexicographic.
+                var opts = bestPenaltyByChar.map { (c: $0.key, penalty: $0.value) }
+                opts.sort { (a, b) in
+                    if a.penalty != b.penalty { return a.penalty < b.penalty }
+                    return a.c < b.c
+                }
+                perPos.append(opts)
             }
-            perPos.append(outs)
         }
 
-        let maxBrute = 20_000
+        let maxBrute = 500_000
         let product = perPos.reduce(1) { acc, opts in
             if acc > maxBrute { return acc }
             return acc * max(1, opts.count)
         }
 
         func fullScore(_ candidate: String) -> Double {
-            let wconf = targetLanguage.map { wordValidator.confidence(for: candidate, language: $0) } ?? 0.0
+            let wconf: Double
+            if let targetUnigram {
+                wconf = targetUnigram.contains(candidate) ? 1.0 : 0.0
+            } else {
+                wconf = targetLanguage.map { wordValidator.confidence(for: candidate, language: $0) } ?? 0.0
+            }
             let freq = targetUnigram?.score(candidate) ?? 0.0
             let ngram = targetNgram.normalizedScore(candidate)
             let ngramWeight = candidate.count >= 3 ? 0.8 : 0.0
-            return (2.0 * wconf) + (1.4 * freq) + (ngramWeight * ngram)
+            let freqWeight = candidate.count <= 3 ? 0.8 : 1.4
+            let builtinBonus: Double
+            if let targetLanguage, BuiltinLexicon.contains(candidate, language: targetLanguage) {
+                builtinBonus = candidate.count <= 3 ? 1.2 : 0.6
+            } else {
+                builtinBonus = 0.0
+            }
+            return (2.6 * wconf) + (freqWeight * freq) + (ngramWeight * ngram) + builtinBonus
         }
 
-        // For short words, brute-force all candidates and choose the best by (spell, ngram).
-        if word.count <= 4 && product <= maxBrute {
+        // When ambiguity is limited, brute-force all candidates and choose the best by scoring.
+        // (Product is driven only by ambiguous Hebrew-QWERTY duplicates, not word length.)
+        if product <= maxBrute {
             var best: (String, Double) = ("", -1e18)
 
-            func rec(_ i: Int, _ buf: inout [Character]) {
+            func rec(_ i: Int, _ buf: inout [Character], _ penaltySum: Double) {
                 if i == perPos.count {
                     let candidate = String(buf)
-                    let score = fullScore(candidate)
+                    let score = fullScore(candidate) - penaltySum
                     if score > best.1 {
                         best = (candidate, score)
                     }
                     return
                 }
-                for c in perPos[i] {
-                    buf.append(c)
-                    rec(i + 1, &buf)
+                for opt in perPos[i] {
+                    buf.append(opt.c)
+                    rec(i + 1, &buf, penaltySum + opt.penalty)
                     buf.removeLast()
                 }
             }
 
             var buf: [Character] = []
-            rec(0, &buf)
+            rec(0, &buf, 0.0)
             return best.0.isEmpty ? nil : best.0
         }
 
@@ -379,11 +443,12 @@ public final class LayoutMapper: @unchecked Sendable {
         struct Beam {
             var text: [Character]
             var score: Double
+            var penalty: Double
         }
 
         let ambiguousPositions = perPos.filter { $0.count > 1 }.count
-        let beamWidth = min(256, max(32, 32 * max(1, ambiguousPositions)))
-        var beams: [Beam] = [Beam(text: [], score: 0.0)]
+        let beamWidth = min(1024, max(64, 96 * max(1, ambiguousPositions)))
+        var beams: [Beam] = [Beam(text: [], score: 0.0, penalty: 0.0)]
 
         func trigramIncrement(_ prefix: [Character], next: Character) -> Double {
             guard prefix.count >= 2 else { return 0.0 }
@@ -397,11 +462,11 @@ public final class LayoutMapper: @unchecked Sendable {
             nextBeams.reserveCapacity(beams.count * opts.count)
 
             for beam in beams {
-                for c in opts {
+                for opt in opts {
                     var t = beam.text
-                    t.append(c)
-                    let inc = trigramIncrement(beam.text, next: c)
-                    nextBeams.append(Beam(text: t, score: beam.score + inc))
+                    t.append(opt.c)
+                    let inc = trigramIncrement(beam.text, next: opt.c)
+                    nextBeams.append(Beam(text: t, score: beam.score + inc, penalty: beam.penalty + opt.penalty))
                 }
             }
 
@@ -417,7 +482,7 @@ public final class LayoutMapper: @unchecked Sendable {
         var bestFinal: (String, Double) = ("", -1e18)
         for beam in beams {
             let s = String(beam.text)
-            let score = fullScore(s)
+            let score = fullScore(s) - beam.penalty
             if score > bestFinal.1 {
                 bestFinal = (s, score)
             }

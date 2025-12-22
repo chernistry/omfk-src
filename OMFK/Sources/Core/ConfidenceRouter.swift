@@ -29,6 +29,7 @@ actor ConfidenceRouter {
     private var heModel: NgramLanguageModel?
     private let coreML: CoreMLLayoutClassifier
     private let wordValidator: WordValidator
+    private var unigramCache: [Language: WordFrequencyModel] = [:]
     
     private let logger = Logger.detection
     private let settings: SettingsManager
@@ -61,6 +62,16 @@ actor ConfidenceRouter {
         }
 
         let activeLayouts = await settings.activeLayouts
+
+        // -- STEP 0: Score-based decision (layout + language via conversions + n-grams + lexicon) --
+        // This is deterministic and fixes cases where CoreML/NL miss the layout mismatch.
+        if let scored = scoredDecision(token: token, activeLayouts: activeLayouts) {
+            let stdThreshold = await settings.standardPathThreshold
+            if scored.confidence >= stdThreshold {
+                DecisionLogger.shared.logDecision(token: token, path: "SCORE", result: scored)
+                return scored
+            }
+        }
         
         // -- STEP 1: Get a baseline decision via Fast or Standard path --
         var baselineDecision: LanguageDecision?
@@ -321,6 +332,34 @@ actor ConfidenceRouter {
         return model?.normalizedScore(text) ?? 0.0
     }
 
+    private func unigramModel(for language: Language) -> WordFrequencyModel? {
+        if let cached = unigramCache[language] { return cached }
+        let code: String
+        switch language {
+        case .english: code = "en"
+        case .russian: code = "ru"
+        case .hebrew: code = "he"
+        }
+        guard let model = try? WordFrequencyModel.loadLanguage(code) else { return nil }
+        unigramCache[language] = model
+        return model
+    }
+
+    private func frequencyScore(_ text: String, language: Language) -> Double {
+        guard let model = unigramModel(for: language) else { return 0.0 }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return 0.0 }
+
+        let words = trimmed
+            .split(whereSeparator: { !$0.isLetter })
+            .map { String($0).lowercased() }
+            .filter { !$0.isEmpty }
+
+        guard !words.isEmpty else { return 0.0 }
+        let sum = words.reduce(0.0) { $0 + model.score($1) }
+        return sum / Double(words.count)
+    }
+
     private func dominantScriptLanguage(_ text: String) -> Language? {
         var latin = 0
         var cyr = 0
@@ -376,13 +415,25 @@ actor ConfidenceRouter {
         let sourceNorm = scoreWithNgramNormalized(token, language: sourceLayout)
         let targetNorm = scoreWithNgramNormalized(converted, language: targetLanguage)
 
+        let sourceFreq = frequencyScore(token, language: sourceLayout)
+        let targetFreq = frequencyScore(converted, language: targetLanguage)
+
+        let letterCount = token.filter { $0.isLetter }.count
+        let isShort = letterCount <= 3
+
         // Strong accept: target looks like real text and source looks like gibberish.
-        if targetWord >= 0.80 && targetWord >= sourceWord + 0.20 {
+        if targetWord >= 0.80 && (targetWord >= sourceWord + 0.20 || targetFreq >= sourceFreq + 0.20) {
+            return LanguageDecision(language: targetLanguage, layoutHypothesis: hypothesis, confidence: max(confidence, 0.85), scores: [:])
+        }
+
+        // For very short tokens, require a strong unigram-frequency improvement to avoid false positives
+        // from permissive spellcheckers on 2-letter strings.
+        if isShort, targetFreq >= 0.45, targetFreq >= sourceFreq + 0.25 {
             return LanguageDecision(language: targetLanguage, layoutHypothesis: hypothesis, confidence: max(confidence, 0.85), scores: [:])
         }
 
         // Fallback: accept when n-gram quality improves significantly (normalized per-language).
-        if targetNorm >= 0.75 && targetNorm >= sourceNorm + 0.15 {
+        if targetNorm >= 0.75 && targetNorm >= sourceNorm + 0.15 && (targetFreq >= sourceFreq || targetWord >= 0.60) {
             return LanguageDecision(language: targetLanguage, layoutHypothesis: hypothesis, confidence: max(confidence, 0.80), scores: [:])
         }
 
@@ -421,6 +472,62 @@ actor ConfidenceRouter {
         }
 
         return nil
+    }
+
+    private func scoredDecision(token: String, activeLayouts: [String: String]) -> LanguageDecision? {
+        func quality(_ text: String, lang: Language) -> Double {
+            let letters = text.filter { $0.isLetter }
+            let isShort = letters.count <= 3
+
+            let w = wordValidator.confidence(for: text, language: lang)
+            let n = isShort ? 0.0 : scoreWithNgramNormalized(text, language: lang)
+            let f = frequencyScore(text, language: lang)
+
+            return (isShort ? 1.6 : 1.2) * w + (isShort ? 1.6 : 1.0) * f + (isShort ? 0.0 : 0.6) * n
+        }
+
+        // Best "as-is" quality across languages.
+        let asIsRu = quality(token, lang: .russian)
+        let asIsEn = quality(token, lang: .english)
+        let asIsHe = quality(token, lang: .hebrew)
+        let bestAsIs = max(asIsRu, asIsEn, asIsHe)
+
+        struct Candidate {
+            let hypothesis: LanguageHypothesis
+            let target: Language
+            let converted: String
+            let targetWord: Double
+            let q: Double
+        }
+
+        let mapped: [(LanguageHypothesis, Language, Language)] = [
+            (.ruFromEnLayout, .english, .russian),
+            (.heFromEnLayout, .english, .hebrew),
+            (.enFromRuLayout, .russian, .english),
+            (.heFromRuLayout, .russian, .hebrew),
+            (.enFromHeLayout, .hebrew, .english),
+            (.ruFromHeLayout, .hebrew, .russian),
+        ]
+
+        var best: Candidate? = nil
+        for (hyp, source, target) in mapped {
+            guard let converted = LayoutMapper.shared.convertBest(token, from: source, to: target, activeLayouts: activeLayouts),
+                  converted != token else { continue }
+            let targetWord = wordValidator.confidence(for: converted, language: target)
+            let q = quality(converted, lang: target) - 0.05 // small bias against corrections
+            let cand = Candidate(hypothesis: hyp, target: target, converted: converted, targetWord: targetWord, q: q)
+            if best == nil || cand.q > best!.q { best = cand }
+        }
+
+        guard let best else { return nil }
+
+        // Only accept if the best mapped hypothesis is substantially better than any as-is option.
+        let letterCount = token.filter { $0.isLetter }.count
+        let requiredMargin = letterCount <= 3 ? 0.25 : 0.70
+        guard best.q >= bestAsIs + requiredMargin else { return nil }
+        guard best.targetWord >= 0.80 else { return nil }
+
+        return LanguageDecision(language: best.target, layoutHypothesis: best.hypothesis, confidence: 0.95, scores: [:])
     }
 }
 

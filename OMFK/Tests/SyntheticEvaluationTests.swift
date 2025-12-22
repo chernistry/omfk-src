@@ -37,6 +37,8 @@ final class SyntheticEvaluationTests: XCTestCase {
         var confusion: [LanguageHypothesis: [LanguageHypothesis: Int]] = [:]
         let diag = ProcessInfo.processInfo.environment["OMFK_SYNTH_EVAL_DIAG"] == "1"
         var mappingRecover: [String: (ok: Int, total: Int)] = [:]
+        var mappingFailures: [String: [(typed: String, intended: String, recovered: String?)]] = [:]
+        var outputFailures: [String: [(typed: String, intended: String, predicted: String, hyp: String, conf: Double)]] = [:]
 
         func key(_ intended: Language, _ typed: Language) -> String {
             "\(typed.rawValue)->\(intended.rawValue)"
@@ -63,15 +65,34 @@ final class SyntheticEvaluationTests: XCTestCase {
             let combo = key(c.intendedLanguage, c.typedLanguage)
             let curr = totalsByCombo[combo] ?? (0, 0)
             totalsByCombo[combo] = (curr.ok + (okOut ? 1 : 0), curr.total + 1)
+            if diag, !okOut {
+                var arr = outputFailures[combo] ?? []
+                if arr.count < 12 {
+                    arr.append((typed: c.typedText, intended: c.intendedText, predicted: predictedOutput, hyp: predictedHypothesis.rawValue, conf: decision.confidence))
+                    outputFailures[combo] = arr
+                }
+            }
 
             if diag, c.typedLanguage != c.intendedLanguage {
                 if let recovered = LayoutMapper.shared.convertBest(c.typedText, from: c.typedLanguage, to: c.intendedLanguage, activeLayouts: activeLayouts) {
                     let ok = recovered == c.intendedText
                     let r = mappingRecover[combo] ?? (0, 0)
                     mappingRecover[combo] = (r.ok + (ok ? 1 : 0), r.total + 1)
+                    if !ok {
+                        var arr = mappingFailures[combo] ?? []
+                        if arr.count < 12 {
+                            arr.append((typed: c.typedText, intended: c.intendedText, recovered: recovered))
+                            mappingFailures[combo] = arr
+                        }
+                    }
                 } else {
                     let r = mappingRecover[combo] ?? (0, 0)
                     mappingRecover[combo] = (r.ok, r.total + 1)
+                    var arr = mappingFailures[combo] ?? []
+                    if arr.count < 12 {
+                        arr.append((typed: c.typedText, intended: c.intendedText, recovered: nil))
+                        mappingFailures[combo] = arr
+                    }
                 }
             }
         }
@@ -98,6 +119,29 @@ final class SyntheticEvaluationTests: XCTestCase {
                 if let v = mappingRecover[combo], v.total > 0 {
                     let acc = Double(v.ok) / Double(v.total) * 100
                     print(String(format: "  %@: %4d/%4d (%.1f%%)", combo, v.ok, v.total, acc))
+                }
+            }
+
+            if !mappingFailures.isEmpty {
+                print("\nMapping failure samples (first 12 per combo):")
+                for combo in mappingFailures.keys.sorted() {
+                    guard let samples = mappingFailures[combo], !samples.isEmpty else { continue }
+                    print("  \(combo):")
+                    for s in samples {
+                        let rec = s.recovered ?? "<nil>"
+                        print("    typed=\(s.typed) | recovered=\(rec) | intended=\(s.intended)")
+                    }
+                }
+            }
+
+            if !outputFailures.isEmpty {
+                print("\nOutput failure samples (first 12 per combo):")
+                for combo in outputFailures.keys.sorted() {
+                    guard let samples = outputFailures[combo], !samples.isEmpty else { continue }
+                    print("  \(combo):")
+                    for s in samples {
+                        print("    typed=\(s.typed) | predicted=\(s.predicted) | intended=\(s.intended) | hyp=\(s.hyp) conf=\(String(format: "%.2f", s.conf))")
+                    }
                 }
             }
         }

@@ -7,6 +7,52 @@ protocol WordValidator {
     func confidence(for text: String, language: Language) -> Double
 }
 
+enum BuiltinLexicon {
+    static let english: Set<String> = [
+        "hi", "ok", "okay", "yes", "no", "what", "why", "hello", "thanks", "please", "sorry",
+        "good", "great", "cool", "nice", "maybe", "tomorrow", "today", "work", "home",
+        "friend", "where", "when", "how", "fast", "slow", "right", "left",
+        "a", "i"
+    ]
+
+    static let russian: Set<String> = [
+        "да", "нет", "что", "как", "где", "когда", "пока", "привет", "спасибо", "пожалуйста",
+        "хорошо", "плохо", "дом", "работа", "сегодня", "завтра", "вчера", "друг", "люди",
+        "очень", "быстро", "медленно", "право", "лево",
+        "я", "в", "и"
+    ]
+
+    static let hebrew: Set<String> = [
+        "מה", "לא", "כן", "שלום", "טוב", "תודה", "בבקשה", "איפה", "מתי", "למה",
+        "איך", "כאן", "שם", "עכשיו", "מחר", "היום", "בית", "עבודה", "חבר", "אנשים"
+    ]
+
+    static func contains(_ word: String, language: Language) -> Bool {
+        let w = word.lowercased()
+        switch language {
+        case .english: return english.contains(w)
+        case .russian: return russian.contains(w)
+        case .hebrew: return hebrew.contains(w)
+        }
+    }
+}
+
+struct BuiltinWordValidator: WordValidator {
+    func confidence(for text: String, language: Language) -> Double {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return 0.0 }
+
+        let words = trimmed
+            .split(whereSeparator: { !$0.isLetter })
+            .map { String($0).lowercased() }
+            .filter { !$0.isEmpty }
+
+        guard !words.isEmpty else { return 0.0 }
+        let hit = words.filter { BuiltinLexicon.contains($0, language: language) }.count
+        return Double(hit) / Double(words.count)
+    }
+}
+
 struct SystemWordValidator: WordValidator {
     private let spellChecker: NSSpellChecker
     private let languageCodes: [Language: String?]
@@ -100,14 +146,24 @@ struct BundledWordValidator: WordValidator {
 struct HybridWordValidator: WordValidator {
     private let system: SystemWordValidator
     private let bundled: BundledWordValidator
+    private let builtin: BuiltinWordValidator
 
-    init(system: SystemWordValidator = SystemWordValidator(), bundled: BundledWordValidator = BundledWordValidator()) {
+    init(
+        system: SystemWordValidator = SystemWordValidator(),
+        bundled: BundledWordValidator = BundledWordValidator(),
+        builtin: BuiltinWordValidator = BuiltinWordValidator()
+    ) {
         self.system = system
         self.bundled = bundled
+        self.builtin = builtin
     }
 
     func confidence(for text: String, language: Language) -> Double {
-        max(system.confidence(for: text, language: language), bundled.confidence(for: text, language: language))
+        max(
+            system.confidence(for: text, language: language),
+            bundled.confidence(for: text, language: language),
+            builtin.confidence(for: text, language: language)
+        )
     }
 }
 

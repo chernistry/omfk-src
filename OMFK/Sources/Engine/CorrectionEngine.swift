@@ -277,11 +277,15 @@ actor CorrectionEngine {
             alternatives.append(CyclingState.Alternative(text: alt.text, hypothesis: alt.hyp))
         }
         
+        // For manual correction, we need at least the original + one alternative
+        // If no conversions found, still allow cycling back to original
         guard alternatives.count > 1 else {
             logger.warning("❌ No conversions possible for: \(text)")
+            DecisionLogger.shared.log("CORRECTION: No alternatives for '\(text)'")
             return nil
         }
         
+        DecisionLogger.shared.log("CORRECTION: Built \(alternatives.count) alternatives for '\(text.prefix(30))...'")
         logger.info("🔄 Built \(alternatives.count) alternatives: original → best guess → others")
         
         // Start at index 0 (original), first next() will go to 1 (best guess)

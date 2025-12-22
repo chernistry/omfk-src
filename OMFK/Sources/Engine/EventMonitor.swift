@@ -124,8 +124,8 @@ final class EventMonitor {
                             await handleHotkeyPress(convertPhrase: true)
                         }
                     } else {
-                        // Option only = convert last word
-                        logger.info("🔥 OPTION TAP - converting last word")
+                        // Option only = convert selected text or last word
+                        logger.info("🔥 OPTION TAP - converting selected/last word")
                         Task { @MainActor in
                             await handleHotkeyPress(convertPhrase: false)
                         }
@@ -232,54 +232,80 @@ final class EventMonitor {
     
     private func handleHotkeyPress(convertPhrase: Bool = false) async {
         logger.info("🔥 === HOTKEY PRESSED - \(convertPhrase ? "PHRASE" : "WORD") Mode ===")
+        DecisionLogger.shared.log("HOTKEY: \(convertPhrase ? "PHRASE" : "WORD") mode")
         
-        // First check if we have a recent auto-correction to undo/cycle
-        if await engine.hasCyclingState() {
-            logger.info("🔄 Cycling through alternatives for recent correction")
-            if let corrected = await engine.cycleCorrection(bundleId: NSWorkspace.shared.frontmostApplication?.bundleIdentifier) {
-                // CRITICAL: Use lastCorrectedLength which tracks what we actually typed last time
-                let lengthToDelete = lastCorrectedLength
-                logger.info("✅ CYCLING: → \(DecisionLogger.tokenSummary(corrected), privacy: .public) (deleting \(lengthToDelete) chars)")
-                await replaceText(with: corrected, originalLength: lengthToDelete)
-                lastCorrectedLength = corrected.count
-                lastCorrectedText = corrected
-            }
-            return
-        }
-        
-        // Get text to convert - preserve original with whitespace for accurate replacement
+        // Get text to convert - try to get ACTUAL selected text first
         let rawText: String
         if convertPhrase {
             rawText = phraseBuffer
             logger.info("📝 Phrase mode - raw: \(rawText.count) chars")
+            DecisionLogger.shared.log("HOTKEY: Phrase buffer: \(rawText.count) chars")
         } else {
-            rawText = await getSelectedTextRaw()
+            let freshSelection = await getSelectedTextFresh()
+            rawText = freshSelection
+            logger.info("📝 Fresh selection result: '\(rawText)' (\(rawText.count) chars)")
+            DecisionLogger.shared.log("HOTKEY: Fresh selection: '\(rawText)' (\(rawText.count) chars)")
         }
         
-        // For conversion, we can trim but keep rawText for deletion length
         let textToConvert = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+        logger.info("📝 Text to convert (trimmed): '\(textToConvert)' (\(textToConvert.count) chars)")
+        DecisionLogger.shared.log("HOTKEY: Text to convert: '\(textToConvert)' (\(textToConvert.count) chars)")
+        
+        // Check if we should cycle or start new correction
+        if await engine.hasCyclingState() {
+            // Only cycle if the text matches what we're cycling OR if we got no new selection
+            let cyclingText = lastCorrectedText.trimmingCharacters(in: .whitespacesAndNewlines)
+            logger.info("🔄 Has cycling state. Cycling text: '\(cyclingText)', New text: '\(textToConvert)'")
+            DecisionLogger.shared.log("HOTKEY: Cycling state exists. cyclingText='\(cyclingText)' newText='\(textToConvert)'")
+            
+            if textToConvert.isEmpty || textToConvert == cyclingText {
+                logger.info("🔄 Cycling through alternatives (text matches or empty)")
+                DecisionLogger.shared.log("HOTKEY: CYCLING (text matches or empty)")
+                if let corrected = await engine.cycleCorrection(bundleId: NSWorkspace.shared.frontmostApplication?.bundleIdentifier) {
+                    let lengthToDelete = lastCorrectedLength
+                    logger.info("✅ CYCLING: → '\(corrected)' (deleting \(lengthToDelete) chars)")
+                    DecisionLogger.shared.log("HOTKEY: CYCLE RESULT: '\(corrected)' (delete \(lengthToDelete))")
+                    await replaceText(with: corrected, originalLength: lengthToDelete)
+                    lastCorrectedLength = corrected.count
+                    lastCorrectedText = corrected
+                }
+                return
+            } else {
+                // Different text selected - reset cycling and process new text
+                logger.info("📝 Different text selected ('\(textToConvert)' vs '\(cyclingText)'), resetting cycling state")
+                DecisionLogger.shared.log("HOTKEY: Different text, resetting cycling")
+                await engine.resetCycling()
+            }
+        }
         
         guard !textToConvert.isEmpty else {
-            logger.warning("⚠️ No text to correct")
+            logger.warning("⚠️ No text to correct - textToConvert is empty")
+            DecisionLogger.shared.log("HOTKEY: ERROR - no text to correct")
             return
         }
         
-        logger.info("📝 Text for manual correction: \(DecisionLogger.tokenSummary(textToConvert), privacy: .public) (raw len: \(rawText.count))")
+        logger.info("📝 Text for manual correction: '\(textToConvert)' (raw len: \(rawText.count))")
+        DecisionLogger.shared.log("HOTKEY: Calling correctLastWord...")
         
         let bundleId = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
         
         if let corrected = await engine.correctLastWord(textToConvert, bundleId: bundleId) {
+            DecisionLogger.shared.log("HOTKEY: correctLastWord returned: '\(corrected)'")
             // Preserve leading/trailing whitespace from original
             let leadingWS = String(rawText.prefix(while: { $0.isWhitespace }))
             let trailingWS = String(rawText.reversed().prefix(while: { $0.isWhitespace }).reversed())
             let finalText = leadingWS + corrected + trailingWS
             
             logger.info("✅ MANUAL CORRECTION: \(DecisionLogger.tokenSummary(textToConvert), privacy: .public) → \(DecisionLogger.tokenSummary(corrected), privacy: .public)")
+            DecisionLogger.shared.log("HOTKEY: Replacing \(rawText.count) chars with '\(finalText)' (\(finalText.count) chars)")
             // Delete exactly what's in the buffer (including any whitespace)
             let lengthToDelete = rawText.count
             await replaceText(with: finalText, originalLength: lengthToDelete)
+            // CRITICAL: Store the ACTUAL length we typed (with whitespace)
             lastCorrectedLength = finalText.count
-            lastCorrectedText = corrected  // Store without whitespace for cycling
+            // Store the text we typed for cycling comparison
+            lastCorrectedText = finalText
+            DecisionLogger.shared.log("HOTKEY: Done. lastCorrectedLength=\(lastCorrectedLength)")
             
             // Clear phrase buffer after successful phrase correction
             if convertPhrase {
@@ -293,65 +319,77 @@ final class EventMonitor {
             }
         } else {
             logger.warning("❌ Manual correction failed for: \(DecisionLogger.tokenSummary(textToConvert), privacy: .public)")
+            DecisionLogger.shared.log("HOTKEY: ERROR - correctLastWord returned nil!")
         }
     }
     
-    /// Get selected text preserving whitespace (for accurate replacement)
-    private func getSelectedTextRaw() async -> String {
-        logger.debug("🔍 Attempting to get selected text (raw)...")
+    /// Get FRESH selected text - prioritizes actual selection over buffer
+    private func getSelectedTextFresh() async -> String {
+        logger.info("🔍 Getting fresh selected text...")
         
-        // Priority 1: Use our own buffer
-        if !lastCorrectedText.isEmpty {
-            logger.info("✅ Using last corrected text: \(DecisionLogger.tokenSummary(self.lastCorrectedText), privacy: .public)")
-            return lastCorrectedText
-        }
+        // Priority 1: Try Accessibility API FIRST (this is the actual selection)
+        let axText = getSelectedTextViaAccessibility()
+        logger.info("🔍 AX API returned: '\(axText ?? "nil")' (\(axText?.count ?? 0) chars)")
         
-        if !buffer.isEmpty {
-            logger.info("✅ Using buffer text: \(DecisionLogger.tokenSummary(self.buffer), privacy: .public)")
-            return buffer
-        }
-        
-        // Priority 2: Try Accessibility API (preserves whitespace)
-        if let axText = getSelectedTextViaAccessibility(), !axText.isEmpty {
-            logger.info("✅ Using AX selected text (raw): \(DecisionLogger.tokenSummary(axText), privacy: .public)")
+        if let axText = axText, !axText.isEmpty {
+            logger.info("✅ Using AX selected text: '\(axText)' (\(axText.count) chars)")
+            // Clear buffer since we have real selection
+            buffer = ""
             return axText
         }
         
-        // Priority 3: Fallback to clipboard
-        logger.debug("⚠️ No buffer or AX selection, falling back to clipboard...")
+        // Priority 2: Try clipboard (Cmd+C to copy selection)
+        logger.info("⚠️ No AX selection, trying clipboard...")
         let pb = NSPasteboard.general
         let originalContents = pb.string(forType: .string)
         pb.clearContents()
 
         postKeyEvent(keyCode: 0x08, flags: .maskCommand) // Cmd+C
-        try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
+        try? await Task.sleep(nanoseconds: 150_000_000) // 150ms - give more time
         
         if let selected = pb.string(forType: .string), 
            !selected.isEmpty,
            selected != originalContents {
-            logger.info("✅ Using clipboard selection (raw): \(DecisionLogger.tokenSummary(selected), privacy: .public)")
+            logger.info("✅ Using clipboard selection: '\(selected)' (\(selected.count) chars)")
+            // Restore original clipboard
+            if let original = originalContents {
+                pb.clearContents()
+                pb.setString(original, forType: .string)
+            }
             return selected
         }
         
-        // Priority 4: Select word backward and copy
-        logger.debug("⚠️ No clipboard selection, trying word selection...")
+        // Priority 3: Use buffer ONLY if user JUST typed (not selected with mouse)
+        // Buffer should only be used for "convert last typed word" scenario
+        // If user selected text with mouse, buffer is stale
+        // We can detect this: if buffer is old (>2 sec since last keystroke), don't use it
+        let timeSinceLastKey = Date().timeIntervalSince(lastEventTime)
+        if !buffer.isEmpty && timeSinceLastKey < 2.0 {
+            logger.info("✅ Using recent buffer text: '\(self.buffer)' (\(self.buffer.count) chars, age: \(String(format: "%.1f", timeSinceLastKey))s)")
+            return buffer
+        } else if !buffer.isEmpty {
+            logger.info("⚠️ Buffer is stale (\(String(format: "%.1f", timeSinceLastKey))s old), ignoring: '\(self.buffer)'")
+        }
+        
+        // Priority 4: Last resort - select word backward
+        logger.info("⚠️ No selection found, trying word selection backward...")
         pb.clearContents()
         postKeyEvent(keyCode: 0x7B, flags: [.maskAlternate, .maskShift]) // Option+Shift+Left
-        try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
+        try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
         
         postKeyEvent(keyCode: 0x08, flags: .maskCommand) // Cmd+C
-        try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
+        try? await Task.sleep(nanoseconds: 150_000_000) // 150ms
         
         let result = pb.string(forType: .string) ?? ""
         
-        // Restore original clipboard if we got nothing
-        if result.isEmpty, let original = originalContents {
+        // Restore original clipboard
+        if let original = originalContents {
             pb.clearContents()
             pb.setString(original, forType: .string)
         }
         
         if !result.isEmpty {
-            logger.info("✅ Selected word backward (raw): \(DecisionLogger.tokenSummary(result), privacy: .public)")
+            logger.info("✅ Selected word backward: '\(result)' (\(result.count) chars)")
         } else {
             logger.warning("❌ Failed to get any text")
         }

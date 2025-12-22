@@ -95,6 +95,24 @@ final class LayoutDetectionTests: XCTestCase {
         TestCase(input: "זפדר", expectedClass: .ruFromHeLayout, intendedText: "язык"),
     ]
     
+    // MARK: - Edge Cases
+    
+    // Very short tokens (2-3 chars)
+    static let shortTokenCases: [TestCase] = [
+        TestCase(input: "hi", expectedClass: .en, intendedText: "hi"),
+        TestCase(input: "да", expectedClass: .ru, intendedText: "да"),
+        TestCase(input: "לא", expectedClass: .he, intendedText: "לא"),
+        TestCase(input: "ok", expectedClass: .en, intendedText: "ok"),
+        TestCase(input: "нет", expectedClass: .ru, intendedText: "нет"),
+    ]
+    
+    // Tokens with punctuation
+    static let punctuationCases: [TestCase] = [
+        TestCase(input: "hello!", expectedClass: .en, intendedText: "hello!"),
+        TestCase(input: "привет?", expectedClass: .ru, intendedText: "привет?"),
+        TestCase(input: "test.", expectedClass: .en, intendedText: "test."),
+    ]
+    
     // MARK: - CoreML Direct Tests
     
     func testCoreMLPureRussian() {
@@ -131,6 +149,14 @@ final class LayoutDetectionTests: XCTestCase {
     
     func testCoreMLRuFromHe() {
         runCoreMLTests(Self.ruFromHeCases, scenario: "RU from HE layout")
+    }
+    
+    func testCoreMLShortTokens() {
+        runCoreMLTests(Self.shortTokenCases, scenario: "Short tokens (2-3 chars)")
+    }
+    
+    func testCoreMLPunctuation() {
+        runCoreMLTests(Self.punctuationCases, scenario: "Tokens with punctuation")
     }
     
     // MARK: - Layout Mapper Tests

@@ -46,6 +46,13 @@ actor ConfidenceRouter {
         self.coreML = CoreMLLayoutClassifier()
     }
     
+    // Common short English words that should NOT be converted
+    private static let shortEnglishWhitelist: Set<String> = [
+        "a", "i", "ok", "hi", "no", "go", "me", "we", "us", "it", "is", "as", "at",
+        "on", "in", "to", "of", "or", "an", "be", "do", "so", "up", "by", "my", "he",
+        "if", "am", "oh", "ah", "uh", "um", "vs", "id", "tv", "pc", "uk", "eu", "ai"
+    ]
+    
     /// Main entry point for detection
     /// 
     /// NEW LOGIC (v2):
@@ -53,6 +60,13 @@ actor ConfidenceRouter {
     /// - CoreML detects LAYOUT MISMATCH ("this Cyrillic is gibberish Russian, but valid Hebrew from RU layout").
     /// - We ALWAYS invoke CoreML to check for `_from_` hypotheses, even if Fast/Standard is confident.
     func route(token: String, context: DetectorContext) async -> LanguageDecision {
+        // Short English word whitelist - don't convert these
+        let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if trimmed.count <= 2 && Self.shortEnglishWhitelist.contains(trimmed) {
+            let decision = LanguageDecision(language: .english, layoutHypothesis: .en, confidence: 1.0, scores: [:])
+            DecisionLogger.shared.logDecision(token: token, path: "WHITELIST", result: decision)
+            return decision
+        }
         let startTime = CFAbsoluteTimeGetCurrent()
         defer {
              let duration = CFAbsoluteTimeGetCurrent() - startTime

@@ -212,6 +212,19 @@ public final class LayoutMapper: @unchecked Sendable {
         return activeLayouts[language] ?? "us"
     }
     
+    // Characters that should be preserved during conversion (not layout-dependent)
+    private static let preserveChars: Set<Character> = [
+        "\u{00AB}", "\u{00BB}", "\u{201E}", "\u{201C}", "\u{201D}", "\u{2018}", "\u{2019}",
+        "\u{2014}", "\u{2013}", "\u{2026}", "\u{2116}",
+        "\u{00A9}", "\u{00AE}", "\u{2122}", "\u{00B0}",
+        "\u{20AC}", "\u{00A3}", "\u{00A5}", "\u{20BD}", "\u{20B4}", "\u{20AA}"
+    ]
+    
+    // Punctuation that should be preserved when it appears at word boundaries
+    private static let boundaryPunctuation: Set<Character> = [
+        ".", ",", "!", "?", ":", ";", "-", "(", ")", "[", "]", "{", "}"
+    ]
+    
     /// Converts text from source layout to target layout
     public func convert(_ text: String, fromLayout: String, toLayout: String) -> String? {
         if fromLayout == toLayout { return text }
@@ -222,7 +235,24 @@ public final class LayoutMapper: @unchecked Sendable {
         var result = ""
         result.reserveCapacity(text.count)
         
-        for char in text {
+        let chars = Array(text)
+        for (i, char) in chars.enumerated() {
+            // Preserve special characters that aren't layout-dependent
+            if Self.preserveChars.contains(char) {
+                result.append(char)
+                continue
+            }
+            
+            // Preserve boundary punctuation (at start/end of text or adjacent to whitespace)
+            if Self.boundaryPunctuation.contains(char) {
+                let prevIsSpace = i == 0 || chars[i-1].isWhitespace || chars[i-1].isLetter
+                let nextIsSpace = i == chars.count - 1 || chars[i+1].isWhitespace || chars[i+1].isLetter
+                if prevIsSpace || nextIsSpace {
+                    result.append(char)
+                    continue
+                }
+            }
+            
             if let (keyCode, mod) = sourceMap[char],
                let targetMapping = fullMap[keyCode]?[toLayout] {
                 let targetChar: String?

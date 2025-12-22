@@ -14,3 +14,6 @@ data/raw/*
 Tools/CoreMLTrainer/venv/*
 *__pycache__*
 data/processed/*
+.sdd/layouts.json
+
+Tools/CoreMLTrainer/training_data_real.csv

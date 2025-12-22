@@ -106,7 +106,7 @@ final class EventMonitor {
         let timeSinceLastEvent = now.timeIntervalSince(lastEventTime)
         if timeSinceLastEvent > 2.0 {
             if !buffer.isEmpty {
-                logger.info("⏱️ Buffer timeout (\(String(format: "%.1f", timeSinceLastEvent))s) - clearing buffer: '\(self.buffer, privacy: .public)'")
+                logger.info("⏱️ Buffer timeout (\(String(format: "%.1f", timeSinceLastEvent))s) - clearing buffer: \(DecisionLogger.tokenSummary(self.buffer), privacy: .public)")
             }
             buffer = ""
         }
@@ -114,7 +114,7 @@ final class EventMonitor {
         
         if let chars = event.keyboardEventCharacters {
             buffer.append(chars)
-            logger.info("⌨️ Typed: '\(chars, privacy: .public)' | Buffer: '\(self.buffer, privacy: .public)' (len=\(self.buffer.count))")
+            logger.info("⌨️ Typed: \(DecisionLogger.tokenSummary(chars), privacy: .public) | Buffer: \(DecisionLogger.tokenSummary(self.buffer), privacy: .public)")
             
             // Reset cycling state on new input
             Task { @MainActor in
@@ -138,11 +138,11 @@ final class EventMonitor {
     private func processBuffer() async {
         let text = buffer.trimmingCharacters(in: .whitespacesAndNewlines)
         guard text.count >= 3 else {
-            logger.debug("⏭️ Buffer too short (\(text.count) chars), skipping: '\(text, privacy: .public)'")
+            logger.debug("⏭️ Buffer too short (\(text.count) chars), skipping: \(DecisionLogger.tokenSummary(text), privacy: .public)")
             return
         }
         
-        logger.info("🔍 Processing buffer: '\(text, privacy: .public)' (len=\(text.count))")
+        logger.info("🔍 Processing buffer: \(DecisionLogger.tokenSummary(text), privacy: .public)")
         
         let bundleId = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
         logger.info("📱 Frontmost app: \(bundleId ?? "unknown", privacy: .public)")
@@ -162,10 +162,10 @@ final class EventMonitor {
         }
 
         if let corrected = await engine.correctText(text, expectedLayout: expectedLayout) {
-            logger.info("✅ CORRECTION APPLIED: '\(text, privacy: .public)' → '\(corrected, privacy: .public)'")
+            logger.info("✅ CORRECTION APPLIED: \(DecisionLogger.tokenSummary(text), privacy: .public) → \(DecisionLogger.tokenSummary(corrected), privacy: .public)")
             await replaceText(with: corrected, originalLength: text.count)
         } else {
-            logger.info("ℹ️ No correction needed for: '\(text, privacy: .public)'")
+            logger.info("ℹ️ No correction needed for: \(DecisionLogger.tokenSummary(text), privacy: .public)")
         }
         
         buffer = ""
@@ -182,15 +182,15 @@ final class EventMonitor {
             return
         }
         
-        logger.info("📝 Text for manual correction: '\(text, privacy: .public)' (len=\(text.count))")
+        logger.info("📝 Text for manual correction: \(DecisionLogger.tokenSummary(text), privacy: .public)")
         
         let bundleId = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
         
         if let corrected = await engine.correctLastWord(text, bundleId: bundleId) {
-            logger.info("✅ MANUAL CORRECTION: '\(text, privacy: .public)' → '\(corrected, privacy: .public)'")
+            logger.info("✅ MANUAL CORRECTION: \(DecisionLogger.tokenSummary(text), privacy: .public) → \(DecisionLogger.tokenSummary(corrected), privacy: .public)")
             await replaceText(with: corrected, originalLength: text.count)
         } else {
-            logger.warning("❌ Manual correction failed for: '\(text, privacy: .public)'")
+            logger.warning("❌ Manual correction failed for: \(DecisionLogger.tokenSummary(text), privacy: .public)")
         }
     }
     
@@ -208,14 +208,14 @@ final class EventMonitor {
         try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
         if let selected = pb.string(forType: .string), !selected.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             let trimmed = selected.trimmingCharacters(in: .whitespacesAndNewlines)
-            logger.info("✅ Using selected text: '\(trimmed, privacy: .public)'")
+            logger.info("✅ Using selected text: \(DecisionLogger.tokenSummary(trimmed), privacy: .public)")
             return trimmed
         }
 
         // 2. Fall back to buffer if available
         let text = buffer.trimmingCharacters(in: .whitespacesAndNewlines)
         if !text.isEmpty {
-            logger.info("✅ Using buffer text: '\(text, privacy: .public)'")
+            logger.info("✅ Using buffer text: \(DecisionLogger.tokenSummary(text), privacy: .public)")
             return text
         }
         
@@ -236,7 +236,7 @@ final class EventMonitor {
         try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
         let result = pb.string(forType: .string) ?? ""
         if !result.isEmpty {
-            logger.info("✅ Selected word backward: '\(result, privacy: .public)'")
+            logger.info("✅ Selected word backward: \(DecisionLogger.tokenSummary(result), privacy: .public)")
         } else {
             logger.warning("❌ Failed to get any text")
         }
@@ -244,7 +244,7 @@ final class EventMonitor {
     }
     
     private func replaceText(with newText: String, originalLength: Int) async {
-        logger.info("🔄 Replacing text: deleting \(originalLength) chars, typing '\(newText, privacy: .public)'")
+        logger.info("🔄 Replacing text: deleting \(originalLength) chars, typing \(DecisionLogger.tokenSummary(newText), privacy: .public)")
         
         // Delete original text
         for _ in 0..<originalLength {
@@ -268,7 +268,8 @@ final class EventMonitor {
     }
     
     private func requestAccessibility() {
-        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+        // Avoid referencing the global `kAXTrustedCheckOptionPrompt` var (Swift 6 concurrency warning).
+        let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
         AXIsProcessTrustedWithOptions(options)
     }
 }

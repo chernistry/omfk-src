@@ -79,7 +79,7 @@ actor UserLanguageProfile {
             }
         }
         
-        logger.debug("Recorded \(outcome.rawValue, privacy: .public) for '\(context.prefix, privacy: .public)', acceptance: \(stat.acceptanceRate)")
+        logger.debug("Recorded \(outcome.rawValue, privacy: .public) for \(DecisionLogger.tokenSummary(context.prefix), privacy: .public), acceptance: \(stat.acceptanceRate)")
     }
     
     /// Adjust confidence threshold based on user history
@@ -96,12 +96,12 @@ actor UserLanguageProfile {
         if rate < lowAcceptanceThreshold {
             // User frequently rejects this pattern - raise threshold (be more conservative)
             let adjusted = baseConfidence * 1.2
-            logger.debug("Low acceptance (\(rate)) for '\(context.prefix, privacy: .public)' - raising threshold to \(adjusted)")
+            logger.debug("Low acceptance (\(rate)) for \(DecisionLogger.tokenSummary(context.prefix), privacy: .public) - raising threshold to \(adjusted)")
             return min(1.0, adjusted)
         } else if rate > highAcceptanceThreshold {
             // User frequently accepts this pattern - lower threshold (be more aggressive)
             let adjusted = baseConfidence * 0.9
-            logger.debug("High acceptance (\(rate)) for '\(context.prefix, privacy: .public)' - lowering threshold to \(adjusted)")
+            logger.debug("High acceptance (\(rate)) for \(DecisionLogger.tokenSummary(context.prefix), privacy: .public) - lowering threshold to \(adjusted)")
             return max(0.3, adjusted)
         }
         

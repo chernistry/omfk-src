@@ -1,10 +1,13 @@
 import Foundation
 import os.log
 
-/// Logs corrections to ~/.omfk/corrections.jsonl for on-the-fly learning
-final class CorrectionLogger {
+/// Logs corrections to ~/.omfk/corrections.jsonl for on-the-fly learning.
+/// Disabled by default; enable with `OMFK_CORRECTION_LOG=1`.
+/// Note: Never persist raw typed text (privacy requirement).
+final class CorrectionLogger: @unchecked Sendable {
     static let shared = CorrectionLogger()
     
+    private let enabled: Bool
     private let fileURL: URL
     private let maxEntries = 10000
     private let logger = Logger.engine
@@ -27,6 +30,7 @@ final class CorrectionLogger {
     }
     
     private init() {
+        self.enabled = ProcessInfo.processInfo.environment["OMFK_CORRECTION_LOG"] == "1"
         let homeDir = FileManager.default.homeDirectoryForCurrentUser
         let omfkDir = homeDir.appendingPathComponent(".omfk", isDirectory: true)
         try? FileManager.default.createDirectory(at: omfkDir, withIntermediateDirectories: true)
@@ -35,11 +39,12 @@ final class CorrectionLogger {
     
     /// Log a correction event
     func log(original: String, final: String, autoAttempted: LanguageHypothesis?, userSelected: LanguageHypothesis?, app: String?) {
+        guard enabled else { return }
         queue.async { [weak self] in
             self?.writeEntry(CorrectionEntry(
                 ts: ISO8601DateFormatter().string(from: Date()),
-                original: original,
-                final: final,
+                original: DecisionLogger.tokenSummary(original),
+                final: DecisionLogger.tokenSummary(final),
                 autoAttempted: autoAttempted?.rawValue,
                 userSelected: userSelected?.rawValue,
                 app: app

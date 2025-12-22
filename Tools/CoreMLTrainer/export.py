@@ -1,15 +1,15 @@
 import torch
 import coremltools as ct
-from train import LayoutClassifier, LayoutClassifierV2, LayoutTransformer, EnsembleModel, INPUT_LENGTH, CLASSES
+from train import LayoutClassifier, LayoutClassifierV2, LayoutTransformer, EnsembleModel, INPUT_LENGTH, CLASSES, VOCAB_SIZE
 import argparse
 
 def export(args):
     # Load PyTorch model
     if args.ensemble:
-        model = EnsembleModel()
+        model = EnsembleModel(traceable_transformer=True)
         print("Loading EnsembleModel (CNN + Transformer)")
     elif args.transformer:
-        model = LayoutTransformer()
+        model = LayoutTransformer(traceable=True)
         print("Loading LayoutTransformer")
     elif args.model_v2:
         model = LayoutClassifierV2()
@@ -25,13 +25,13 @@ def export(args):
     total_params = sum(p.numel() for p in model.parameters())
     print(f"Total parameters: {total_params:,}")
     
-    # Trace the model
-    example_input = torch.randint(0, 100, (1, INPUT_LENGTH)).long()
-    traced_model = torch.jit.trace(model, example_input)
+    # Trace the model (CoreML conversion entrypoint).
+    example_input = torch.randint(0, VOCAB_SIZE, (1, INPUT_LENGTH), dtype=torch.long)
+    torchscript_model = torch.jit.trace(model, example_input)
     
     # Convert to CoreML
     mlmodel = ct.convert(
-        traced_model,
+        torchscript_model,
         inputs=[ct.TensorType(name="input_ids", shape=(1, INPUT_LENGTH), dtype=int)],
         outputs=[ct.TensorType(name="classLogits")],
         convert_to="neuralnetwork"

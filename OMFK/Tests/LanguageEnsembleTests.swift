@@ -23,7 +23,7 @@ final class LanguageEnsembleTests: XCTestCase {
         XCTAssertEqual(resEn.layoutHypothesis, .en)
         
         // Russian
-        let result = await ensemble.classify("ghbdtn", context: context) // "עינגאמ" (nonsense but mapped)
+        _ = await ensemble.classify("ghbdtn", context: context) // "עינגאמ" (nonsense but mapped)
         // Wait, "ghbdtn" maps to "עינגאמ" in Hebrew?
         // Let's use a real Hebrew example: "shalom" -> "דhשךם" (approx)
         // Or "akuo" -> "שלום"

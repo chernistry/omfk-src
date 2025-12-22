@@ -71,7 +71,7 @@ actor CorrectionEngine {
         guard !text.isEmpty else { return nil }
         
         logger.info("🔍 === CORRECTION ATTEMPT ===")
-        logger.info("Input: '\(text, privacy: .public)' (len=\(text.count))")
+        logger.info("Input: \(DecisionLogger.tokenSummary(text), privacy: .public)")
         if let expected = expectedLayout {
             logger.info("Expected layout: \(expected.rawValue, privacy: .public)")
         }
@@ -206,7 +206,7 @@ actor CorrectionEngine {
     
     func correctLastWord(_ text: String, bundleId: String? = nil) async -> String? {
         logger.info("🔥 === MANUAL CORRECTION (HOTKEY) ===")
-        logger.info("Input: '\(text, privacy: .public)'")
+        logger.info("Input: \(DecisionLogger.tokenSummary(text), privacy: .public)")
         
         guard !text.isEmpty else {
             logger.warning("❌ Empty text provided")
@@ -267,7 +267,7 @@ actor CorrectionEngine {
         let alt = state.next()
         cyclingState = state
         
-        logger.info("🔄 Cycling to: '\(alt.text, privacy: .public)' (index \(state.currentIndex)/\(state.alternatives.count))")
+        logger.info("🔄 Cycling to: \(DecisionLogger.tokenSummary(alt.text), privacy: .public) (index \(state.currentIndex)/\(state.alternatives.count))")
         
         // Log the correction for learning
         CorrectionLogger.shared.log(

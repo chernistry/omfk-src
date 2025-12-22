@@ -1,13 +1,22 @@
 import Foundation
 
 /// Logs language detection decisions to a local file for debugging.
-/// Writes to `~/.omfk/debug.log`, overwriting on startup.
+/// Disabled by default; enable with `OMFK_DEBUG_LOG=1`.
+/// Note: Do not persist raw typed text (privacy requirement).
 final class DecisionLogger: @unchecked Sendable {
     static let shared = DecisionLogger()
+    private let enabled: Bool
     private let logURL: URL?
     private let queue = DispatchQueue(label: "com.omfk.logger")
     
     init() {
+        let enabled = ProcessInfo.processInfo.environment["OMFK_DEBUG_LOG"] == "1"
+        self.enabled = enabled
+        guard enabled else {
+            self.logURL = nil
+            return
+        }
+
         let fileManager = FileManager.default
         let home = fileManager.homeDirectoryForCurrentUser
         let omfkDir = home.appendingPathComponent(".omfk")
@@ -29,7 +38,7 @@ final class DecisionLogger: @unchecked Sendable {
     }
     
     func log(_ message: String) {
-        guard let url = logURL else { return }
+        guard enabled, let url = logURL else { return }
         queue.async {
             let timestamp = ISO8601DateFormatter().string(from: Date())
             let line = "[\(timestamp)] \(message)\n"
@@ -48,12 +57,41 @@ final class DecisionLogger: @unchecked Sendable {
     }
     
     func logDecision(token: String, path: String, result: LanguageDecision, scores: [LanguageHypothesis: Double]? = nil) {
-        var msg = "Input: '\(token)' | Path: \(path) | Result: \(result.language.rawValue) (Conf: \(String(format: "%.2f", result.confidence)))"
+        let tokenInfo = Self.tokenSummary(token)
+        var msg = "Input: \(tokenInfo) | Path: \(path) | Result: \(result.language.rawValue) (Conf: \(String(format: "%.2f", result.confidence)))"
         
         if let scores = scores {
             msg += " | Scores: " + scores.map { "\($0.key): \(String(format: "%.2f", $0.value))" }.joined(separator: ", ")
         }
         
         log(msg)
+    }
+
+    static func tokenSummary(_ token: String) -> String {
+        var latin = 0
+        var cyrillic = 0
+        var hebrew = 0
+        var digits = 0
+        var whitespace = 0
+        var other = 0
+
+        for scalar in token.unicodeScalars {
+            switch scalar.value {
+            case 0x30...0x39:
+                digits += 1
+            case 0x0009, 0x000A, 0x000D, 0x0020:
+                whitespace += 1
+            case 0x0041...0x005A, 0x0061...0x007A:
+                latin += 1
+            case 0x0400...0x04FF:
+                cyrillic += 1
+            case 0x0590...0x05FF:
+                hebrew += 1
+            default:
+                other += 1
+            }
+        }
+
+        return "len=\(token.count) latin=\(latin) cyr=\(cyrillic) heb=\(hebrew) dig=\(digits) ws=\(whitespace) other=\(other)"
     }
 }

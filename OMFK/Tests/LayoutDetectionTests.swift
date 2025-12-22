@@ -225,7 +225,7 @@ final class LayoutDetectionTests: XCTestCase {
         var failed: [(TestCase, LanguageHypothesis?)] = []
         
         for testCase in cases {
-            if let (prediction, confidence) = classifier.predict(testCase.input) {
+            if let (prediction, _) = classifier.predict(testCase.input) {
                 if prediction == testCase.expectedClass {
                     passed += 1
                 } else {

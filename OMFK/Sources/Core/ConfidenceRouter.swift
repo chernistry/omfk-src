@@ -52,7 +52,7 @@ actor ConfidenceRouter {
         defer {
              let duration = CFAbsoluteTimeGetCurrent() - startTime
              if duration > 0.05 {
-                 logger.warning("⚠️ Slow detection: \(String(format: "%.1f", duration * 1000))ms for '\(token)'")
+                 logger.warning("⚠️ Slow detection: \(String(format: "%.1f", duration * 1000))ms for \(DecisionLogger.tokenSummary(token), privacy: .public)")
              }
         }
         
@@ -97,7 +97,7 @@ actor ConfidenceRouter {
         
         // -- STEP 2: ALWAYS invoke CoreML to check for layout mismatch --
         // CoreML can detect "_from_" hypotheses that contradict the baseline.
-        logger.info("🧠 Deep Path (CoreML) checking for layout mismatch: \(token)")
+        logger.info("🧠 Deep Path (CoreML) checking for layout mismatch: \(DecisionLogger.tokenSummary(token), privacy: .public)")
         
         if let (deepHypothesis, deepConf) = coreML.predict(token) {
             logger.info("🧠 Deep Path result: \(deepHypothesis.rawValue, privacy: .public) (conf: \(deepConf))")
@@ -128,7 +128,7 @@ actor ConfidenceRouter {
                         let targetScore = scoreWithNgram(converted, language: targetLanguage)
                         let sourceScore = scoreWithNgram(token, language: baseline.language)
                         
-                        logger.info("🔍 Validation: '\(token)' → '\(converted)' | source_score=\(String(format: "%.2f", sourceScore)) target_score=\(String(format: "%.2f", targetScore))")
+                        logger.info("🔍 Validation: \(DecisionLogger.tokenSummary(token), privacy: .public) → \(DecisionLogger.tokenSummary(converted), privacy: .public) | source_score=\(String(format: "%.2f", sourceScore)) target_score=\(String(format: "%.2f", targetScore))")
                         
                         // Only accept correction if:
                         // 1. Target score is good (converted text is valid)
@@ -145,7 +145,7 @@ actor ConfidenceRouter {
                             DecisionLogger.shared.logDecision(token: token, path: "DEEP_CORRECTION", result: deepResult)
                             return deepResult
                         } else {
-                            let rejectedMsg = "REJECTED_VALIDATION: \(deepHypothesis.rawValue) | converted='\(converted)' srcScore=\(String(format: "%.2f", sourceScore)) tgtScore=\(String(format: "%.2f", targetScore))"
+                            let rejectedMsg = "REJECTED_VALIDATION: \(deepHypothesis.rawValue) | token=\(DecisionLogger.tokenSummary(token)) converted=\(DecisionLogger.tokenSummary(converted)) srcScore=\(String(format: "%.2f", sourceScore)) tgtScore=\(String(format: "%.2f", targetScore))"
                             DecisionLogger.shared.log(rejectedMsg)
                         }
                     }

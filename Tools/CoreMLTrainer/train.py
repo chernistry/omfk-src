@@ -8,6 +8,7 @@ import argparse
 import os
 import random
 import math
+import copy
 
 # Constants
 INPUT_LENGTH = 20
@@ -123,6 +124,7 @@ def mixup_criterion(criterion, pred, y_a, y_b, lam):
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model, max_len=100):
         super().__init__()
+        self.max_len = max_len
         pe = torch.zeros(max_len, d_model)
         position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
         div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
@@ -132,27 +134,137 @@ class PositionalEncoding(nn.Module):
         self.register_buffer('pe', pe)
     
     def forward(self, x):
-        return x + self.pe[:, :x.size(1), :]
+        # Keep the sequence length static for TorchScript/CoreML tracing.
+        return x + self.pe[:, : self.max_len, :]
+
+# ============== TRACEABLE TRANSFORMER (CoreML-friendly) ==============
+
+class TraceableMultiheadSelfAttention(nn.Module):
+    """Multi-head self-attention implemented with basic ops (trace/CoreML-friendly)."""
+
+    def __init__(self, d_model: int, nhead: int, dropout: float = 0.0):
+        super().__init__()
+        if d_model % nhead != 0:
+            raise ValueError(f"d_model ({d_model}) must be divisible by nhead ({nhead})")
+
+        self.d_model = d_model
+        self.nhead = nhead
+        self.head_dim = d_model // nhead
+
+        # Match nn.MultiheadAttention parameter names for state_dict compatibility.
+        self.in_proj_weight = nn.Parameter(torch.empty(3 * d_model, d_model))
+        self.in_proj_bias = nn.Parameter(torch.empty(3 * d_model))
+        self.out_proj = nn.Linear(d_model, d_model, bias=True)
+
+        self.attn_dropout = nn.Dropout(dropout)
+        self._reset_parameters()
+
+    def _reset_parameters(self):
+        nn.init.xavier_uniform_(self.in_proj_weight)
+        nn.init.constant_(self.in_proj_bias, 0.0)
+        nn.init.xavier_uniform_(self.out_proj.weight)
+        nn.init.constant_(self.out_proj.bias, 0.0)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x: [Batch, SeqLen, d_model]
+        qkv = torch.nn.functional.linear(x, self.in_proj_weight, self.in_proj_bias)
+        q, k, v = qkv.chunk(3, dim=-1)
+
+        bsz, seq_len, _ = x.shape
+        q = q.view(bsz, seq_len, self.nhead, self.head_dim).transpose(1, 2)
+        k = k.view(bsz, seq_len, self.nhead, self.head_dim).transpose(1, 2)
+        v = v.view(bsz, seq_len, self.nhead, self.head_dim).transpose(1, 2)
+
+        scale = 1.0 / math.sqrt(self.head_dim)
+        attn = torch.matmul(q, k.transpose(-2, -1)) * scale
+        attn = torch.softmax(attn, dim=-1)
+        attn = self.attn_dropout(attn)
+
+        out = torch.matmul(attn, v)
+        out = out.transpose(1, 2).contiguous().view(bsz, seq_len, self.d_model)
+        return self.out_proj(out)
+
+
+class TraceableTransformerEncoderLayer(nn.Module):
+    """TransformerEncoderLayer implemented without nn.MultiheadAttention (CoreML-friendly)."""
+
+    def __init__(
+        self,
+        d_model: int,
+        nhead: int,
+        dim_feedforward: int = 2048,
+        dropout: float = 0.1,
+        activation: str = "relu",
+    ):
+        super().__init__()
+
+        self.self_attn = TraceableMultiheadSelfAttention(d_model, nhead, dropout=dropout)
+        self.linear1 = nn.Linear(d_model, dim_feedforward)
+        self.dropout = nn.Dropout(dropout)
+        self.linear2 = nn.Linear(dim_feedforward, d_model)
+
+        self.norm1 = nn.LayerNorm(d_model)
+        self.norm2 = nn.LayerNorm(d_model)
+        self.dropout1 = nn.Dropout(dropout)
+        self.dropout2 = nn.Dropout(dropout)
+
+        if activation == "gelu":
+            self.activation = nn.GELU()
+        elif activation == "relu":
+            self.activation = nn.ReLU()
+        else:
+            raise ValueError(f"Unsupported activation: {activation}")
+
+    def forward(self, src: torch.Tensor) -> torch.Tensor:
+        # Match nn.TransformerEncoderLayer default behavior: norm_first=False.
+        x = src
+        x = self.norm1(x + self.dropout1(self.self_attn(x)))
+        x = self.norm2(x + self.dropout2(self.linear2(self.dropout(self.activation(self.linear1(x))))))
+        return x
+
+
+class TraceableTransformerEncoder(nn.Module):
+    """Drop-in replacement for nn.TransformerEncoder (CoreML-friendly)."""
+
+    def __init__(self, encoder_layer: nn.Module, num_layers: int):
+        super().__init__()
+        self.layers = nn.ModuleList([copy.deepcopy(encoder_layer) for _ in range(num_layers)])
+
+    def forward(self, src: torch.Tensor) -> torch.Tensor:
+        output = src
+        for layer in self.layers:
+            output = layer(output)
+        return output
 
 # ============== TRANSFORMER MODEL ==============
 
 class LayoutTransformer(nn.Module):
     """Character-level Transformer for layout detection"""
-    def __init__(self, d_model=128, nhead=8, num_layers=4, dim_feedforward=512, dropout=0.2):
+    def __init__(self, d_model=128, nhead=8, num_layers=4, dim_feedforward=512, dropout=0.2, traceable: bool = False):
         super().__init__()
         
         self.embedding = nn.Embedding(VOCAB_SIZE, d_model, padding_idx=0)
         self.pos_encoder = PositionalEncoding(d_model, INPUT_LENGTH)
         
-        encoder_layer = nn.TransformerEncoderLayer(
-            d_model=d_model,
-            nhead=nhead,
-            dim_feedforward=dim_feedforward,
-            dropout=dropout,
-            activation='gelu',
-            batch_first=True
-        )
-        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+        if traceable:
+            encoder_layer = TraceableTransformerEncoderLayer(
+                d_model=d_model,
+                nhead=nhead,
+                dim_feedforward=dim_feedforward,
+                dropout=dropout,
+                activation="gelu",
+            )
+            self.transformer = TraceableTransformerEncoder(encoder_layer, num_layers=num_layers)
+        else:
+            encoder_layer = nn.TransformerEncoderLayer(
+                d_model=d_model,
+                nhead=nhead,
+                dim_feedforward=dim_feedforward,
+                dropout=dropout,
+                activation="gelu",
+                batch_first=True,
+            )
+            self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
         
         self.pool = nn.AdaptiveAvgPool1d(1)
         self.dropout = nn.Dropout(dropout)
@@ -218,14 +330,20 @@ class LayoutClassifierV2(nn.Module):
         c4 = self.gelu(self.conv4(x))
         c5 = self.gelu(self.conv5(x))
         
-        min_len = min(c2.size(2), c3.size(2), c4.size(2), c5.size(2))
-        x = torch.cat([c2[:,:,:min_len], c3[:,:,:min_len], c4[:,:,:min_len], c5[:,:,:min_len]], dim=1)
+        # Torch tracing does not like dynamic Python control flow based on tensor shapes.
+        # INPUT_LENGTH is fixed end-to-end (training + CoreML export + Swift inference),
+        # so we crop to a constant length instead of computing `min_len` at runtime.
+        target_len = INPUT_LENGTH
+        c2 = c2[:, :, :target_len]
+        c3 = c3[:, :, :target_len]
+        c4 = c4[:, :, :target_len]
+        c5 = c5[:, :, :target_len]
+        x = torch.cat([c2, c3, c4, c5], dim=1)
         x = self.bn1(x)
         
         x_a = self.gelu(self.conv2_a(x))
         x_b = self.gelu(self.conv2_b(x))
-        min_len = min(x_a.size(2), x_b.size(2))
-        x = torch.cat([x_a[:,:,:min_len], x_b[:,:,:min_len]], dim=1)
+        x = torch.cat([x_a, x_b], dim=1)
         x = self.bn2(x)
         
         x = self.gelu(self.conv3_deep(x))
@@ -275,10 +393,10 @@ class LayoutClassifier(nn.Module):
 
 class EnsembleModel(nn.Module):
     """Ensemble of CNN and Transformer"""
-    def __init__(self):
+    def __init__(self, traceable_transformer: bool = False):
         super().__init__()
         self.cnn = LayoutClassifierV2()
-        self.transformer = LayoutTransformer()
+        self.transformer = LayoutTransformer(traceable=traceable_transformer)
         self.weight_cnn = nn.Parameter(torch.tensor(0.6))
         self.weight_transformer = nn.Parameter(torch.tensor(0.4))
         

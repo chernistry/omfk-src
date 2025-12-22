@@ -234,7 +234,31 @@ final class EventMonitor {
         logger.info("🔥 === HOTKEY PRESSED - \(convertPhrase ? "PHRASE" : "WORD") Mode ===")
         DecisionLogger.shared.log("HOTKEY: \(convertPhrase ? "PHRASE" : "WORD") mode")
         
-        // Get text to convert - try to get ACTUAL selected text first
+        let bundleId = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        
+        // Check cycling state FIRST - before getting fresh selection
+        // After replaceText, selection is lost, so getSelectedTextFresh() returns garbage
+        if await engine.hasCyclingState() && !lastCorrectedText.isEmpty {
+            let savedLength = lastCorrectedLength
+            let savedText = lastCorrectedText
+            logger.info("🔄 CYCLING: using saved text (\(savedLength) chars)")
+            DecisionLogger.shared.log("HOTKEY: CYCLING - savedLen=\(savedLength)")
+            
+            if let corrected = await engine.cycleCorrection(bundleId: bundleId) {
+                // Preserve trailing whitespace from saved text
+                let trailingWS = String(savedText.reversed().prefix(while: { $0.isWhitespace }).reversed())
+                let finalCorrected = corrected + trailingWS
+                
+                logger.info("✅ CYCLING: → '\(corrected)' (deleting \(savedLength) chars)")
+                DecisionLogger.shared.log("HOTKEY: CYCLE RESULT: '\(corrected)' (delete \(savedLength))")
+                await replaceText(with: finalCorrected, originalLength: savedLength)
+                lastCorrectedLength = finalCorrected.count
+                lastCorrectedText = finalCorrected
+            }
+            return
+        }
+        
+        // No cycling - get fresh text to convert
         let rawText: String
         if convertPhrase {
             rawText = phraseBuffer
@@ -248,35 +272,7 @@ final class EventMonitor {
         }
         
         let textToConvert = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
-        logger.info("📝 Text to convert (trimmed): '\(textToConvert)' (\(textToConvert.count) chars)")
         DecisionLogger.shared.log("HOTKEY: Text to convert: '\(textToConvert)' (\(textToConvert.count) chars)")
-        
-        // Check if we should cycle or start new correction
-        if await engine.hasCyclingState() {
-            // Only cycle if the text matches what we're cycling OR if we got no new selection
-            let cyclingText = lastCorrectedText.trimmingCharacters(in: .whitespacesAndNewlines)
-            logger.info("🔄 Has cycling state. Cycling text: '\(cyclingText)', New text: '\(textToConvert)'")
-            DecisionLogger.shared.log("HOTKEY: Cycling state exists. cyclingText='\(cyclingText)' newText='\(textToConvert)'")
-            
-            if textToConvert.isEmpty || textToConvert == cyclingText {
-                logger.info("🔄 Cycling through alternatives (text matches or empty)")
-                DecisionLogger.shared.log("HOTKEY: CYCLING (text matches or empty)")
-                if let corrected = await engine.cycleCorrection(bundleId: NSWorkspace.shared.frontmostApplication?.bundleIdentifier) {
-                    let lengthToDelete = lastCorrectedLength
-                    logger.info("✅ CYCLING: → '\(corrected)' (deleting \(lengthToDelete) chars)")
-                    DecisionLogger.shared.log("HOTKEY: CYCLE RESULT: '\(corrected)' (delete \(lengthToDelete))")
-                    await replaceText(with: corrected, originalLength: lengthToDelete)
-                    lastCorrectedLength = corrected.count
-                    lastCorrectedText = corrected
-                }
-                return
-            } else {
-                // Different text selected - reset cycling and process new text
-                logger.info("📝 Different text selected ('\(textToConvert)' vs '\(cyclingText)'), resetting cycling state")
-                DecisionLogger.shared.log("HOTKEY: Different text, resetting cycling")
-                await engine.resetCycling()
-            }
-        }
         
         guard !textToConvert.isEmpty else {
             logger.warning("⚠️ No text to correct - textToConvert is empty")
@@ -284,10 +280,11 @@ final class EventMonitor {
             return
         }
         
+        // Reset any stale cycling state since we're processing new text
+        await engine.resetCycling()
+        
         logger.info("📝 Text for manual correction: '\(textToConvert)' (raw len: \(rawText.count))")
         DecisionLogger.shared.log("HOTKEY: Calling correctLastWord...")
-        
-        let bundleId = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
         
         if let corrected = await engine.correctLastWord(textToConvert, bundleId: bundleId) {
             DecisionLogger.shared.log("HOTKEY: correctLastWord returned: '\(corrected)'")

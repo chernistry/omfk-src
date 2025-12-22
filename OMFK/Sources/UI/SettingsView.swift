@@ -6,52 +6,46 @@ struct SettingsView: View {
     
     var body: some View {
         VStack(spacing: 0) {
-            header
-            Divider()
+            // Header
+            VStack(spacing: 20) {
+                // App icon
+                ZStack {
+                    Circle()
+                        .fill(.linearGradient(colors: [.blue.opacity(0.8), .purple.opacity(0.6)], startPoint: .topLeading, endPoint: .bottomTrailing))
+                        .frame(width: 56, height: 56)
+                    Image(systemName: "keyboard")
+                        .font(.system(size: 24, weight: .light))
+                        .foregroundStyle(.white)
+                }
+                
+                VStack(spacing: 4) {
+                    Text("OMFK").font(.system(size: 20, weight: .semibold, design: .rounded))
+                    Text("v1.0").font(.system(size: 11)).foregroundStyle(.tertiary)
+                }
+                
+                // Segmented control
+                Picker("", selection: $selectedTab) {
+                    Text("General").tag(0)
+                    Text("Hotkey").tag(1)
+                    Text("Apps").tag(2)
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 40)
+            }
+            .padding(.top, 28)
+            .padding(.bottom, 20)
             
-            // Content based on selected tab
+            // Content
             Group {
                 switch selectedTab {
                 case 0: GeneralTab(settings: settings)
                 case 1: HotkeyTab(settings: settings)
-                case 2: AppsTab(settings: settings)
-                default: GeneralTab(settings: settings)
+                default: AppsTab(settings: settings)
                 }
             }
         }
-        .frame(width: 420, height: 480)
+        .frame(width: 380, height: 460)
         .background(.ultraThinMaterial)
-    }
-    
-    private var header: some View {
-        VStack(spacing: 16) {
-            HStack(spacing: 12) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(LinearGradient(colors: [.blue, .purple], startPoint: .topLeading, endPoint: .bottomTrailing))
-                        .frame(width: 48, height: 48)
-                    Image(systemName: "keyboard")
-                        .font(.system(size: 22, weight: .medium))
-                        .foregroundStyle(.white)
-                }
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("OMFK").font(.system(size: 18, weight: .semibold, design: .rounded))
-                    Text("Oh My Fucking Keyboard").font(.system(size: 11)).foregroundStyle(.secondary)
-                }
-                Spacer()
-            }
-            
-            Picker("", selection: $selectedTab) {
-                Text("General").tag(0)
-                Text("Hotkey").tag(1)
-                Text("Apps").tag(2)
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            
-            Text("Version 1.0.0").font(.system(size: 10)).foregroundStyle(.tertiary)
-        }
-        .padding(20)
     }
 }
 
@@ -61,43 +55,47 @@ struct GeneralTab: View {
     @ObservedObject var settings: SettingsManager
     
     var body: some View {
-        ScrollView {
-            VStack(spacing: 20) {
-                SettingsCard {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Auto-correction").font(.system(size: 13, weight: .medium))
-                            Text("Automatically fix wrong keyboard layout").font(.system(size: 11)).foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Toggle("", isOn: $settings.isEnabled).toggleStyle(.switch).labelsHidden()
-                    }
-                }
-                
-                SettingsCard {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Auto-switch layout").font(.system(size: 13, weight: .medium))
-                            Text("Switch system layout after correction").font(.system(size: 11)).foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Toggle("", isOn: $settings.autoSwitchLayout).toggleStyle(.switch).labelsHidden()
-                    }
-                }
-                
-                SettingsCard {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Preferred language").font(.system(size: 13, weight: .medium))
-                        HStack(spacing: 8) {
-                            LanguageButton(label: "EN", isSelected: settings.preferredLanguage == .english) { settings.preferredLanguage = .english }
-                            LanguageButton(label: "RU", isSelected: settings.preferredLanguage == .russian) { settings.preferredLanguage = .russian }
-                            LanguageButton(label: "HE", isSelected: settings.preferredLanguage == .hebrew) { settings.preferredLanguage = .hebrew }
-                        }
-                    }
-                }
+        VStack(spacing: 14) {
+            GlassCard {
+                SettingRow(
+                    icon: "wand.and.stars",
+                    iconColor: .green,
+                    title: "Auto-correction",
+                    subtitle: "Fix wrong layout automatically",
+                    toggle: $settings.isEnabled
+                )
             }
-            .padding(20)
+            
+            GlassCard {
+                SettingRow(
+                    icon: "arrow.left.arrow.right",
+                    iconColor: .blue,
+                    title: "Auto-switch layout",
+                    subtitle: "Change system layout after fix",
+                    toggle: $settings.autoSwitchLayout
+                )
+            }
+            
+            GlassCard {
+                VStack(spacing: 12) {
+                    Label {
+                        Text("Preferred language").font(.system(size: 13, weight: .medium))
+                    } icon: {
+                        Image(systemName: "globe").foregroundStyle(.orange)
+                    }
+                    
+                    HStack(spacing: 10) {
+                        LangPill(label: "EN", flag: "🇺🇸", isSelected: settings.preferredLanguage == .english) { settings.preferredLanguage = .english }
+                        LangPill(label: "RU", flag: "🇷🇺", isSelected: settings.preferredLanguage == .russian) { settings.preferredLanguage = .russian }
+                        LangPill(label: "HE", flag: "🇮🇱", isSelected: settings.preferredLanguage == .hebrew) { settings.preferredLanguage = .hebrew }
+                    }
+                }
+                .frame(maxWidth: .infinity)
+            }
+            
+            Spacer()
         }
+        .padding(20)
     }
 }
 
@@ -108,33 +106,57 @@ struct HotkeyTab: View {
     
     var body: some View {
         ScrollView {
-            VStack(spacing: 20) {
-                SettingsCard {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Manual correction").font(.system(size: 13, weight: .medium))
-                            Text("Press hotkey to cycle through corrections").font(.system(size: 11)).foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Toggle("", isOn: $settings.hotkeyEnabled).toggleStyle(.switch).labelsHidden()
-                    }
+            VStack(spacing: 16) {
+                GlassCard {
+                    SettingRow(
+                        icon: "option",
+                        iconColor: .purple,
+                        title: "Manual correction",
+                        subtitle: "Cycle through alternatives",
+                        toggle: $settings.hotkeyEnabled
+                    )
                 }
                 
-                SettingsCard {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Current hotkey").font(.system(size: 13, weight: .medium))
-                        HStack {
-                            HotkeyDisplay(keyCode: settings.hotkeyKeyCode)
-                            Spacer()
-                            Text("Default: Left ⌥").font(.system(size: 11)).foregroundStyle(.tertiary)
+                GlassCard {
+                    HStack {
+                        Label {
+                            Text("Hotkey").font(.system(size: 13, weight: .medium))
+                        } icon: {
+                            Image(systemName: "command").foregroundStyle(.indigo)
                         }
+                        
+                        Spacer()
+                        
+                        Text(keyName(settings.hotkeyKeyCode))
+                            .font(.system(size: 12, weight: .medium, design: .rounded))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(.ultraThinMaterial, in: Capsule())
                     }
                 }
                 .opacity(settings.hotkeyEnabled ? 1 : 0.5)
                 
-                InfoCard(icon: "lightbulb", text: "Press the hotkey to undo auto-correction or manually convert selected text")
+                // Tip
+                HStack(spacing: 10) {
+                    Image(systemName: "lightbulb.fill")
+                        .foregroundStyle(.yellow)
+                    Text("Press hotkey to undo or cycle corrections")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.yellow.opacity(0.1), in: RoundedRectangle(cornerRadius: 12))
             }
             .padding(20)
+        }
+    }
+    
+    private func keyName(_ code: UInt16) -> String {
+        switch code {
+        case 58: return "⌥ Left Option"
+        case 61: return "⌥ Right Option"
+        default: return "Key \(code)"
         }
     }
 }
@@ -146,35 +168,47 @@ struct AppsTab: View {
     
     var body: some View {
         ScrollView {
-            VStack(spacing: 20) {
-                InfoCard(icon: "app.badge.checkmark", text: "Exclude apps where you don't want auto-correction")
+            VStack(spacing: 16) {
+                // Tip
+                HStack(spacing: 10) {
+                    Image(systemName: "app.badge.checkmark")
+                        .foregroundStyle(.blue)
+                    Text("Exclude apps from auto-correction")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.blue.opacity(0.1), in: RoundedRectangle(cornerRadius: 12))
                 
-                SettingsCard {
-                    VStack(alignment: .leading, spacing: 12) {
+                GlassCard {
+                    VStack(spacing: 12) {
                         HStack {
-                            Text("Excluded apps").font(.system(size: 13, weight: .medium))
+                            Text("Excluded").font(.system(size: 13, weight: .medium))
                             Spacer()
                             Button(action: addCurrentApp) {
-                                Label("Add current", systemImage: "plus.circle").font(.system(size: 11))
+                                Label("Add current", systemImage: "plus")
+                                    .font(.system(size: 11, weight: .medium))
                             }
                             .buttonStyle(.plain)
                             .foregroundStyle(.blue)
                         }
                         
                         if settings.excludedApps.isEmpty {
-                            HStack {
-                                Spacer()
-                                VStack(spacing: 8) {
-                                    Image(systemName: "checkmark.circle").font(.system(size: 24)).foregroundStyle(.tertiary)
-                                    Text("No excluded apps").font(.system(size: 12)).foregroundStyle(.tertiary)
-                                }
-                                .padding(.vertical, 20)
-                                Spacer()
+                            VStack(spacing: 8) {
+                                Image(systemName: "checkmark.circle")
+                                    .font(.system(size: 28, weight: .light))
+                                    .foregroundStyle(.tertiary)
+                                Text("No excluded apps")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(.tertiary)
                             }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 24)
                         } else {
                             VStack(spacing: 8) {
                                 ForEach(Array(settings.excludedApps), id: \.self) { bundleId in
-                                    ExcludedAppRow(bundleId: bundleId) { settings.toggleApp(bundleId) }
+                                    AppRow(bundleId: bundleId) { settings.toggleApp(bundleId) }
                                 }
                             }
                         }
@@ -195,96 +229,95 @@ struct AppsTab: View {
 
 // MARK: - Components
 
-struct SettingsCard<Content: View>: View {
+struct GlassCard<Content: View>: View {
     @ViewBuilder let content: Content
     var body: some View {
         content
             .padding(16)
-            .background(RoundedRectangle(cornerRadius: 10).fill(.background).shadow(color: .black.opacity(0.05), radius: 2, y: 1))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
     }
 }
 
-struct InfoCard: View {
+struct SettingRow: View {
     let icon: String
-    let text: String
+    let iconColor: Color
+    let title: String
+    let subtitle: String
+    @Binding var toggle: Bool
+    
     var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: icon).font(.system(size: 14)).foregroundStyle(.blue)
-            Text(text).font(.system(size: 11)).foregroundStyle(.secondary)
+        HStack(spacing: 14) {
+            Image(systemName: icon)
+                .font(.system(size: 16, weight: .medium))
+                .foregroundStyle(iconColor)
+                .frame(width: 28)
+            
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.system(size: 13, weight: .medium))
+                Text(subtitle).font(.system(size: 11)).foregroundStyle(.secondary)
+            }
+            
+            Spacer()
+            
+            Toggle("", isOn: $toggle)
+                .toggleStyle(.switch)
+                .labelsHidden()
         }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 8).fill(.blue.opacity(0.1)))
     }
 }
 
-struct LanguageButton: View {
+struct LangPill: View {
     let label: String
+    let flag: String
     let isSelected: Bool
     let action: () -> Void
+    
     var body: some View {
         Button(action: action) {
-            Text(label)
-                .font(.system(size: 13, weight: .medium, design: .rounded))
-                .frame(width: 48, height: 36)
-                .background(RoundedRectangle(cornerRadius: 8).fill(isSelected ? Color.accentColor : Color.primary.opacity(0.05)))
-                .foregroundStyle(isSelected ? .white : .primary)
+            HStack(spacing: 6) {
+                Text(flag)
+                Text(label).font(.system(size: 12, weight: .medium))
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(isSelected ? .blue : .clear, in: Capsule())
+            .background(.ultraThinMaterial, in: Capsule())
+            .foregroundStyle(isSelected ? .white : .primary)
         }
         .buttonStyle(.plain)
     }
 }
 
-struct HotkeyDisplay: View {
-    let keyCode: UInt16
-    var body: some View {
-        Text(keySymbol)
-            .font(.system(size: 14, weight: .medium, design: .rounded))
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.1)))
-    }
-    private var keySymbol: String {
-        switch keyCode {
-        case 58: return "⌥ Left Option"
-        case 61: return "⌥ Right Option"
-        case 59: return "⌃ Left Control"
-        case 62: return "⌃ Right Control"
-        default: return "Key \(keyCode)"
-        }
-    }
-}
-
-struct ExcludedAppRow: View {
+struct AppRow: View {
     let bundleId: String
     let onRemove: () -> Void
-    @State private var isHovering = false
+    @State private var isHovered = false
     
     var body: some View {
         HStack(spacing: 10) {
-            appIcon
+            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) {
+                Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
+                    .resizable()
+                    .frame(width: 24, height: 24)
+            } else {
+                Image(systemName: "app").frame(width: 24, height: 24).foregroundStyle(.secondary)
+            }
+            
             Text(appName).font(.system(size: 12)).lineLimit(1)
             Spacer()
-            if isHovering {
+            
+            if isHovered {
                 Button(action: onRemove) {
-                    Image(systemName: "xmark.circle.fill").font(.system(size: 14)).foregroundStyle(.secondary)
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
             }
         }
-        .padding(8)
-        .background(RoundedRectangle(cornerRadius: 6).fill(isHovering ? Color.primary.opacity(0.05) : Color.clear))
-        .onHover { isHovering = $0 }
-    }
-    
-    @ViewBuilder
-    private var appIcon: some View {
-        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) {
-            Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
-                .resizable()
-                .frame(width: 24, height: 24)
-        } else {
-            Image(systemName: "app").font(.system(size: 16)).frame(width: 24, height: 24).foregroundStyle(.secondary)
-        }
+        .padding(10)
+        .background(isHovered ? .white.opacity(0.05) : .clear, in: RoundedRectangle(cornerRadius: 8))
+        .onHover { isHovered = $0 }
     }
     
     private var appName: String {

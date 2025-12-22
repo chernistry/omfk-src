@@ -418,6 +418,8 @@ def train(args):
     print(f"Using device: {device}")
     
     num_workers = min(os.cpu_count() or 4, 8)
+    pin_memory = device.type != "mps"
+    persistent_workers = num_workers > 0
     
     # Dataset with augmentation for training
     full_dataset = LayoutDataset(args.data, augment=False)  # Load without aug first for split
@@ -440,8 +442,8 @@ def train(args):
         batch_size=args.batch_size, 
         shuffle=True,
         num_workers=num_workers,
-        pin_memory=True,
-        persistent_workers=True
+        pin_memory=pin_memory,
+        persistent_workers=persistent_workers
     )
     
     val_loader = DataLoader(
@@ -449,8 +451,8 @@ def train(args):
         batch_size=args.batch_size * 2,
         shuffle=False,
         num_workers=num_workers,
-        pin_memory=True,
-        persistent_workers=True
+        pin_memory=pin_memory,
+        persistent_workers=persistent_workers
     )
     
     # Model selection

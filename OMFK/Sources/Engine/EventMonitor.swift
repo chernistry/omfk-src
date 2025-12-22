@@ -12,6 +12,7 @@ final class EventMonitor {
     private var buffer: String = ""
     private var lastEventTime: Date = .distantPast
     private var lastCorrectedLength: Int = 0  // Track length of last corrected text for cycling
+    private var lastCorrectedText: String = ""  // Track last corrected text for manual undo
     private let logger = Logger.events
     private let settings: SettingsManager
     
@@ -32,7 +33,8 @@ final class EventMonitor {
         }
         logger.info("✅ Accessibility permission granted")
         
-        let eventMask = (1 << CGEventType.keyDown.rawValue)
+        // Listen for keyDown and flagsChanged (for modifier keys like Option)
+        let eventMask = (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.flagsChanged.rawValue)
         logger.info("Creating event tap with mask: \(eventMask)")
         
         guard let tap = CGEvent.tapCreate(
@@ -76,6 +78,8 @@ final class EventMonitor {
         logger.info("Event monitor stopped")
     }
     
+    private var optionKeyWasPressed = false  // Track Option key state for tap detection
+    
     private func handleEvent(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent> {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
             if let tap = eventTap {
@@ -85,23 +89,40 @@ final class EventMonitor {
             return Unmanaged.passUnretained(event)
         }
         
+        let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+        let flags = event.flags
+        
+        // Handle flagsChanged for Option key (modifier keys don't generate keyDown)
+        if type == .flagsChanged {
+            let isOptionPressed = flags.contains(.maskAlternate)
+            
+            // Detect Option key tap (press and release without other keys)
+            if settings.hotkeyEnabled && settings.hotkeyKeyCode == 58 {
+                if isOptionPressed && !optionKeyWasPressed {
+                    // Option just pressed
+                    optionKeyWasPressed = true
+                } else if !isOptionPressed && optionKeyWasPressed {
+                    // Option just released - this is a tap!
+                    optionKeyWasPressed = false
+                    logger.info("🔥 OPTION KEY TAP DETECTED - triggering manual correction")
+                    Task { @MainActor in
+                        await handleHotkeyPress()
+                    }
+                }
+            }
+            return Unmanaged.passUnretained(event)
+        }
+        
+        // Reset option tracking if any other key is pressed while Option is held
+        if optionKeyWasPressed {
+            optionKeyWasPressed = false
+        }
+        
         guard type == .keyDown else {
             return Unmanaged.passUnretained(event)
         }
         
-        let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
-        let flags = event.flags
-        
         logger.debug("🔵 KEY EVENT: keyCode=\(keyCode), flags=\(flags.rawValue)")
-        
-        // Check for hotkey (left Alt by default, keyCode 58)
-        if settings.hotkeyEnabled && keyCode == Int64(settings.hotkeyKeyCode) {
-            logger.info("🔥 HOTKEY DETECTED (keyCode \(keyCode)) - triggering manual correction")
-            Task { @MainActor in
-                await handleHotkeyPress()
-            }
-            return Unmanaged.passUnretained(event)
-        }
         
         let now = Date()
         let timeSinceLastEvent = now.timeIntervalSince(lastEventTime)
@@ -121,6 +142,7 @@ final class EventMonitor {
             Task { @MainActor in
                 await engine.resetCycling()
                 lastCorrectedLength = 0
+                lastCorrectedText = ""
             }
             
             // Process on word boundaries
@@ -176,6 +198,7 @@ final class EventMonitor {
             await replaceText(with: corrected + " ", originalLength: bufferLength)
             // Store the corrected text length (with space) for potential cycling
             lastCorrectedLength = corrected.count + 1
+            lastCorrectedText = corrected
         } else {
             logger.info("ℹ️ No correction needed for: \(DecisionLogger.tokenSummary(text), privacy: .public)")
         }
@@ -240,7 +263,13 @@ final class EventMonitor {
             return trimmed
         }
 
-        // 2. Fall back to buffer if available
+        // 2. Fall back to lastCorrectedText if available (for undo after auto-correction)
+        if !lastCorrectedText.isEmpty {
+            logger.info("✅ Using last corrected text: \(DecisionLogger.tokenSummary(self.lastCorrectedText), privacy: .public)")
+            return lastCorrectedText
+        }
+        
+        // 3. Fall back to buffer if available
         let text = buffer.trimmingCharacters(in: .whitespacesAndNewlines)
         if !text.isEmpty {
             logger.info("✅ Using buffer text: \(DecisionLogger.tokenSummary(text), privacy: .public)")

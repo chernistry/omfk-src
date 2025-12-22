@@ -22,6 +22,14 @@ echo ""
 # Ensure processed dir exists
 mkdir -p "$PROCESSED_DIR"
 
+# Non-interactive mode: `./train_master.sh 3` or `./train_master.sh --run 3`
+AUTO_CHOICE=""
+if [[ "${1:-}" == "--run" ]]; then
+    AUTO_CHOICE="${2:-}"
+elif [[ "${1:-}" =~ ^[1-6]$ ]]; then
+    AUTO_CHOICE="${1:-}"
+fi
+
 while true; do
     echo "Files available in processed data:"
     if [ -f "$PROCESSED_DIR/ru.txt" ]; then echo -e "  ${GREEN}✓${NC} ru.txt"; else echo -e "  ${RED}✗${NC} ru.txt"; fi
@@ -38,7 +46,12 @@ while true; do
     echo "  6) 🎬 Download OpenSubtitles (conversational HE/RU data)"
     echo "  q) Quit"
     echo ""
-    read -p "Option: " choice
+    if [ -n "$AUTO_CHOICE" ]; then
+        choice="$AUTO_CHOICE"
+        echo "Option: $choice (non-interactive)"
+    else
+        read -p "Option: " choice
+    fi
     echo ""
     
     case $choice in
@@ -88,21 +101,85 @@ while true; do
             source venv/bin/activate
             # Ensure deps
             pip install -q -r requirements.txt
+            # Avoid noisy coremltools warnings for unsupported scikit-learn versions.
+            pip uninstall -y scikit-learn >/dev/null 2>&1 || true
+
+            echo "Syncing layouts.json into app resources..."
+            if [ -f "../../.sdd/layouts.json" ]; then
+                if [ ! -f "../../$RESOURCES_DIR/layouts.json" ] || ! cmp -s "../../.sdd/layouts.json" "../../$RESOURCES_DIR/layouts.json"; then
+                    cp "../../.sdd/layouts.json" "../../$RESOURCES_DIR/layouts.json"
+                fi
+            fi
 
             BASE_MODEL="model_production.pth"
             FINETUNED_MODEL="model_production_he_qwerty.pth"
+            LAYOUTS_SPEC="../../.sdd/layouts.json"
+
+            BASE_SAMPLES="${OMFK_BASE_SAMPLES:-5000000}"
+            BASE_EPOCHS="${OMFK_BASE_EPOCHS:-100}"
+            BASE_BATCH_SIZE="${OMFK_BASE_BATCH_SIZE:-512}"
+            BASE_LR="${OMFK_BASE_LR:-0.001}"
+            BASE_PATIENCE="${OMFK_BASE_PATIENCE:-15}"
+
+            HE_QWERTY_SAMPLES="${OMFK_HE_QWERTY_SAMPLES:-500000}"
+            HE_QWERTY_EPOCHS="${OMFK_HE_QWERTY_EPOCHS:-20}"
+            HE_QWERTY_BATCH_SIZE="${OMFK_HE_QWERTY_BATCH_SIZE:-512}"
+            HE_QWERTY_LR="${OMFK_HE_QWERTY_LR:-0.0001}"
+            HE_QWERTY_PATIENCE="${OMFK_HE_QWERTY_PATIENCE:-5}"
+
+            MAX_CORPUS_WORDS="${OMFK_MAX_CORPUS_WORDS:-2000000}"
+            FORCE_RETRAIN="${OMFK_FORCE_RETRAIN:-0}"
+            SKIP_RETRAIN_ON_LAYOUT_CHANGE="${OMFK_SKIP_BASE_RETRAIN_ON_LAYOUT_CHANGE:-0}"
+
+            echo -e "${BLUE}Training config:${NC} base_samples=${BASE_SAMPLES} he_qwerty_samples=${HE_QWERTY_SAMPLES} max_corpus_words=${MAX_CORPUS_WORDS}"
+
+            should_train_base=0
+            if [ "$FORCE_RETRAIN" = "1" ]; then
+                echo -e "${YELLOW}OMFK_FORCE_RETRAIN=1 → will retrain base model.${NC}"
+                should_train_base=1
+            fi
+
+            # If layouts spec is newer than the base model, the base model is considered stale.
+            if [ "$should_train_base" = "0" ] && [ -f "$BASE_MODEL" ] && [ -f "$LAYOUTS_SPEC" ] && [ "$SKIP_RETRAIN_ON_LAYOUT_CHANGE" != "1" ]; then
+                if [ "$LAYOUTS_SPEC" -nt "$BASE_MODEL" ]; then
+                    echo -e "${YELLOW}Base model is older than layouts spec → retraining base model (set OMFK_SKIP_BASE_RETRAIN_ON_LAYOUT_CHANGE=1 to skip).${NC}"
+                    should_train_base=1
+                fi
+            fi
+
+            # Verify the checkpoint loads into current architecture; otherwise retrain.
+            if [ "$should_train_base" = "0" ] && [ -f "$BASE_MODEL" ]; then
+                python3 - <<'PY' || should_train_base=1
+import sys, torch
+from train import EnsembleModel
+path = "model_production.pth"
+try:
+    state = torch.load(path, map_location="cpu", weights_only=True)
+except TypeError:
+    state = torch.load(path, map_location="cpu")
+model = EnsembleModel()
+model.load_state_dict(state, strict=True)
+print("Base model checkpoint OK:", path)
+PY
+            fi
             
             # Generate data
-            if [ ! -f "$BASE_MODEL" ]; then
+            if [ "$should_train_base" = "1" ] || [ ! -f "$BASE_MODEL" ]; then
                 echo -e "${YELLOW}Base model not found (${BASE_MODEL}). Training from scratch...${NC}"
-                echo "Generating training data from corpus (5M samples, balanced, up to 5 words)..."
+                echo "Generating training data from corpus (${BASE_SAMPLES} samples, balanced, up to 5 words)..."
                 # Path to corpus is ../../data/processed relative to Tools/CoreMLTrainer
-                python3 generate_data.py --count 5000000 --balance 0.5 --max-phrase-len 5 --output training_data_real.csv --corpus_dir "../../$PROCESSED_DIR"
+                python3 generate_data.py \
+                    --count "$BASE_SAMPLES" \
+                    --balance 0.5 \
+                    --max-phrase-len 5 \
+                    --max-corpus-words "$MAX_CORPUS_WORDS" \
+                    --output training_data_real.csv \
+                    --corpus_dir "../../$PROCESSED_DIR"
                 
                 # Train with ALL advanced techniques
                 echo "Training base model (ensemble, augmentation, mixup)..."
                 echo "This will take 30-60 minutes..."
-                python3 train.py --epochs 100 --batch_size 512 --lr 0.001 --patience 15 \
+                python3 train.py --epochs "$BASE_EPOCHS" --batch_size "$BASE_BATCH_SIZE" --lr "$BASE_LR" --patience "$BASE_PATIENCE" \
                     --ensemble --augment --mixup \
                     --data training_data_real.csv --model_out "$BASE_MODEL"
             else
@@ -110,18 +187,19 @@ while true; do
             fi
 
             echo -e "${BLUE}--- Fine-tuning for Hebrew QWERTY sofits (Ticket 23) ---${NC}"
-            echo "Generating focused he_qwerty data (200k samples)..."
+            echo "Generating focused he_qwerty data (${HE_QWERTY_SAMPLES} samples)..."
             python3 generate_data.py \
-                --count 200000 \
+                --count "$HE_QWERTY_SAMPLES" \
                 --balance 0.3 \
                 --max-phrase-len 5 \
+                --max-corpus-words "$MAX_CORPUS_WORDS" \
                 --output training_data_he_qwerty.csv \
                 --corpus_dir "../../$PROCESSED_DIR" \
                 --focus-layout he_qwerty
 
-            echo "Fine-tuning (lr=0.0001, epochs=20)..."
-            python3 train.py --epochs 20 --batch_size 512 --lr 0.0001 --patience 5 \
-                --ensemble --finetune --model_in "$BASE_MODEL" \
+            echo "Fine-tuning (lr=${HE_QWERTY_LR}, epochs=${HE_QWERTY_EPOCHS})..."
+            python3 train.py --epochs "$HE_QWERTY_EPOCHS" --batch_size "$HE_QWERTY_BATCH_SIZE" --lr "$HE_QWERTY_LR" --patience "$HE_QWERTY_PATIENCE" \
+                --ensemble --finetune --model_in "$BASE_MODEL" --augment \
                 --data training_data_he_qwerty.csv --model_out "$FINETUNED_MODEL"
             
             # Export
@@ -135,8 +213,8 @@ while true; do
             cp LayoutClassifier.mlmodel "../../$RESOURCES_DIR/"
             
             cd ../..
-            echo "Running CoreML smoke tests..."
-            swift test --filter CoreMLLayoutClassifierTests
+            echo "Running Swift test suite..."
+            swift test
             echo -e "${GREEN}CoreML model trained and installed!${NC}"
             ;;
             
@@ -199,6 +277,9 @@ while true; do
             ;;
     esac
     echo ""
+    if [ -n "$AUTO_CHOICE" ]; then
+        exit 0
+    fi
     read -p "Press Enter to continue..."
     echo ""
 done

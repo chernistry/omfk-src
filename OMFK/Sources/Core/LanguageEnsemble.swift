@@ -6,9 +6,11 @@ import os.log
 /// Context for ensemble decision making
 public struct EnsembleContext: Sendable {
     public let lastLanguage: Language?
+    public let activeLayouts: [String: String]?
     
-    public init(lastLanguage: Language? = nil) {
+    public init(lastLanguage: Language? = nil, activeLayouts: [String: String]? = nil) {
         self.lastLanguage = lastLanguage
+        self.activeLayouts = activeLayouts
     }
 }
 
@@ -74,6 +76,7 @@ actor LanguageEnsemble {
         }
         
         var hypothesisScores: [LanguageHypothesis: Double] = [:]
+        let activeLayouts = context.activeLayouts
         
         // 1. Evaluate "As-Is" hypotheses
         hypothesisScores[.ru] = evaluate(text: token, target: .russian, context: context, isMapped: false)
@@ -93,12 +96,12 @@ actor LanguageEnsemble {
         // If input is primarily LATIN
         if hasLatin {
             // Check if input (English) maps to Russian
-            if let ruMapped = LayoutMapper.shared.convert(token, from: .english, to: .russian) {
+            if let ruMapped = LayoutMapper.shared.convert(token, from: .english, to: .russian, activeLayouts: activeLayouts) {
                  hypothesisScores[.ruFromEnLayout] = evaluate(text: ruMapped, target: .russian, context: context, isMapped: true)
             }
             
             // Check if input (English) maps to Hebrew
-            if let heMapped = LayoutMapper.shared.convert(token, from: .english, to: .hebrew) {
+            if let heMapped = LayoutMapper.shared.convert(token, from: .english, to: .hebrew, activeLayouts: activeLayouts) {
                 hypothesisScores[.heFromEnLayout] = evaluate(text: heMapped, target: .hebrew, context: context, isMapped: true)
             }
         }
@@ -106,12 +109,12 @@ actor LanguageEnsemble {
         // If input is primarily CYRILLIC
         if hasCyrillic {
             // Check if input (Russian) maps to Hebrew (via RU→EN→HE)
-            if let heMapped = LayoutMapper.shared.convert(token, from: .russian, to: .hebrew) {
+            if let heMapped = LayoutMapper.shared.convert(token, from: .russian, to: .hebrew, activeLayouts: activeLayouts) {
                 hypothesisScores[.heFromRuLayout] = evaluate(text: heMapped, target: .hebrew, context: context, isMapped: true)
             }
             
             // Reverse mappings (EN from RU)
-            if let enFromRu = LayoutMapper.shared.convert(token, from: .russian, to: .english) {
+            if let enFromRu = LayoutMapper.shared.convert(token, from: .russian, to: .english, activeLayouts: activeLayouts) {
                 hypothesisScores[.enFromRuLayout] = evaluate(text: enFromRu, target: .english, context: context, isMapped: true)
             }
         }
@@ -119,11 +122,11 @@ actor LanguageEnsemble {
         // If input is primarily HEBREW
         if hasHebrew {
             // Check if input (Hebrew) maps to Russian (via HE→EN→RU)
-             if let ruMapped = LayoutMapper.shared.convert(token, from: .hebrew, to: .russian) {
+             if let ruMapped = LayoutMapper.shared.convert(token, from: .hebrew, to: .russian, activeLayouts: activeLayouts) {
                  hypothesisScores[.ruFromHeLayout] = evaluate(text: ruMapped, target: .russian, context: context, isMapped: true)
              }
             
-            if let enFromHe = LayoutMapper.shared.convert(token, from: .hebrew, to: .english) {
+            if let enFromHe = LayoutMapper.shared.convert(token, from: .hebrew, to: .english, activeLayouts: activeLayouts) {
                 hypothesisScores[.enFromHeLayout] = evaluate(text: enFromHe, target: .english, context: context, isMapped: true)
             }
         }

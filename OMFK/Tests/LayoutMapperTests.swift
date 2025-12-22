@@ -23,6 +23,12 @@ final class LayoutMapperTests: XCTestCase {
         let result = LayoutMapper.shared.convert(input, from: .english, to: .hebrew)
         XCTAssertNotNil(result)
     }
+
+    func testEnglishToHebrewQwertySofits() {
+        let activeLayouts = ["en": "en_us", "ru": "ru_pc", "he": "he_qwerty"]
+        let result = LayoutMapper.shared.convert("wloM", from: .english, to: .hebrew, activeLayouts: activeLayouts)
+        XCTAssertEqual(result, "שלום")
+    }
     
     func testSameLanguage() {
         let result = LayoutMapper.shared.convert("hello", from: .english, to: .english)

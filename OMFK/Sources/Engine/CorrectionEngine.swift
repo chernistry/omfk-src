@@ -143,7 +143,8 @@ actor CorrectionEngine {
         }
         
         // Attempt conversion
-        if let corrected = LayoutMapper.shared.convert(text, from: sourceLayout, to: decision.language) {
+        let activeLayouts = await settings.activeLayouts
+        if let corrected = LayoutMapper.shared.convert(text, from: sourceLayout, to: decision.language, activeLayouts: activeLayouts) {
             logger.info("✅ VALID CONVERSION FOUND! (Ensemble)")
             
             // Store cycling state for potential undo
@@ -154,7 +155,7 @@ actor CorrectionEngine {
             
             // Add other possible conversions
             for target in Language.allCases where target != decision.language && target != sourceLayout {
-                if let alt = LayoutMapper.shared.convert(text, from: sourceLayout, to: target), alt != corrected {
+                if let alt = LayoutMapper.shared.convert(text, from: sourceLayout, to: target, activeLayouts: activeLayouts), alt != corrected {
                     let hyp = hypothesisFor(source: sourceLayout, target: target)
                     alternatives.append(CyclingState.Alternative(text: alt, hypothesis: hyp))
                 }
@@ -237,10 +238,11 @@ actor CorrectionEngine {
         // Generate all possible conversions
         let sourceLayouts: [Language] = [.english, .russian, .hebrew]
         let targetLanguages: [Language] = [.russian, .english, .hebrew]
+        let activeLayouts = await settings.activeLayouts
         
         for source in sourceLayouts {
             for target in targetLanguages where target != source {
-                if let converted = LayoutMapper.shared.convert(text, from: source, to: target), converted != text {
+                if let converted = LayoutMapper.shared.convert(text, from: source, to: target, activeLayouts: activeLayouts), converted != text {
                     let hyp = hypothesisFor(source: source, target: target)
                     if !alternatives.contains(where: { $0.text == converted }) {
                         alternatives.append(CyclingState.Alternative(text: converted, hypothesis: hyp))
@@ -254,11 +256,11 @@ actor CorrectionEngine {
             return nil
         }
         
-        // Start cycling from first alternative (which is the conversion, not original)
+        // Start cycling - first call to cycleCorrection will return index 1 (first conversion)
         cyclingState = CyclingState(
             originalText: text,
             alternatives: alternatives,
-            currentIndex: 0,
+            currentIndex: 0,  // next() will move to 1
             wasAutomatic: false,
             autoHypothesis: decision.layoutHypothesis,
             timestamp: Date(),
@@ -342,6 +344,11 @@ actor CorrectionEngine {
         history.insert(record, at: 0)
         if history.count > 50 {
             history.removeLast()
+        }
+        
+        // Also update shared HistoryManager for UI
+        Task { @MainActor in
+            HistoryManager.shared.add(original: original, corrected: corrected, from: from, to: to)
         }
     }
 }

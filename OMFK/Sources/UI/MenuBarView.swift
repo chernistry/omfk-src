@@ -1,128 +1,114 @@
 import SwiftUI
 
-// MARK: - Design System
-
-enum OMFKDesign {
-    static let accent = Color.accentColor
-    static let success = Color.green
-    static let muted = Color.secondary.opacity(0.6)
-    static let spacing: CGFloat = 12
-}
-
-// MARK: - Menu Bar View
-
 struct MenuBarView: View {
     @StateObject private var settings = SettingsManager.shared
     @Environment(\.openWindow) private var openWindow
-    @State private var isHovering: String? = nil
     
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider().padding(.horizontal, OMFKDesign.spacing)
-            quickToggles
-            Divider().padding(.horizontal, OMFKDesign.spacing)
-            actions
-            Divider().padding(.horizontal, OMFKDesign.spacing)
-            footer
-        }
-        .frame(width: 280)
-    }
-    
-    private var header: some View {
-        HStack(spacing: OMFKDesign.spacing) {
-            ZStack {
-                Circle()
-                    .fill(settings.isEnabled ? OMFKDesign.success.opacity(0.2) : Color.gray.opacity(0.2))
-                    .frame(width: 36, height: 36)
-                Circle()
-                    .fill(settings.isEnabled ? OMFKDesign.success : Color.gray)
-                    .frame(width: 10, height: 10)
-            }
-            VStack(alignment: .leading, spacing: 2) {
-                Text("OMFK").font(.system(size: 14, weight: .semibold, design: .rounded))
-                Text(settings.isEnabled ? "Active" : "Paused").font(.system(size: 11)).foregroundStyle(OMFKDesign.muted)
-            }
-            Spacer()
-            Toggle("", isOn: $settings.isEnabled).toggleStyle(.switch).labelsHidden().scaleEffect(0.8)
-        }
-        .padding(OMFKDesign.spacing)
-    }
-    
-    private var quickToggles: some View {
-        VStack(spacing: 4) {
-            QuickToggleRow(icon: "arrow.left.arrow.right", title: "Auto-switch layout", isOn: $settings.autoSwitchLayout)
-            QuickToggleRow(icon: "command", title: "Hotkey enabled", isOn: $settings.hotkeyEnabled)
-        }
-        .padding(.vertical, 8)
-        .padding(.horizontal, OMFKDesign.spacing)
-    }
-    
-    private var actions: some View {
-        VStack(spacing: 2) {
-            MenuRow(icon: "gear", title: "Settings", shortcut: "⌘,", isHovering: isHovering == "settings") {
-                openWindow(id: "settings")
-            }
-            .onHover { isHovering = $0 ? "settings" : nil }
+        VStack(spacing: 16) {
+            // Status pill
+            statusPill
             
-            MenuRow(icon: "clock.arrow.circlepath", title: "History", shortcut: "⌘H", isHovering: isHovering == "history") {
-                openWindow(id: "history")
+            // Quick controls
+            VStack(spacing: 12) {
+                ControlRow(icon: "arrow.left.arrow.right", title: "Auto-switch", isOn: $settings.autoSwitchLayout)
+                ControlRow(icon: "option", title: "Hotkey", isOn: $settings.hotkeyEnabled)
             }
-            .onHover { isHovering = $0 ? "history" : nil }
-        }
-        .padding(.vertical, 4)
-    }
-    
-    private var footer: some View {
-        HStack {
-            Text("v1.0").font(.system(size: 10)).foregroundStyle(OMFKDesign.muted)
-            Spacer()
+            .padding(.horizontal, 4)
+            
+            // Actions
+            HStack(spacing: 12) {
+                ActionButton(icon: "gear", title: "Settings") { openWindow(id: "settings") }
+                ActionButton(icon: "clock", title: "History") { openWindow(id: "history") }
+            }
+            
+            // Quit
             Button(action: { NSApplication.shared.terminate(nil) }) {
-                Text("Quit").font(.system(size: 11, weight: .medium)).foregroundStyle(OMFKDesign.muted)
+                Text("Quit OMFK")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
         }
-        .padding(OMFKDesign.spacing)
+        .padding(20)
+        .frame(width: 260)
+    }
+    
+    private var statusPill: some View {
+        HStack(spacing: 10) {
+            Circle()
+                .fill(settings.isEnabled ? Color.green : Color.gray.opacity(0.4))
+                .frame(width: 8, height: 8)
+                .shadow(color: settings.isEnabled ? .green.opacity(0.5) : .clear, radius: 4)
+            
+            Text(settings.isEnabled ? "Active" : "Paused")
+                .font(.system(size: 13, weight: .medium))
+            
+            Spacer()
+            
+            Toggle("", isOn: $settings.isEnabled)
+                .toggleStyle(.switch)
+                .labelsHidden()
+                .scaleEffect(0.75)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
     }
 }
 
-struct QuickToggleRow: View {
+struct ControlRow: View {
     let icon: String
     let title: String
     @Binding var isOn: Bool
     
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: icon).font(.system(size: 12)).foregroundStyle(isOn ? OMFKDesign.accent : OMFKDesign.muted).frame(width: 20)
-            Text(title).font(.system(size: 12))
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(isOn ? .blue : .secondary)
+                .frame(width: 24)
+            
+            Text(title)
+                .font(.system(size: 13))
+            
             Spacer()
-            Toggle("", isOn: $isOn).toggleStyle(.switch).labelsHidden().scaleEffect(0.7)
+            
+            Toggle("", isOn: $isOn)
+                .toggleStyle(.switch)
+                .labelsHidden()
+                .scaleEffect(0.75)
         }
-        .padding(.vertical, 4)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
     }
 }
 
-struct MenuRow: View {
+struct ActionButton: View {
     let icon: String
     let title: String
-    var shortcut: String? = nil
-    var isHovering: Bool = false
     let action: () -> Void
+    @State private var isHovered = false
     
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 10) {
-                Image(systemName: icon).font(.system(size: 12)).foregroundStyle(isHovering ? .primary : OMFKDesign.muted).frame(width: 20)
-                Text(title).font(.system(size: 12))
-                Spacer()
-                if let shortcut { Text(shortcut).font(.system(size: 10, design: .rounded)).foregroundStyle(OMFKDesign.muted) }
+            VStack(spacing: 6) {
+                Image(systemName: icon)
+                    .font(.system(size: 18, weight: .light))
+                Text(title)
+                    .font(.system(size: 11))
             }
-            .padding(.horizontal, OMFKDesign.spacing)
-            .padding(.vertical, 8)
-            .background(RoundedRectangle(cornerRadius: 6).fill(isHovering ? Color.primary.opacity(0.1) : Color.clear))
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 14)
+            .background {
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(isHovered ? AnyShapeStyle(.white.opacity(0.1)) : AnyShapeStyle(.ultraThinMaterial))
+            }
         }
         .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
     }
 }
 
-#Preview { MenuBarView().frame(width: 280) }
+#Preview { MenuBarView() }

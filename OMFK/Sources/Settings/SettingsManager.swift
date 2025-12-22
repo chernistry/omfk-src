@@ -62,8 +62,11 @@ final class SettingsManager: ObservableObject {
         self.fastPathThreshold = UserDefaults.standard.object(forKey: "fastPathThreshold") as? Double ?? 0.95
         self.standardPathThreshold = UserDefaults.standard.object(forKey: "standardPathThreshold") as? Double ?? 0.70
         
-        // Auto-detect installed keyboard layouts
-        detectAndUpdateLayouts()
+        // Auto-detect installed keyboard layouts (skip in tests; allow opt-out via env var).
+        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil,
+           ProcessInfo.processInfo.environment["OMFK_DISABLE_LAYOUT_AUTODETECT"] != "1" {
+            detectAndUpdateLayouts()
+        }
     }
     
     /// Auto-detect keyboard layout variants from macOS

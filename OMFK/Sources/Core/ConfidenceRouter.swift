@@ -55,6 +55,8 @@ actor ConfidenceRouter {
                  logger.warning("⚠️ Slow detection: \(String(format: "%.1f", duration * 1000))ms for \(DecisionLogger.tokenSummary(token), privacy: .public)")
              }
         }
+
+        let activeLayouts = await settings.activeLayouts
         
         // -- STEP 1: Get a baseline decision via Fast or Standard path --
         var baselineDecision: LanguageDecision?
@@ -74,7 +76,7 @@ actor ConfidenceRouter {
         
         // 1b. STANDARD PATH: Ensemble (if Fast Path didn't produce high-confidence result)
         if baselineDecision == nil {
-            let ensembleContext = EnsembleContext(lastLanguage: context.lastLanguage)
+            let ensembleContext = EnsembleContext(lastLanguage: context.lastLanguage, activeLayouts: activeLayouts)
             let decision = await ensemble.classify(token, context: ensembleContext)
             let stdThreshold = await settings.standardPathThreshold
             if decision.confidence >= stdThreshold {
@@ -123,7 +125,7 @@ actor ConfidenceRouter {
                     }
                     
                     // Try to convert and validate
-                    if let converted = LayoutMapper.shared.convert(token, from: sourceLayout, to: targetLanguage) {
+                    if let converted = LayoutMapper.shared.convert(token, from: sourceLayout, to: targetLanguage, activeLayouts: activeLayouts) {
                         // Score the converted text using N-gram
                         let targetScore = scoreWithNgram(converted, language: targetLanguage)
                         let sourceScore = scoreWithNgram(token, language: baseline.language)

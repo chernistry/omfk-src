@@ -154,6 +154,12 @@ def main():
     parser.add_argument('--count', type=int, default=1000000)
     parser.add_argument('--layouts', default='../../.sdd/layouts.json')
     parser.add_argument('--corpus_dir', default=None, help="Directory with {lang}.txt corpus files")
+    parser.add_argument(
+        '--max-corpus-words',
+        type=int,
+        default=500_000,
+        help="Max words to load per language from corpus files (keeps RAM bounded). Set 0 to load all (slow, high memory).",
+    )
     parser.add_argument('--balance', type=float, default=0.5, help="Ratio of pure language samples (vs _from_ samples)")
     parser.add_argument('--max-phrase-len', type=int, default=3, help="Max words per sample")
     parser.add_argument(
@@ -174,12 +180,21 @@ def main():
                 print(f"  Loading {lang}.txt...", end='', flush=True)
                 with open(path, 'r', encoding='utf-8') as f:
                     words = []
+                    max_words = args.max_corpus_words or 0
                     for line in f:
-                        parts = line.strip().split()
-                        words.extend([p for p in parts if 2 < len(p) < 20])
+                        for p in line.strip().split():
+                            if 2 < len(p) < 20:
+                                words.append(p)
+                                if max_words and len(words) >= max_words:
+                                    break
+                        if max_words and len(words) >= max_words:
+                            break
                     if words:
                         SEEDS[lang] = words
-                        print(f" {len(words)} words loaded.")
+                        if args.max_corpus_words and len(words) >= args.max_corpus_words:
+                            print(f" {len(words)} words loaded (capped).")
+                        else:
+                            print(f" {len(words)} words loaded.")
                     else:
                         print(" Empty or error.")
             else:

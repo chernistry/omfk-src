@@ -16,4 +16,5 @@ Tools/CoreMLTrainer/venv/*
 data/processed/*
 .sdd/layouts.json
 
-Tools/CoreMLTrainer/training_data_real.csv
+*.csv
+Tools/CoreMLTrainer/*.csv

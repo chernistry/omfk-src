@@ -3,10 +3,12 @@ import XCTest
 
 final class CorrectionEngineIntegrationTests: XCTestCase {
     var engine: CorrectionEngine!
+    var settings: SettingsManager!
     
     override func setUp() async throws {
         // SettingsManager is a singleton, use .shared
         let settings = await SettingsManager.shared
+        self.settings = settings
         engine = CorrectionEngine(settings: settings)
         
         // Ensure enabled for tests
@@ -19,19 +21,32 @@ final class CorrectionEngineIntegrationTests: XCTestCase {
     
     override func tearDown() async throws {
         engine = nil
+        settings = nil
     }
     
     func testRussianLayoutCorrection() async throws {
-        // "ghbdtn" → "привет" (Russian "hello" typed on English layout)
-        let result = await engine.correctText("ghbdtn", expectedLayout: nil)
+        // Russian "привет" typed on English layout should be corrected back to Russian,
+        // regardless of the active RU layout variant.
+        let activeLayouts = await MainActor.run { settings.activeLayouts }
+        guard let gibberish = LayoutMapper.shared.convert("привет", from: .russian, to: .english, activeLayouts: activeLayouts) else {
+            XCTFail("Failed to generate RU→EN gibberish")
+            return
+        }
+        let result = await engine.correctText(gibberish, expectedLayout: nil)
         
         XCTAssertNotNil(result, "Should detect and correct Russian typed on English layout")
         XCTAssertEqual(result, "привет")
     }
     
     func testHebrewLayoutCorrection() async throws {
-        // "akuo" → "שלום" (Hebrew "shalom" typed on English layout)
-        let result = await engine.correctText("akuo", expectedLayout: nil)
+        // Hebrew "שלום" typed on English layout should be corrected back to Hebrew,
+        // regardless of the active HE layout variant.
+        let activeLayouts = await MainActor.run { settings.activeLayouts }
+        guard let gibberish = LayoutMapper.shared.convert("שלום", from: .hebrew, to: .english, activeLayouts: activeLayouts) else {
+            XCTFail("Failed to generate HE→EN gibberish")
+            return
+        }
+        let result = await engine.correctText(gibberish, expectedLayout: nil)
         
         XCTAssertNotNil(result, "Should detect and correct Hebrew typed on English layout")
         XCTAssertEqual(result, "שלום")
@@ -60,7 +75,12 @@ final class CorrectionEngineIntegrationTests: XCTestCase {
     
     func testContextAwareness() async throws {
         // First correction establishes Russian context
-        let first = await engine.correctText("ghbdtn", expectedLayout: nil)
+        let activeLayouts = await MainActor.run { settings.activeLayouts }
+        guard let gibberish = LayoutMapper.shared.convert("привет", from: .russian, to: .english, activeLayouts: activeLayouts) else {
+            XCTFail("Failed to generate RU→EN gibberish")
+            return
+        }
+        let first = await engine.correctText(gibberish, expectedLayout: nil)
         XCTAssertEqual(first, "привет")
         
         // Ambiguous token "ytn" has low confidence (not enough signal for "нет")
@@ -76,14 +96,19 @@ final class CorrectionEngineIntegrationTests: XCTestCase {
     
     func testCorrectionHistory() async throws {
         // Make a correction
-        _ = await engine.correctText("ghbdtn", expectedLayout: nil)
+        let activeLayouts = await MainActor.run { settings.activeLayouts }
+        guard let gibberish = LayoutMapper.shared.convert("привет", from: .russian, to: .english, activeLayouts: activeLayouts) else {
+            XCTFail("Failed to generate RU→EN gibberish")
+            return
+        }
+        _ = await engine.correctText(gibberish, expectedLayout: nil)
         
         // Verify history was recorded
         let history = await engine.getHistory()
         XCTAssertEqual(history.count, 1)
         
         let record = history.first!
-        XCTAssertEqual(record.original, "ghbdtn")
+        XCTAssertEqual(record.original, gibberish)
         XCTAssertEqual(record.corrected, "привет")
         XCTAssertEqual(record.fromLang, .english)
         XCTAssertEqual(record.toLang, .russian)

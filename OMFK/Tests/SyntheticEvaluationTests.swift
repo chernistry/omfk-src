@@ -203,8 +203,75 @@ final class SyntheticEvaluationTests: XCTestCase {
         return cases
     }
 
+    // MARK: - Realistic slang/profanity corpus for each language
+    
+    private static let ruSlang: [String] = [
+        // Мат
+        "блять", "сука", "пиздец", "хуй", "нахуй", "пизда", "ебать", "ебаный", "хуйня", "пиздато",
+        "заебись", "охуенно", "ахуеть", "пиздабол", "хуесос", "мудак", "долбоеб", "ебанат", "пиздюк",
+        "блядь", "ебало", "хуево", "пиздануться", "выебываться", "заебал", "отъебись", "ебанько",
+        // Тюремный жаргон
+        "мусор", "мент", "легавый", "фраер", "лох", "терпила", "барыга", "малява", "шконка", "хата",
+        "общак", "смотрящий", "положенец", "вор в законе", "откинуться", "закрыться", "кинуть",
+        "крыса", "стукач", "петух", "опущенный", "красный", "черный", "людской", "босяк",
+        // Двач/интернет сленг
+        "лол", "кек", "рофл", "орнул", "зашквар", "кринж", "база", "основа", "соснул", "обосрался",
+        "нихуя себе", "ебать колотить", "пиздец нахуй блять", "ору в голосину", "топ кек",
+        "анон", "двачер", "олдфаг", "ньюфаг", "луркать", "сажа", "бамп", "тред", "борда",
+        "пруфы будут", "пикрелейтед", "итт", "инб4", "тян", "кун", "няша", "вайфу",
+        // Чат-речь
+        "чо", "шо", "ваще", "норм", "збс", "хз", "пон", "ясн", "ок", "лан", "ща", "щас",
+        "го", "погнали", "давай", "ну типа", "короч", "прикинь", "жиза", "изи", "рил",
+        "имба", "нерф", "баф", "гг", "изи катка", "раш б", "сосал", "унизил",
+        // Грубые выражения
+        "иди нахуй", "пошел нахуй", "ебал я это", "заебало", "хуйня какая-то",
+        "пиздец блять", "ебаный в рот", "сука блять", "ну и хуйня", "охуел что ли"
+    ]
+    
+    private static let enSlang: [String] = [
+        // Profanity
+        "fuck", "shit", "damn", "ass", "bitch", "bastard", "crap", "dick", "cock", "pussy",
+        "fucking", "shitty", "asshole", "motherfucker", "bullshit", "fucked", "dumbass",
+        "what the fuck", "holy shit", "goddamn", "fuck off", "piss off", "screw you",
+        // 4chan slang
+        "anon", "newfag", "oldfag", "lurk moar", "gtfo", "kek", "topkek", "based", "cringe",
+        "cope", "seethe", "dilate", "mald", "touch grass", "rent free", "schizo", "janny",
+        "greentext", "redpill", "blackpill", "normie", "npc", "wojak", "pepe", "incel",
+        "mfw", "tfw", "itt", "inb4", "sauce", "trips", "dubs", "checked", "btfo", "rekt",
+        // Chat speak
+        "lol", "lmao", "rofl", "bruh", "bro", "dude", "yo", "sup", "nah", "yeah", "yep",
+        "idk", "idc", "tbh", "ngl", "fr", "ong", "lowkey", "highkey", "deadass", "no cap",
+        "sus", "slay", "bet", "lit", "fire", "goat", "mid", "ratio", "L", "W", "gg", "ez",
+        // Gaming
+        "noob", "pwned", "owned", "rekt", "gg ez", "git gud", "tryhard", "sweaty", "toxic",
+        // Insults
+        "idiot", "moron", "stupid", "dumb", "retard", "loser", "pathetic", "trash", "garbage"
+    ]
+    
+    private static let heSlang: [String] = [
+        // קללות
+        "זין", "כוס", "תחת", "זונה", "בן זונה", "לך לעזאזל", "לעזאזל", "חרא", "מניאק",
+        "אידיוט", "טמבל", "דביל", "מפגר", "חתיכת", "יא", "לך תזדיין", "כוסאמק", "כוסעמק",
+        // סלנג רחוב
+        "אחי", "גבר", "מה קורה", "יאללה", "סבבה", "אחלה", "וואלה", "באסה", "חבל", "פאדיחה",
+        "חפיף", "פרייר", "פראייר", "ערס", "אסי", "מסריח", "מגעיל", "חולה", "משוגע",
+        // צ'אט
+        "לול", "חחח", "ההה", "רצח", "מת", "נהרס", "שבר", "הורס", "אש", "בומבה",
+        "סותם", "נו", "טוב", "יאללה ביי", "מה נשמע", "הכל טוב", "בסדר גמור"
+    ]
+    
     private func generateIntendedSamples(words: [String], count: Int, rng: inout SplitMix64) -> [String] {
         let filtered = words.filter { !$0.isEmpty }
+        
+        // Determine which slang list to use based on word sample
+        let slang: [String]
+        if filtered.first?.first?.isASCII == true {
+            slang = Self.enSlang
+        } else if filtered.contains(where: { $0.contains("ה") || $0.contains("ל") || $0.contains("א") }) {
+            slang = Self.heSlang
+        } else {
+            slang = Self.ruSlang
+        }
 
         var out: [String] = []
         out.reserveCapacity(count)
@@ -246,12 +313,21 @@ final class SyntheticEvaluationTests: XCTestCase {
                 }
                 return pick(from: top)
             }
+            
+            func pickSlang() -> String {
+                slang[Int(rng.next() % UInt64(slang.count))]
+            }
 
-            if roll < 25 {
+            if roll < 20 {
+                // Short word
                 out.append(pickRankedWord(minLen: 2, maxLen: 3))
-            } else if roll < 55 {
+            } else if roll < 40 {
+                // Medium word
                 out.append(pickRankedWord(minLen: 4, maxLen: 8))
-            } else if roll < 80 {
+            } else if roll < 55 {
+                // Pure slang/profanity
+                out.append(pickSlang())
+            } else if roll < 70 {
                 // Phrase (2-6 words)
                 let n = 2 + Int(rng.next() % 5)
                 var parts: [String] = []
@@ -261,10 +337,14 @@ final class SyntheticEvaluationTests: XCTestCase {
                     parts.append(w)
                 }
                 out.append(parts.joined(separator: " "))
-            } else {
-                // Punctuation-heavy phrase.
-                // Examples:
-                //   "word,word" / "word, word" / "word / word" / "word'word" / "(word) word"
+            } else if roll < 82 {
+                // Mixed slang + normal phrase
+                let useSlangFirst = rng.next() % 2 == 0
+                let s = pickSlang()
+                let w = pickRankedWord(minLen: 3, maxLen: 8)
+                out.append(useSlangFirst ? "\(s) \(w)" : "\(w) \(s)")
+            } else if roll < 92 {
+                // Punctuation-heavy phrase
                 let w1 = pickRankedWord(minLen: 2, maxLen: 8)
                 let w2 = pickRankedWord(minLen: 2, maxLen: 10)
                 let w3 = pickRankedWord(minLen: 2, maxLen: 10)
@@ -276,6 +356,18 @@ final class SyntheticEvaluationTests: XCTestCase {
                 case 3: out.append("(\(w1)) \(w2)")
                 case 4: out.append("\(w1) \(w2)! \(w3)")
                 default: out.append("\(w1) \(w2)")
+                }
+            } else {
+                // Slang with punctuation (chat style)
+                let s1 = pickSlang()
+                let s2 = pickSlang()
+                let styleRoll = Int(rng.next() % 5)
+                switch styleRoll {
+                case 0: out.append("\(s1)!!!")
+                case 1: out.append("\(s1)???")
+                case 2: out.append("\(s1), \(s2)")
+                case 3: out.append("\(s1)... \(s2)")
+                default: out.append("\(s1) \(s2)!")
                 }
             }
         }

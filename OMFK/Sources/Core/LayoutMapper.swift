@@ -243,16 +243,6 @@ public final class LayoutMapper: @unchecked Sendable {
                 continue
             }
             
-            // Preserve boundary punctuation (at start/end of text or adjacent to whitespace)
-            if Self.boundaryPunctuation.contains(char) {
-                let prevIsSpace = i == 0 || chars[i-1].isWhitespace || chars[i-1].isLetter
-                let nextIsSpace = i == chars.count - 1 || chars[i+1].isWhitespace || chars[i+1].isLetter
-                if prevIsSpace || nextIsSpace {
-                    result.append(char)
-                    continue
-                }
-            }
-            
             if let (keyCode, mod) = sourceMap[char],
                let targetMapping = fullMap[keyCode]?[toLayout] {
                 let targetChar: String?

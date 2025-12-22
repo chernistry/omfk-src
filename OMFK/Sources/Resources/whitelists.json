@@ -1,0 +1,33 @@
+{
+  "english": {
+    "description": "Common English words and internet slang that should NOT be converted",
+    "words": [
+      "a", "i", "ok", "hi", "no", "go", "me", "we", "us", "it", "is", "as", "at",
+      "on", "in", "to", "of", "or", "an", "be", "do", "so", "up", "by", "my", "he",
+      "if", "am", "oh", "ah", "uh", "um", "vs", "id", "tv", "pc", "uk", "eu", "ai",
+      "gg", "ez", "wp", "gl", "hf", "lol", "kek", "rip", "afk", "brb", "omg", "wtf",
+      "nah", "yep", "yup", "sup", "yo", "fr", "ngl", "tbh", "idk", "idc", "imo",
+      "btw", "fyi", "lmao", "rofl", "stfu", "gtfo", "btfo", "rekt", "noob", "pwned",
+      "git", "gud", "pog", "kappa", "based", "cope", "mald", "ratio", "mid", "cap",
+      "sus", "slay", "bet", "lit", "fire", "goat", "vibe", "flex", "simp", "stan",
+      "bash", "lvl", "dps", "aoe", "fps", "rpg", "mmo", "pvp", "pve", "npc", "bot"
+    ]
+  },
+  "russian": {
+    "description": "Common Russian internet slang that should NOT be converted",
+    "words": [
+      "лол", "кек", "рофл", "имба", "нерф", "баф", "гг", "изи", "рил", "топ",
+      "анон", "тян", "кун", "няша", "вайфу", "сажа", "бамп", "тред", "борда",
+      "чо", "шо", "ваще", "норм", "збс", "хз", "пон", "ясн", "ок", "лан", "ща", "щас",
+      "го", "давай", "короч", "жиза", "орнул", "база", "основа", "кринж", "зашквар",
+      "бля", "хуй", "пиздец", "сука", "нах", "ебать"
+    ]
+  },
+  "hebrew": {
+    "description": "Common Hebrew slang that should NOT be converted",
+    "words": [
+      "לול", "חחח", "ההה", "נו", "יאללה", "סבבה", "אחלה", "וואלה", "באסה",
+      "אחי", "גבר", "חבל", "בומבה", "אש", "מת", "הורס", "שבר", "רצח"
+    ]
+  }
+}

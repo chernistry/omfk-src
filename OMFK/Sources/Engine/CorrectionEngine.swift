@@ -144,7 +144,7 @@ actor CorrectionEngine {
         
         // Attempt conversion
         let activeLayouts = await settings.activeLayouts
-        if let corrected = LayoutMapper.shared.convert(text, from: sourceLayout, to: decision.language, activeLayouts: activeLayouts) {
+        if let corrected = LayoutMapper.shared.convertBest(text, from: sourceLayout, to: decision.language, activeLayouts: activeLayouts) {
             logger.info("✅ VALID CONVERSION FOUND! (Ensemble)")
             
             // Store cycling state for potential undo
@@ -156,7 +156,7 @@ actor CorrectionEngine {
             
             // Add other possible conversions
             for target in Language.allCases where target != decision.language && target != sourceLayout {
-                if let alt = LayoutMapper.shared.convert(text, from: sourceLayout, to: target, activeLayouts: activeLayouts), alt != corrected {
+                if let alt = LayoutMapper.shared.convertBest(text, from: sourceLayout, to: target, activeLayouts: activeLayouts), alt != corrected {
                     let hyp = hypothesisFor(source: sourceLayout, target: target)
                     alternatives.append(CyclingState.Alternative(text: alt, hypothesis: hyp))
                 }
@@ -258,7 +258,7 @@ actor CorrectionEngine {
         var otherAlternatives: [(text: String, hyp: LanguageHypothesis, score: Double)] = []
         
         for (from, to) in conversions {
-            if let converted = LayoutMapper.shared.convert(text, from: from, to: to, activeLayouts: activeLayouts),
+            if let converted = LayoutMapper.shared.convertBest(text, from: from, to: to, activeLayouts: activeLayouts),
                converted != text,
                !alternatives.contains(where: { $0.text == converted }),
                !otherAlternatives.contains(where: { $0.text == converted }) {

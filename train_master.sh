@@ -87,9 +87,15 @@ while true; do
         2)
             echo -e "${BLUE}--- Training N-grams ---${NC}"
             cd Tools/NgramTrainer
+            UNIGRAM_TOP="${OMFK_UNIGRAM_TOP:-200000}"
             if [ -f "../../$PROCESSED_DIR/ru.txt" ]; then python3 train_ngrams.py --lang ru --input "../../$PROCESSED_DIR/ru.txt" --output "../../$RESOURCES_DIR/LanguageModels/ru_trigrams.json"; fi
             if [ -f "../../$PROCESSED_DIR/en.txt" ]; then python3 train_ngrams.py --lang en --input "../../$PROCESSED_DIR/en.txt" --output "../../$RESOURCES_DIR/LanguageModels/en_trigrams.json"; fi
             if [ -f "../../$PROCESSED_DIR/he.txt" ]; then python3 train_ngrams.py --lang he --input "../../$PROCESSED_DIR/he.txt" --output "../../$RESOURCES_DIR/LanguageModels/he_trigrams.json"; fi
+
+            echo "Training unigram (word frequency) lexicons (top=${UNIGRAM_TOP})..."
+            if [ -f "../../$PROCESSED_DIR/ru.txt" ]; then python3 train_unigrams.py --lang ru --top "$UNIGRAM_TOP" --input "../../$PROCESSED_DIR/ru.txt" --output "../../$RESOURCES_DIR/LanguageModels/ru_unigrams.tsv"; fi
+            if [ -f "../../$PROCESSED_DIR/en.txt" ]; then python3 train_unigrams.py --lang en --top "$UNIGRAM_TOP" --input "../../$PROCESSED_DIR/en.txt" --output "../../$RESOURCES_DIR/LanguageModels/en_unigrams.tsv"; fi
+            if [ -f "../../$PROCESSED_DIR/he.txt" ]; then python3 train_unigrams.py --lang he --top "$UNIGRAM_TOP" --input "../../$PROCESSED_DIR/he.txt" --output "../../$RESOURCES_DIR/LanguageModels/he_unigrams.tsv"; fi
             cd ../..
             echo -e "${GREEN}N-gram models updated successfully.${NC}"
             ;;
@@ -104,13 +110,6 @@ while true; do
             pip install -q -r requirements.txt
             # Avoid noisy coremltools warnings for unsupported scikit-learn versions.
             pip uninstall -y scikit-learn >/dev/null 2>&1 || true
-
-            echo "Syncing layouts.json into app resources..."
-            if [ -f "../../.sdd/layouts.json" ]; then
-                if [ ! -f "../../$RESOURCES_DIR/layouts.json" ] || ! cmp -s "../../.sdd/layouts.json" "../../$RESOURCES_DIR/layouts.json"; then
-                    cp "../../.sdd/layouts.json" "../../$RESOURCES_DIR/layouts.json"
-                fi
-            fi
 
             BASE_MODEL="model_production.pth"
             FINETUNED_MODEL="model_production_he_qwerty.pth"

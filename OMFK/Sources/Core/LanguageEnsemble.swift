@@ -40,7 +40,7 @@ actor LanguageEnsemble {
     private var enModel: NgramLanguageModel?
     private var heModel: NgramLanguageModel?
     
-    init(wordValidator: WordValidator = SystemWordValidator()) {
+    init(wordValidator: WordValidator = HybridWordValidator()) {
         self.wordValidator = wordValidator
         // Configure recognizer once
         recognizer.languageHints = [
@@ -189,8 +189,8 @@ actor LanguageEnsemble {
         // C. N-gram Score
         let ngramScore = checkNgram(text, language: target)
 
-        // D. Word validity (short text only; trigrams are uninformative for <=3 letters)
-        let wordScore = isShortLetters ? wordValidator.confidence(for: text, language: target) : 0.0
+        // D. Word validity (strong signal for "real words" and prevents false positives from trigrams)
+        let wordScore = wordValidator.confidence(for: text, language: target)
         
         // E. Context Bonus
         let isContextMatch = context.lastLanguage == target
@@ -200,11 +200,13 @@ actor LanguageEnsemble {
         let penalty = isMapped ? hypothesisPenalty : 0.0
         
         // Weighted Sum
-        // For <=3 letters, favor word validation over trigrams.
-        let wNL = isShortLetters ? 0.15 : weightNL
-        let wChar = isShortLetters ? 0.35 : weightChar
-        let wNgram = isShortLetters ? 0.0 : weightNgram
-        let wWord = isShortLetters ? 0.50 : 0.0
+        // For <=3 letters, favor word validation over trigrams (trigrams are uninformative).
+        // For longer text, keep n-gram as a strong signal, but still require word validity to avoid
+        // "random but plausible" sequences in the wrong language.
+        let wNL = isShortLetters ? 0.05 : 0.15
+        let wChar = isShortLetters ? 0.25 : 0.20
+        let wNgram = isShortLetters ? 0.0 : 0.35
+        let wWord = isShortLetters ? 0.55 : 0.30
 
         let totalScore = (nlProb * wNL) +
                          (charMatch * wChar) +
@@ -251,15 +253,6 @@ actor LanguageEnsemble {
         }
         
         guard let model = model else { return 0.0 }
-        
-        let score = model.score(text)
-        
-        // Normalize log-prob to [0, 1]
-        // Typical range: -4.0 (good) to -10.0 (bad)
-        let minScore: Float = -10.0
-        let maxScore: Float = -4.0
-        
-        let normalized = (score - minScore) / (maxScore - minScore)
-        return Double(min(1.0, max(0.0, normalized)))
+        return model.normalizedScore(text)
     }
 }

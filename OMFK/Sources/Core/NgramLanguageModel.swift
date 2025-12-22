@@ -40,12 +40,30 @@ struct LayoutContext: Sendable {
 
 /// N-gram language model using trigram log-probabilities
 struct NgramLanguageModel: Sendable {
-    private let logProbs: [UInt32: Float]
+    private let logProbs: [UInt64: Float]
     private let smoothingValue: Float
+    private let p05: Float
+    private let p50: Float
+    private let p95: Float
     
-    init(logProbs: [UInt32: Float], smoothingValue: Float = -10.0) {
+    init(logProbs: [UInt64: Float], smoothingValue: Float = -10.0) {
         self.logProbs = logProbs
         self.smoothingValue = smoothingValue
+
+        let values = logProbs.values.sorted()
+        if values.isEmpty {
+            self.p05 = smoothingValue
+            self.p50 = smoothingValue
+            self.p95 = smoothingValue
+        } else {
+            func pct(_ p: Double) -> Float {
+                let idx = max(0, min(values.count - 1, Int((Double(values.count - 1) * p).rounded(.toNearestOrAwayFromZero))))
+                return values[idx]
+            }
+            self.p05 = pct(0.05)
+            self.p50 = pct(0.50)
+            self.p95 = pct(0.95)
+        }
     }
     
     /// Load model from JSON file
@@ -59,7 +77,7 @@ struct NgramLanguageModel: Sendable {
         }
         
         // Convert trigram strings to hashes
-        var logProbs: [UInt32: Float] = [:]
+        var logProbs: [UInt64: Float] = [:]
         for (trigram, logProb) in json.trigrams {
             guard trigram.count == 3 else { continue }
             
@@ -104,18 +122,18 @@ struct NgramLanguageModel: Sendable {
     }
     
     /// Compute trigram hash from 3 characters
-    static func trigramHash(_ c1: Character, _ c2: Character, _ c3: Character) -> UInt32 {
+    static func trigramHash(_ c1: Character, _ c2: Character, _ c3: Character) -> UInt64 {
         guard let s1 = c1.unicodeScalars.first,
               let s2 = c2.unicodeScalars.first,
               let s3 = c3.unicodeScalars.first else {
             return 0
         }
-        // Pack three Unicode scalar values into UInt32
-        // Use lower 10 bits for each character (supports up to U+03FF)
-        let hash = (UInt32(s1.value & 0x3FF) << 20) |
-                   (UInt32(s2.value & 0x3FF) << 10) |
-                   UInt32(s3.value & 0x3FF)
-        return hash
+        // Pack three Unicode scalar values into UInt64.
+        // Unicode scalars are up to U+10FFFF (21 bits). 3 * 21 = 63 bits.
+        let a = UInt64(s1.value) & 0x1F_FFFF
+        let b = UInt64(s2.value) & 0x1F_FFFF
+        let c = UInt64(s3.value) & 0x1F_FFFF
+        return (a << 42) | (b << 21) | c
     }
     
     /// Score a text by summing log-probabilities of its trigrams
@@ -138,6 +156,17 @@ struct NgramLanguageModel: Sendable {
         
         // Normalize by number of trigrams to make scores comparable
         return trigramCount > 0 ? totalScore / Float(trigramCount) : smoothingValue
+    }
+
+    /// Score normalized to [0, 1] using model percentiles.
+    func normalizedScore(_ text: String) -> Double {
+        let s = score(text)
+        // Higher (less negative) is better.
+        // Use a sigmoid around the median to make the score comparable across languages
+        // without overfitting to a "top percentile" that few real words ever reach.
+        let spread = max(0.5, (p95 - p50) / 2.0)
+        let z = Double((s - p50) / spread)
+        return 1.0 / (1.0 + exp(-z))
     }
     
     /// Lookup log-probability for a specific trigram
@@ -163,4 +192,3 @@ enum ModelError: Error {
     case resourceNotFound(String)
     case invalidFormat(String)
 }
-

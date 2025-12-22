@@ -35,7 +35,7 @@ actor ConfidenceRouter {
     
     init(settings: SettingsManager) {
         self.settings = settings
-        let validator = SystemWordValidator()
+        let validator = HybridWordValidator()
         self.wordValidator = validator
         self.ensemble = LanguageEnsemble(wordValidator: validator)
         // We load models separately for the Fast Path to ensure independence
@@ -100,7 +100,20 @@ actor ConfidenceRouter {
             DecisionLogger.shared.logDecision(token: token, path: "ERROR", result: fallback)
             return fallback
         }
-        
+
+        // If baseline already suggests a correction, validate it before involving CoreML.
+        if baseline.layoutHypothesis.rawValue.contains("_from_") {
+            if let validated = validateCorrection(
+                token: token,
+                hypothesis: baseline.layoutHypothesis,
+                confidence: baseline.confidence,
+                activeLayouts: activeLayouts
+            ) {
+                DecisionLogger.shared.logDecision(token: token, path: "BASELINE_CORRECTION", result: validated)
+                return validated
+            }
+        }
+
         // -- STEP 2: ALWAYS invoke CoreML to check for layout mismatch --
         // CoreML can detect "_from_" hypotheses that contradict the baseline.
         logger.info("🧠 Deep Path (CoreML) checking for layout mismatch: \(DecisionLogger.tokenSummary(token), privacy: .public)")
@@ -114,8 +127,8 @@ actor ConfidenceRouter {
                 // CoreML thinks this is a layout mismatch (e.g. "en_from_ru").
                 // VALIDATION: Before accepting, convert the text and verify the result
                 // is actually valid in the target language using N-gram scoring.
-                let correctionThreshold = 0.70 // Raised threshold
-                
+                // Allow lower CoreML confidence when conversion validation is strong.
+                let correctionThreshold = 0.45
                 if deepConf > correctionThreshold {
                     // Determine source and target layouts
                     let sourceLayout: Language
@@ -128,28 +141,43 @@ actor ConfidenceRouter {
                     default: sourceLayout = .english
                     }
                     
-                    let sourceScore = scoreWithNgram(token, language: baseline.language)
+                    let sourceScore = scoreWithNgram(token, language: sourceLayout)
+                    let sourceNorm = scoreWithNgramNormalized(token, language: sourceLayout)
 
                     func isShortLetters(_ text: String) -> Bool {
                         text.filter { $0.isLetter }.count <= 3
                     }
 
+                    let sourceWordConfidence = wordValidator.confidence(for: token, language: sourceLayout)
+
                     func isValidConversion(_ converted: String) -> Bool {
+                        let targetWordConfidence = wordValidator.confidence(for: converted, language: targetLanguage)
                         if isShortLetters(converted) {
-                            return wordValidator.confidence(for: converted, language: targetLanguage) >= 0.95
+                            DecisionLogger.shared.log("SHORT_CHECK: \(converted) wordConf=\(String(format: "%.2f", targetWordConfidence)) need>=0.95")
+                            return targetWordConfidence >= 0.95
                         }
-                        let targetScore = scoreWithNgram(converted, language: targetLanguage)
-                        return targetScore > -9.0 && targetScore > sourceScore
+
+                        let targetNorm = scoreWithNgramNormalized(converted, language: targetLanguage)
+
+                        DecisionLogger.shared.log("VALID_CHECK: \(converted) wordConf=\(String(format: "%.2f", targetWordConfidence)) srcWordConf=\(String(format: "%.2f", sourceWordConfidence)) tgtNorm=\(String(format: "%.2f", targetNorm)) srcNorm=\(String(format: "%.2f", sourceNorm))")
+
+                        // Prefer real words/phrases in the target language when it is notably stronger
+                        // than the source according to word validation / n-gram.
+                        if targetWordConfidence >= 0.80 && targetWordConfidence >= sourceWordConfidence + 0.20 {
+                            return true
+                        }
+
+                        return targetNorm >= 0.75 && targetNorm >= sourceNorm + 0.15
                     }
 
                     // Prefer conversion using the user-selected/detected active layouts first.
-                    if let primary = LayoutMapper.shared.convert(token, from: sourceLayout, to: targetLanguage, activeLayouts: activeLayouts),
+                    if let primary = LayoutMapper.shared.convertBest(token, from: sourceLayout, to: targetLanguage, activeLayouts: activeLayouts),
                        primary != token,
                        isValidConversion(primary) {
                         let deepResult = LanguageDecision(
                             language: targetLanguage,
                             layoutHypothesis: deepHypothesis,
-                            confidence: deepConf,
+                            confidence: max(deepConf, 0.90),
                             scores: [:]
                         )
                         DecisionLogger.shared.log("VALIDATED_PRIMARY: \(token) → \(primary)")
@@ -163,20 +191,21 @@ actor ConfidenceRouter {
 
                     for (layoutId, converted) in variants {
                         let targetScore = scoreWithNgram(converted, language: targetLanguage)
-                        DecisionLogger.shared.log("VARIANT[\(layoutId)]: \(token) → \(converted) | src=\(String(format: "%.2f", sourceScore)) tgt=\(String(format: "%.2f", targetScore))")
+                        let targetNorm = scoreWithNgramNormalized(converted, language: targetLanguage)
+                        DecisionLogger.shared.log("VARIANT[\(layoutId)]: \(token) → \(converted) | src=\(String(format: "%.2f", sourceScore)) tgt=\(String(format: "%.2f", targetScore)) tgtN=\(String(format: "%.2f", targetNorm))")
 
                         if isValidConversion(converted) {
-                            if bestConversion == nil || targetScore > bestConversion!.score {
-                                bestConversion = (converted, targetScore)
+                            if bestConversion == nil || targetNorm > bestConversion!.score {
+                                bestConversion = (converted, targetNorm)
                             }
                         }
                     }
                     
-                    if let best = bestConversion {
+                    if bestConversion != nil {
                         let deepResult = LanguageDecision(
                             language: targetLanguage, 
                             layoutHypothesis: deepHypothesis,
-                            confidence: deepConf,
+                            confidence: max(deepConf, 0.85),
                             scores: [:] 
                         )
                         DecisionLogger.shared.logDecision(token: token, path: "DEEP_CORRECTION", result: deepResult)
@@ -206,11 +235,22 @@ actor ConfidenceRouter {
         }
         
         // -- STEP 3: Fall back to baseline --
+        // Heuristic correction: if the token looks like gibberish in its dominant script,
+        // try layout conversions even when CoreML doesn't propose a `_from_` hypothesis.
+        if let heuristic = heuristicCorrection(token: token, baseline: baseline, activeLayouts: activeLayouts) {
+            DecisionLogger.shared.logDecision(token: token, path: "HEURISTIC", result: heuristic)
+            return heuristic
+        }
+
         DecisionLogger.shared.logDecision(token: token, path: baselinePath, result: baseline)
         return baseline
     }
     
     private func checkFastPath(_ text: String) -> LanguageDecision? {
+        // Avoid Fast Path if script is mixed (fast path is only for "already-correct" text).
+        guard let dominant = dominantScriptLanguage(text) else { return nil }
+        if dominant == .hebrew { return nil }
+
         // Quick scoring against 3 languages
         let sRu = ruModel?.score(text) ?? -100
         let sEn = enModel?.score(text) ?? -100
@@ -236,7 +276,17 @@ actor ConfidenceRouter {
         let margin = sorted[0] - sorted[1]
         
         // Heuristic mapping: margin 0.0 -> 0.5, margin 2.0 -> 0.9 approximately
-        let confidence = min(1.0, 0.5 + Double(margin) * 0.2)
+        var confidence = min(1.0, 0.5 + Double(margin) * 0.2)
+
+        // Only accept fast-path when the best language matches dominant script
+        // AND the token looks like a real word/phrase in that language.
+        if bestLang != dominant { return nil }
+        let wordConf = wordValidator.confidence(for: text, language: bestLang)
+        if wordConf < 0.80 {
+            // Downweight and decline Fast Path; let Ensemble/CoreML handle it.
+            confidence *= 0.5
+            return nil
+        }
         
         return LanguageDecision(
             language: bestLang,
@@ -259,6 +309,118 @@ actor ConfidenceRouter {
         case .hebrew: model = heModel
         }
         return Double(model?.score(text) ?? -100.0)
+    }
+
+    private func scoreWithNgramNormalized(_ text: String, language: Language) -> Double {
+        let model: NgramLanguageModel?
+        switch language {
+        case .russian: model = ruModel
+        case .english: model = enModel
+        case .hebrew: model = heModel
+        }
+        return model?.normalizedScore(text) ?? 0.0
+    }
+
+    private func dominantScriptLanguage(_ text: String) -> Language? {
+        var latin = 0
+        var cyr = 0
+        var heb = 0
+
+        for scalar in text.unicodeScalars {
+            switch scalar.value {
+            case 0x0041...0x005A, 0x0061...0x007A:
+                latin += 1
+            case 0x0400...0x04FF:
+                cyr += 1
+            case 0x0590...0x05FF:
+                heb += 1
+            default:
+                continue
+            }
+        }
+
+        let total = latin + cyr + heb
+        guard total > 0 else { return nil }
+
+        let best = max(latin, cyr, heb)
+        if Double(best) / Double(total) < 0.85 { return nil }
+
+        if best == cyr { return .russian }
+        if best == heb { return .hebrew }
+        return .english
+    }
+
+    private func validateCorrection(
+        token: String,
+        hypothesis: LanguageHypothesis,
+        confidence: Double,
+        activeLayouts: [String: String]
+    ) -> LanguageDecision? {
+        guard hypothesis.rawValue.contains("_from_") else { return nil }
+
+        let targetLanguage = hypothesis.targetLanguage
+        let sourceLayout: Language
+        switch hypothesis {
+        case .ruFromEnLayout, .heFromEnLayout: sourceLayout = .english
+        case .enFromRuLayout, .heFromRuLayout: sourceLayout = .russian
+        case .enFromHeLayout, .ruFromHeLayout: sourceLayout = .hebrew
+        default: sourceLayout = .english
+        }
+
+        guard let converted = LayoutMapper.shared.convertBest(token, from: sourceLayout, to: targetLanguage, activeLayouts: activeLayouts),
+              converted != token else { return nil }
+
+        let sourceWord = wordValidator.confidence(for: token, language: sourceLayout)
+        let targetWord = wordValidator.confidence(for: converted, language: targetLanguage)
+
+        let sourceNorm = scoreWithNgramNormalized(token, language: sourceLayout)
+        let targetNorm = scoreWithNgramNormalized(converted, language: targetLanguage)
+
+        // Strong accept: target looks like real text and source looks like gibberish.
+        if targetWord >= 0.80 && targetWord >= sourceWord + 0.20 {
+            return LanguageDecision(language: targetLanguage, layoutHypothesis: hypothesis, confidence: max(confidence, 0.85), scores: [:])
+        }
+
+        // Fallback: accept when n-gram quality improves significantly (normalized per-language).
+        if targetNorm >= 0.75 && targetNorm >= sourceNorm + 0.15 {
+            return LanguageDecision(language: targetLanguage, layoutHypothesis: hypothesis, confidence: max(confidence, 0.80), scores: [:])
+        }
+
+        return nil
+    }
+
+    private func heuristicCorrection(
+        token: String,
+        baseline: LanguageDecision,
+        activeLayouts: [String: String]
+    ) -> LanguageDecision? {
+        guard let dominant = dominantScriptLanguage(token) else { return nil }
+
+        // If the token already looks like a valid word/phrase in its dominant script,
+        // don't attempt layout correction (avoid false positives).
+        if wordValidator.confidence(for: token, language: dominant) >= 0.80 {
+            return nil
+        }
+
+        let candidates: [LanguageHypothesis]
+        switch dominant {
+        case .english:
+            candidates = [.ruFromEnLayout, .heFromEnLayout]
+        case .russian:
+            candidates = [.enFromRuLayout, .heFromRuLayout]
+        case .hebrew:
+            candidates = [.enFromHeLayout, .ruFromHeLayout]
+        }
+
+        let baseConf = max(0.75, baseline.confidence)
+
+        for hyp in candidates {
+            if let validated = validateCorrection(token: token, hypothesis: hyp, confidence: baseConf, activeLayouts: activeLayouts) {
+                return validated
+            }
+        }
+
+        return nil
     }
 }
 

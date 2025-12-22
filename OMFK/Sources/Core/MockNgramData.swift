@@ -8,8 +8,8 @@ struct MockNgramData {
     
     /// Common Russian trigrams with log-probabilities
     /// These are hand-crafted to support test cases like "привет"
-    static let russianTrigrams: [UInt32: Float] = {
-        var dict: [UInt32: Float] = [:]
+    static let russianTrigrams: [UInt64: Float] = {
+        var dict: [UInt64: Float] = [:]
         
         // "привет" trigrams - make these very strong
         dict[hash("п", "р", "и")] = -1.5
@@ -42,8 +42,8 @@ struct MockNgramData {
     // MARK: - English Trigrams
     
     /// Common English trigrams with log-probabilities
-    static let englishTrigrams: [UInt32: Float] = {
-        var dict: [UInt32: Float] = [:]
+    static let englishTrigrams: [UInt64: Float] = {
+        var dict: [UInt64: Float] = [:]
         
         // "hello" trigrams
         dict[hash("h", "e", "l")] = -2.1
@@ -71,8 +71,8 @@ struct MockNgramData {
     // MARK: - Hebrew Trigrams
     
     /// Common Hebrew trigrams with log-probabilities
-    static let hebrewTrigrams: [UInt32: Float] = {
-        var dict: [UInt32: Float] = [:]
+    static let hebrewTrigrams: [UInt64: Float] = {
+        var dict: [UInt64: Float] = [:]
         
         // "שלום" (shalom) trigrams - make these very strong
         dict[hash("ש", "ל", "ו")] = -1.5
@@ -100,7 +100,7 @@ struct MockNgramData {
     
     // MARK: - Helper
     
-    private static func hash(_ c1: String, _ c2: String, _ c3: String) -> UInt32 {
+    private static func hash(_ c1: String, _ c2: String, _ c3: String) -> UInt64 {
         return NgramLanguageModel.trigramHash(
             Character(c1),
             Character(c2),

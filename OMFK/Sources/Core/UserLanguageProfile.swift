@@ -45,8 +45,15 @@ actor UserLanguageProfile {
     private let minSamples = 3  // Minimum attempts before adjusting
     
     init(persistenceURL: URL? = nil) {
+        let isTesting = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+        let disablePersistence = ProcessInfo.processInfo.environment["OMFK_DISABLE_PROFILE_PERSISTENCE"] == "1"
+
         if let url = persistenceURL {
             self.persistenceURL = url
+        } else if isTesting || disablePersistence {
+            // Avoid loading/writing user state in tests (and keep tests deterministic).
+            let tmp = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            self.persistenceURL = tmp.appendingPathComponent("omfk_user_profile_test.json")
         } else {
             // Default to Application Support
             let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
@@ -55,7 +62,9 @@ actor UserLanguageProfile {
             self.persistenceURL = omfkDir.appendingPathComponent("user_profile.json")
         }
         
-        Task { await load() }
+        if !(isTesting || disablePersistence) {
+            Task { await load() }
+        }
     }
     
     /// Record a correction outcome

@@ -3,10 +3,15 @@ import XCTest
 
 final class LanguageEnsembleTests: XCTestCase {
     var ensemble: LanguageEnsemble!
+    private let activeLayouts = ["en": "us", "ru": "russianwin", "he": "hebrew_qwerty"]
     
     override func setUp() {
         super.setUp()
-        ensemble = LanguageEnsemble()
+        ensemble = LanguageEnsemble(wordValidator: MockWordValidator(validWords: [
+            .english: ["hello", "world", "ok", "som"],
+            .russian: ["привет", "нет", "да", "мир"],
+            .hebrew: ["שלום", "מה", "כן", "לא"]
+        ]))
     }
     
     override func tearDown() {
@@ -15,7 +20,7 @@ final class LanguageEnsembleTests: XCTestCase {
     }
     
     func testBasicClassification() async {
-        let context = EnsembleContext()
+        let context = EnsembleContext(activeLayouts: activeLayouts)
         
         // English
         let resEn = await ensemble.classify("hello", context: context)
@@ -34,7 +39,7 @@ final class LanguageEnsembleTests: XCTestCase {
     }
     
     func testLayoutCorrectionRussian() async {
-        let context = EnsembleContext()
+        let context = EnsembleContext(activeLayouts: activeLayouts)
         // "ghbdtn" is "привет" typed on English layout
         let result = await ensemble.classify("ghbdtn", context: context) // "привет"
         
@@ -44,7 +49,7 @@ final class LanguageEnsembleTests: XCTestCase {
     }
     
     func testLayoutCorrectionHebrew() async {
-        let context = EnsembleContext()
+        let context = EnsembleContext(activeLayouts: activeLayouts)
         // "akuo" is "שלום" typed on English layout
         let result = await ensemble.classify("akuo", context: context)
         
@@ -61,14 +66,14 @@ final class LanguageEnsembleTests: XCTestCase {
         // "ytn" -> "ytn" (EN - nonsense)
         
         // Without context, should prefer RU because "нет" is a valid word and "ytn" is not
-        let noContext = await ensemble.classify("ytn", context: EnsembleContext())
+        let noContext = await ensemble.classify("ytn", context: EnsembleContext(activeLayouts: activeLayouts))
         XCTAssertEqual(noContext.language, .russian)
         
         // With English context, might still prefer RU if the word is very strong, 
         // but let's try a case where context flips it.
         // "som" -> "som" (EN - partial) vs "ыом" (RU - nonsense)
         
-        let res = await ensemble.classify("som", context: EnsembleContext(lastLanguage: .english))
+        let res = await ensemble.classify("som", context: EnsembleContext(lastLanguage: .english, activeLayouts: activeLayouts))
         XCTAssertEqual(res.language, .english)
     }
     
@@ -87,7 +92,7 @@ final class LanguageEnsembleTests: XCTestCase {
         // "hello" (5) + " " (1) + "мир" (3) = 9 chars. 5 Latin, 3 Cyrillic.
         // Likely English.
         
-        let result = await ensemble.classify("hello мир", context: EnsembleContext())
+        let result = await ensemble.classify("hello мир", context: EnsembleContext(activeLayouts: activeLayouts))
         XCTAssertEqual(result.language, .english)
     }
 }

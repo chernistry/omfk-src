@@ -49,6 +49,26 @@ Provide the report in the following format:
 
 
 
+## Run 2025-12-22T18:02:00Z
+**Status**: resolved
+
+### Summary
+`train_master.sh` copied `.sdd/layouts.json` into `OMFK/Sources/Resources/layouts.json`, but those files use different JSON schemas.
+
+### Root Cause
+- `.sdd/layouts.json` is a spec/authoring format (dictionary-based `layouts`, no `appleId`/`language` entries).
+- `OMFK/Sources/Resources/layouts.json` is a runtime format expected by `LayoutData` / `LayoutMapper` (array `layouts` with `id`, `language`, `appleId`).
+- Copying the spec file into app resources breaks JSON decoding at runtime and can silently degrade layout conversion + tests.
+
+### Attempted Actions
+- None (detected during feature work on synthetic evaluation + short-token fixes).
+
+### Recommended Fix
+- Do not directly sync `.sdd/layouts.json` into app resources.
+- If a single source of truth is desired, introduce a dedicated converter that produces the runtime schema (including `appleId` + `language`) from the spec format.
+
+
+
 ## Run 2025-11-26T21:32:33.818Z
 **Status**: undefined
 
@@ -96,5 +116,4 @@ Provide the report in the following format:
 - Keep it factual.
 - Focus on root causes, not just symptoms.
 </constraints>
-
 

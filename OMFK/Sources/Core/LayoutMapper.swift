@@ -1,5 +1,6 @@
 import Foundation
 import Carbon
+import AppKit
 
 /// Maps characters between different keyboard layouts using a data-driven approach.
 public final class LayoutMapper: @unchecked Sendable {
@@ -7,12 +8,34 @@ public final class LayoutMapper: @unchecked Sendable {
     
     // Cache: LayoutID -> [Character : (Key: String, Modifier: String)]
     private var charToKeyMap: [String: [Character: (key: String, mod: String)]] = [:]
+    // Cache: LayoutID -> [Character : [(Key: String, Modifier: String)]]
+    // Some layouts (e.g. phonetic Hebrew) intentionally repeat letters on multiple keys; this makes
+    // conversion ambiguous and requires disambiguation when converting back to EN/RU.
+    private var charToKeyCandidates: [String: [Character: [(key: String, mod: String)]]] = [:]
     
     // Detected user layouts: Language -> LayoutID
     private var activeLayouts: [Language: String] = [:]
     
     // All available layouts per language for brute-force conversion
     private var allLayoutsPerLanguage: [Language: [String]] = [:]
+    private var layoutLanguageById: [String: Language] = [:]
+    private var ambiguousLayoutIds: Set<String> = []
+
+    private lazy var wordValidator: WordValidator = HybridWordValidator()
+    private lazy var ngramModels: [Language: NgramLanguageModel] = {
+        var out: [Language: NgramLanguageModel] = [:]
+        if let ru = try? NgramLanguageModel.loadLanguage("ru") { out[.russian] = ru }
+        if let en = try? NgramLanguageModel.loadLanguage("en") { out[.english] = en }
+        if let he = try? NgramLanguageModel.loadLanguage("he") { out[.hebrew] = he }
+        return out
+    }()
+    private lazy var unigramModels: [Language: WordFrequencyModel] = {
+        var out: [Language: WordFrequencyModel] = [:]
+        if let ru = try? WordFrequencyModel.loadLanguage("ru") { out[.russian] = ru }
+        if let en = try? WordFrequencyModel.loadLanguage("en") { out[.english] = en }
+        if let he = try? WordFrequencyModel.loadLanguage("he") { out[.hebrew] = he }
+        return out
+    }()
     
     public static let shared = LayoutMapper()
     
@@ -29,6 +52,7 @@ public final class LayoutMapper: @unchecked Sendable {
             guard let lang = Language(rawValue: layout.language) else { continue }
             if allLayoutsPerLanguage[lang] == nil { allLayoutsPerLanguage[lang] = [] }
             allLayoutsPerLanguage[lang]!.append(layout.id)
+            layoutLanguageById[layout.id] = lang
         }
     }
     
@@ -48,18 +72,43 @@ public final class LayoutMapper: @unchecked Sendable {
     
     private func buildMaps() {
         guard let map = layoutData?.map else { return }
+
+        func modRank(_ mod: String) -> Int {
+            // Prefer mappings that do not require modifiers. This improves reversibility
+            // and reduces accidental case shifts when converting back-and-forth.
+            switch mod {
+            case "n": return 0
+            case "s": return 1
+            case "a": return 2
+            case "sa": return 3
+            default: return 99
+            }
+        }
         
         for (keyCode, layoutsMap) in map {
             for (layoutID, mapping) in layoutsMap {
                 if charToKeyMap[layoutID] == nil { charToKeyMap[layoutID] = [:] }
+                if charToKeyCandidates[layoutID] == nil { charToKeyCandidates[layoutID] = [:] }
                 
                 for (mod, charString) in [("n", mapping.n), ("s", mapping.s), ("a", mapping.a), ("sa", mapping.sa)] {
                     if let s = charString, let char = s.first, s.count == 1 {
-                        if charToKeyMap[layoutID]?[char] == nil {
+                        charToKeyCandidates[layoutID]?[char, default: []].append((key: keyCode, mod: mod))
+                        if let existing = charToKeyMap[layoutID]?[char] {
+                            if modRank(mod) < modRank(existing.mod) {
+                                charToKeyMap[layoutID]?[char] = (key: keyCode, mod: mod)
+                            }
+                        } else {
                             charToKeyMap[layoutID]?[char] = (key: keyCode, mod: mod)
                         }
                     }
                 }
+            }
+        }
+
+        // Identify layouts with ambiguous reverse-mapping (same character on multiple keys).
+        for (layoutID, chars) in charToKeyCandidates {
+            if chars.values.contains(where: { $0.count > 1 }) {
+                ambiguousLayoutIds.insert(layoutID)
             }
         }
     }
@@ -147,6 +196,73 @@ public final class LayoutMapper: @unchecked Sendable {
         }
         return result
     }
+
+    /// Convert using Language enum with auto-detected layouts, but with disambiguation for
+    /// layouts that repeat letters on multiple keys (e.g. Hebrew QWERTY phonetic).
+    public func convertBest(_ text: String, from: Language, to: Language, activeLayouts: [String: String]? = nil) -> String? {
+        let fromID = activeLayouts?[from.rawValue] ?? self.activeLayouts[from] ?? "us"
+        let toID = activeLayouts?[to.rawValue] ?? self.activeLayouts[to] ?? "us"
+        return convertBest(text, fromLayout: fromID, toLayout: toID)
+    }
+
+    public func convertBest(_ text: String, fromLayout: String, toLayout: String) -> String? {
+        if fromLayout == toLayout { return text }
+        guard let sourceMap = charToKeyMap[fromLayout],
+              let fullMap = layoutData?.map else { return nil }
+
+        guard ambiguousLayoutIds.contains(fromLayout),
+              let candidatesMap = charToKeyCandidates[fromLayout],
+              let targetLanguage = layoutLanguageById[toLayout],
+              let targetNgram = ngramModels[targetLanguage] else {
+            // No ambiguity or no LM available -> deterministic conversion.
+            return convert(text, fromLayout: fromLayout, toLayout: toLayout)
+        }
+        let targetUnigram = unigramModels[targetLanguage]
+
+        var result = ""
+        result.reserveCapacity(text.count)
+
+        var buffer = ""
+        buffer.reserveCapacity(text.count)
+
+        func flushBuffer() {
+            guard !buffer.isEmpty else { return }
+            if let converted = convertAmbiguousWord(buffer, fromLayout: fromLayout, toLayout: toLayout, candidatesMap: candidatesMap, fullMap: fullMap, targetLanguage: targetLanguage, targetNgram: targetNgram, targetUnigram: targetUnigram) {
+                result.append(contentsOf: converted)
+            } else {
+                result.append(contentsOf: buffer)
+            }
+            buffer.removeAll(keepingCapacity: true)
+        }
+
+        for char in text {
+            if char.isLetter {
+                buffer.append(char)
+                continue
+            }
+
+            flushBuffer()
+
+            // Convert non-letters deterministically (punctuation often isn't ambiguous).
+            if let (keyCode, mod) = sourceMap[char],
+               let targetMapping = fullMap[keyCode]?[toLayout] {
+                let targetChar: String?
+                switch mod {
+                case "n": targetChar = targetMapping.n
+                case "s": targetChar = targetMapping.s
+                case "a": targetChar = targetMapping.a
+                case "sa": targetChar = targetMapping.sa
+                default: targetChar = nil
+                }
+                result.append(targetChar ?? String(char))
+            } else {
+                result.append(char)
+            }
+        }
+
+        flushBuffer()
+        return result
+    }
     
     /// Convenience: Convert using Language enum with auto-detected layouts
     public func convert(_ text: String, from: Language, to: Language, activeLayouts: [String: String]? = nil) -> String? {
@@ -163,11 +279,149 @@ public final class LayoutMapper: @unchecked Sendable {
         
         var results: [(String, String)] = []
         for srcLayout in sourceLayouts {
-            if let converted = convert(text, fromLayout: srcLayout, toLayout: toID),
+            if let converted = convertBest(text, fromLayout: srcLayout, toLayout: toID),
                converted != text {  // Only include if actually changed
                 results.append((srcLayout, converted))
             }
         }
         return results
+    }
+
+    private func convertAmbiguousWord(
+        _ word: String,
+        fromLayout: String,
+        toLayout: String,
+        candidatesMap: [Character: [(key: String, mod: String)]]?,
+        fullMap: [String: [String: KeyMapping]],
+        targetLanguage: Language?,
+        targetNgram: NgramLanguageModel?
+        ,
+        targetUnigram: WordFrequencyModel?
+    ) -> String? {
+        guard let candidatesMap else { return nil }
+        guard let targetNgram else { return nil }
+        guard !word.isEmpty else { return "" }
+
+        // Build per-position candidate output characters.
+        var perPos: [[Character]] = []
+        perPos.reserveCapacity(word.count)
+
+        for ch in word {
+            let keyCands = candidatesMap[ch] ?? []
+            var outs: [Character] = []
+            outs.reserveCapacity(max(1, keyCands.count))
+
+            for (key, mod) in keyCands {
+                guard let mapping = fullMap[key]?[toLayout] else { continue }
+                let targetChar: String?
+                switch mod {
+                case "n": targetChar = mapping.n
+                case "s": targetChar = mapping.s
+                case "a": targetChar = mapping.a
+                case "sa": targetChar = mapping.sa
+                default: targetChar = nil
+                }
+                if let s = targetChar, s.count == 1, let c = s.first {
+                    outs.append(c)
+                }
+            }
+
+            if outs.isEmpty {
+                outs = [ch]
+            } else {
+                // Deduplicate while preserving order.
+                var seen: Set<Character> = []
+                outs = outs.filter { seen.insert($0).inserted }
+            }
+            perPos.append(outs)
+        }
+
+        let maxBrute = 20_000
+        let product = perPos.reduce(1) { acc, opts in
+            if acc > maxBrute { return acc }
+            return acc * max(1, opts.count)
+        }
+
+        func fullScore(_ candidate: String) -> Double {
+            let wconf = targetLanguage.map { wordValidator.confidence(for: candidate, language: $0) } ?? 0.0
+            let freq = targetUnigram?.score(candidate) ?? 0.0
+            let ngram = targetNgram.normalizedScore(candidate)
+            let ngramWeight = candidate.count >= 3 ? 0.8 : 0.0
+            return (2.0 * wconf) + (1.4 * freq) + (ngramWeight * ngram)
+        }
+
+        // For short words, brute-force all candidates and choose the best by (spell, ngram).
+        if word.count <= 4 && product <= maxBrute {
+            var best: (String, Double) = ("", -1e18)
+
+            func rec(_ i: Int, _ buf: inout [Character]) {
+                if i == perPos.count {
+                    let candidate = String(buf)
+                    let score = fullScore(candidate)
+                    if score > best.1 {
+                        best = (candidate, score)
+                    }
+                    return
+                }
+                for c in perPos[i] {
+                    buf.append(c)
+                    rec(i + 1, &buf)
+                    buf.removeLast()
+                }
+            }
+
+            var buf: [Character] = []
+            rec(0, &buf)
+            return best.0.isEmpty ? nil : best.0
+        }
+
+        // Beam search for longer words.
+        struct Beam {
+            var text: [Character]
+            var score: Double
+        }
+
+        let ambiguousPositions = perPos.filter { $0.count > 1 }.count
+        let beamWidth = min(256, max(32, 32 * max(1, ambiguousPositions)))
+        var beams: [Beam] = [Beam(text: [], score: 0.0)]
+
+        func trigramIncrement(_ prefix: [Character], next: Character) -> Double {
+            guard prefix.count >= 2 else { return 0.0 }
+            let a = prefix[prefix.count - 2]
+            let b = prefix[prefix.count - 1]
+            return Double(targetNgram.lookup(a, b, next))
+        }
+
+        for opts in perPos {
+            var nextBeams: [Beam] = []
+            nextBeams.reserveCapacity(beams.count * opts.count)
+
+            for beam in beams {
+                for c in opts {
+                    var t = beam.text
+                    t.append(c)
+                    let inc = trigramIncrement(beam.text, next: c)
+                    nextBeams.append(Beam(text: t, score: beam.score + inc))
+                }
+            }
+
+            nextBeams.sort { $0.score > $1.score }
+            if nextBeams.count > beamWidth {
+                nextBeams = Array(nextBeams.prefix(beamWidth))
+            }
+            beams = nextBeams
+            if beams.isEmpty { return nil }
+        }
+
+        // Evaluate final candidates with full (word + unigram + ngram) scoring.
+        var bestFinal: (String, Double) = ("", -1e18)
+        for beam in beams {
+            let s = String(beam.text)
+            let score = fullScore(s)
+            if score > bestFinal.1 {
+                bestFinal = (s, score)
+            }
+        }
+        return bestFinal.0.isEmpty ? beams.first.map { String($0.text) } : bestFinal.0
     }
 }

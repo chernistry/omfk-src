@@ -35,6 +35,8 @@ final class SyntheticEvaluationTests: XCTestCase {
         var correctHypothesis = 0
         var totalsByCombo: [String: (ok: Int, total: Int)] = [:]
         var confusion: [LanguageHypothesis: [LanguageHypothesis: Int]] = [:]
+        let diag = ProcessInfo.processInfo.environment["OMFK_SYNTH_EVAL_DIAG"] == "1"
+        var mappingRecover: [String: (ok: Int, total: Int)] = [:]
 
         func key(_ intended: Language, _ typed: Language) -> String {
             "\(typed.rawValue)->\(intended.rawValue)"
@@ -61,6 +63,17 @@ final class SyntheticEvaluationTests: XCTestCase {
             let combo = key(c.intendedLanguage, c.typedLanguage)
             let curr = totalsByCombo[combo] ?? (0, 0)
             totalsByCombo[combo] = (curr.ok + (okOut ? 1 : 0), curr.total + 1)
+
+            if diag, c.typedLanguage != c.intendedLanguage {
+                if let recovered = LayoutMapper.shared.convertBest(c.typedText, from: c.typedLanguage, to: c.intendedLanguage, activeLayouts: activeLayouts) {
+                    let ok = recovered == c.intendedText
+                    let r = mappingRecover[combo] ?? (0, 0)
+                    mappingRecover[combo] = (r.ok + (ok ? 1 : 0), r.total + 1)
+                } else {
+                    let r = mappingRecover[combo] ?? (0, 0)
+                    mappingRecover[combo] = (r.ok, r.total + 1)
+                }
+            }
         }
 
         let outAcc = Double(correctOutput) / Double(cases.count)
@@ -76,6 +89,16 @@ final class SyntheticEvaluationTests: XCTestCase {
             if let v = totalsByCombo[combo], v.total > 0 {
                 let acc = Double(v.ok) / Double(v.total) * 100
                 print(String(format: "  %@: %4d/%4d (%.1f%%)", combo, v.ok, v.total, acc))
+            }
+        }
+
+        if diag {
+            print("\nMapping recovery (typed->intended via LayoutMapper.convert):")
+            for combo in mappingRecover.keys.sorted() {
+                if let v = mappingRecover[combo], v.total > 0 {
+                    let acc = Double(v.ok) / Double(v.total) * 100
+                    print(String(format: "  %@: %4d/%4d (%.1f%%)", combo, v.ok, v.total, acc))
+                }
             }
         }
 
@@ -198,7 +221,7 @@ final class SyntheticEvaluationTests: XCTestCase {
             sourceLayout = .english
         }
 
-        return LayoutMapper.shared.convert(typed, from: sourceLayout, to: decision.language, activeLayouts: activeLayouts) ?? typed
+        return LayoutMapper.shared.convertBest(typed, from: sourceLayout, to: decision.language, activeLayouts: activeLayouts) ?? typed
     }
 }
 
@@ -234,4 +257,3 @@ private struct SplitMix64 {
         return z ^ (z >> 31)
     }
 }
-

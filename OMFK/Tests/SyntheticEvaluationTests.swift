@@ -264,7 +264,7 @@ final class SyntheticEvaluationTests: XCTestCase {
             } else {
                 // Punctuation-heavy phrase.
                 // Examples:
-                //   "word,word" / "word, word" / "word—word" / "word'word" / "(word) word"
+                //   "word,word" / "word, word" / "word / word" / "word'word" / "(word) word"
                 let w1 = pickRankedWord(minLen: 2, maxLen: 8)
                 let w2 = pickRankedWord(minLen: 2, maxLen: 10)
                 let w3 = pickRankedWord(minLen: 2, maxLen: 10)
@@ -272,7 +272,7 @@ final class SyntheticEvaluationTests: XCTestCase {
                 switch punctRoll {
                 case 0: out.append("\(w1), \(w2)")
                 case 1: out.append("\(w1),\(w2)")
-                case 2: out.append("\(w1) — \(w2)")
+                case 2: out.append("\(w1) / \(w2)")
                 case 3: out.append("(\(w1)) \(w2)")
                 case 4: out.append("\(w1) \(w2)! \(w3)")
                 default: out.append("\(w1) \(w2)")

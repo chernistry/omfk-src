@@ -189,8 +189,9 @@ final class EventMonitor {
     
     private func processBufferContent(_ bufferContent: String) async {
         let text = bufferContent.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard text.count >= 3 else {
-            logger.debug("⏭️ Buffer too short (\(text.count) chars), skipping: \(DecisionLogger.tokenSummary(text), privacy: .public)")
+        let letterCount = text.filter { $0.isLetter }.count
+        guard letterCount >= 2 else {
+            logger.debug("⏭️ Buffer too short (\(text.count) chars / \(letterCount) letters), skipping: \(DecisionLogger.tokenSummary(text), privacy: .public)")
             return
         }
         

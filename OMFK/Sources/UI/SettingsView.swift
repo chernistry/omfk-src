@@ -165,6 +165,7 @@ struct HotkeyTab: View {
 
 struct AppsTab: View {
     @ObservedObject var settings: SettingsManager
+    @State private var showingAppPicker = false
     
     var body: some View {
         VStack(spacing: 16) {
@@ -185,8 +186,8 @@ struct AppsTab: View {
                     HStack {
                         Text("Excluded").font(.system(size: 13, weight: .medium))
                         Spacer()
-                        Button(action: addCurrentApp) {
-                            Label("Add current", systemImage: "plus")
+                        Button(action: { showingAppPicker = true }) {
+                            Label("Add app", systemImage: "plus")
                                 .font(.system(size: 11, weight: .medium))
                         }
                         .buttonStyle(.plain)
@@ -217,13 +218,63 @@ struct AppsTab: View {
             Spacer()
         }
         .padding(20)
+        .sheet(isPresented: $showingAppPicker) {
+            AppPickerSheet(settings: settings, isPresented: $showingAppPicker)
+        }
+    }
+}
+
+struct AppPickerSheet: View {
+    @ObservedObject var settings: SettingsManager
+    @Binding var isPresented: Bool
+    
+    private var runningApps: [NSRunningApplication] {
+        NSWorkspace.shared.runningApplications
+            .filter { $0.activationPolicy == .regular }
+            .filter { $0.bundleIdentifier != Bundle.main.bundleIdentifier }
+            .filter { !settings.excludedApps.contains($0.bundleIdentifier ?? "") }
+            .sorted { ($0.localizedName ?? "") < ($1.localizedName ?? "") }
     }
     
-    private func addCurrentApp() {
-        if let bundleId = NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
-           bundleId != Bundle.main.bundleIdentifier {
-            settings.toggleApp(bundleId)
+    var body: some View {
+        VStack(spacing: 16) {
+            Text("Select App to Exclude")
+                .font(.headline)
+            
+            ScrollView {
+                VStack(spacing: 4) {
+                    ForEach(runningApps, id: \.bundleIdentifier) { app in
+                        Button(action: {
+                            if let bundleId = app.bundleIdentifier {
+                                settings.toggleApp(bundleId)
+                                isPresented = false
+                            }
+                        }) {
+                            HStack(spacing: 12) {
+                                if let icon = app.icon {
+                                    Image(nsImage: icon)
+                                        .resizable()
+                                        .frame(width: 24, height: 24)
+                                }
+                                Text(app.localizedName ?? "Unknown")
+                                    .font(.system(size: 13))
+                                Spacer()
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .frame(maxHeight: 300)
+            
+            Button("Cancel") { isPresented = false }
+                .buttonStyle(.bordered)
         }
+        .padding(20)
+        .frame(width: 300)
     }
 }
 

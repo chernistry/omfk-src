@@ -57,208 +57,31 @@ while true; do
     
     case $choice in
         1)
-            echo -e "${BLUE}--- Extracting Dumps ---${NC}"
-            # RU
-            if [ -f "$RAW_DIR/ruwiki-latest-pages-articles-multistream1.xml-p1p224167.bz2" ]; then
-                echo "Extracting Russian dump (limit 50k articles)..."
-                python3 Tools/Shared/extract_corpus.py --input "$RAW_DIR/ruwiki-latest-pages-articles-multistream1.xml-p1p224167.bz2" --output "$PROCESSED_DIR/ru.txt" --limit 50000
-            else
-                echo -e "${RED}Russian dump not found in $RAW_DIR${NC}"
-            fi
-            
-            # EN
-            if [ -f "$RAW_DIR/enwiki-latest-pages-articles-multistream1.xml-p1p41242.bz2" ]; then
-                echo "Extracting English dump (limit 50k articles)..."
-                python3 Tools/Shared/extract_corpus.py --input "$RAW_DIR/enwiki-latest-pages-articles-multistream1.xml-p1p41242.bz2" --output "$PROCESSED_DIR/en.txt" --limit 50000
-            else
-                echo -e "${RED}English dump not found in $RAW_DIR${NC}"
-            fi
-            
-            # HE
-             if [ -f "$RAW_DIR/hewiki-latest-pages-articles-multistream.xml.bz2" ]; then
-                echo "Extracting Hebrew dump (limit 50k articles)..."
-                python3 Tools/Shared/extract_corpus.py --input "$RAW_DIR/hewiki-latest-pages-articles-multistream.xml.bz2" --output "$PROCESSED_DIR/he.txt" --limit 50000
-            else
-                echo -e "${RED}Hebrew dump not found in $RAW_DIR${NC}"
-            fi
-            echo -e "${GREEN}Extraction complete!${NC}"
+            echo -e "${BLUE}--- Extracting Wikipedia Dumps ---${NC}"
+            ./omfk.sh corpus extract-wikipedia --lang ru --limit 50000 || true
+            ./omfk.sh corpus extract-wikipedia --lang en --limit 50000 || true
+            ./omfk.sh corpus extract-wikipedia --lang he --limit 50000 || true
+            echo -e "${GREEN}Extraction step complete.${NC}"
             ;;
             
         2)
             echo -e "${BLUE}--- Training N-grams ---${NC}"
-            cd Tools/NgramTrainer
-            UNIGRAM_TOP="${OMFK_UNIGRAM_TOP:-200000}"
-            if [ -f "../../$PROCESSED_DIR/ru.txt" ]; then python3 train_ngrams.py --lang ru --input "../../$PROCESSED_DIR/ru.txt" --output "../../$RESOURCES_DIR/LanguageModels/ru_trigrams.json"; fi
-            if [ -f "../../$PROCESSED_DIR/en.txt" ]; then python3 train_ngrams.py --lang en --input "../../$PROCESSED_DIR/en.txt" --output "../../$RESOURCES_DIR/LanguageModels/en_trigrams.json"; fi
-            if [ -f "../../$PROCESSED_DIR/he.txt" ]; then python3 train_ngrams.py --lang he --input "../../$PROCESSED_DIR/he.txt" --output "../../$RESOURCES_DIR/LanguageModels/he_trigrams.json"; fi
-
-            echo "Training unigram (word frequency) lexicons (top=${UNIGRAM_TOP})..."
-            if [ -f "../../$PROCESSED_DIR/ru.txt" ]; then python3 train_unigrams.py --lang ru --top "$UNIGRAM_TOP" --input "../../$PROCESSED_DIR/ru.txt" --output "../../$RESOURCES_DIR/LanguageModels/ru_unigrams.tsv"; fi
-            if [ -f "../../$PROCESSED_DIR/en.txt" ]; then python3 train_unigrams.py --lang en --top "$UNIGRAM_TOP" --input "../../$PROCESSED_DIR/en.txt" --output "../../$RESOURCES_DIR/LanguageModels/en_unigrams.tsv"; fi
-            if [ -f "../../$PROCESSED_DIR/he.txt" ]; then python3 train_unigrams.py --lang he --top "$UNIGRAM_TOP" --input "../../$PROCESSED_DIR/he.txt" --output "../../$RESOURCES_DIR/LanguageModels/he_unigrams.tsv"; fi
-            cd ../..
-            echo -e "${GREEN}N-gram models updated successfully.${NC}"
+            ./omfk.sh train ngrams
             ;;
             
         3)
             echo -e "${BLUE}--- Training CoreML Model ---${NC}"
-            cd Tools/CoreMLTrainer
-            # Setup venv if needed
-             if [ ! -d "venv" ]; then python3 -m venv venv; fi
-            source venv/bin/activate
-            # Ensure deps
-            pip install -q -r requirements.txt
-            # Avoid noisy coremltools warnings for unsupported scikit-learn versions.
-            pip uninstall -y scikit-learn >/dev/null 2>&1 || true
-
-            BASE_MODEL="model_production.pth"
-            FINETUNED_MODEL="model_production_he_qwerty.pth"
-            LAYOUTS_SPEC="../../.sdd/layouts.json"
-
-            # Ultra mode: crank up dataset + corpus usage for maximum quality (will take longer).
-            ULTRA="${OMFK_ULTRA:-0}"
-            if [ "$ULTRA" = "1" ]; then
-                echo -e "${YELLOW}OMFK_ULTRA=1 enabled → maximizing training sizes (expect long runtimes).${NC}"
-                : "${OMFK_BASE_SAMPLES:=20000000}"
-                : "${OMFK_BASE_EPOCHS:=120}"
-                : "${OMFK_BASE_PATIENCE:=20}"
-                : "${OMFK_HE_QWERTY_SAMPLES:=2000000}"
-                : "${OMFK_HE_QWERTY_EPOCHS:=30}"
-                : "${OMFK_HE_QWERTY_PATIENCE:=8}"
-                : "${OMFK_MAX_CORPUS_WORDS:=0}"
-            fi
-
-            BASE_SAMPLES="${OMFK_BASE_SAMPLES:-5000000}"
-            BASE_EPOCHS="${OMFK_BASE_EPOCHS:-100}"
-            BASE_BATCH_SIZE="${OMFK_BASE_BATCH_SIZE:-512}"
-            BASE_LR="${OMFK_BASE_LR:-0.001}"
-            BASE_PATIENCE="${OMFK_BASE_PATIENCE:-15}"
-
-            HE_QWERTY_SAMPLES="${OMFK_HE_QWERTY_SAMPLES:-500000}"
-            HE_QWERTY_EPOCHS="${OMFK_HE_QWERTY_EPOCHS:-20}"
-            HE_QWERTY_BATCH_SIZE="${OMFK_HE_QWERTY_BATCH_SIZE:-512}"
-            HE_QWERTY_LR="${OMFK_HE_QWERTY_LR:-0.0001}"
-            HE_QWERTY_PATIENCE="${OMFK_HE_QWERTY_PATIENCE:-5}"
-
-            MAX_CORPUS_WORDS="${OMFK_MAX_CORPUS_WORDS:-2000000}"
-            CORPUS_SAMPLE_MODE="${OMFK_CORPUS_SAMPLE_MODE:-reservoir}"
-            FORCE_RETRAIN="${OMFK_FORCE_RETRAIN:-0}"
-            SKIP_RETRAIN_ON_LAYOUT_CHANGE="${OMFK_SKIP_BASE_RETRAIN_ON_LAYOUT_CHANGE:-0}"
-            BASE_DATASET="${OMFK_BASE_DATASET:-training_data_combined.csv}"
-            FORCE_REGEN_DATA="${OMFK_FORCE_REGEN_DATA:-0}"
-            SKIP_HE_QWERTY_FINETUNE="${OMFK_SKIP_HE_QWERTY_FINETUNE:-0}"
-
-            echo -e "${BLUE}Training config:${NC} base_dataset=${BASE_DATASET} base_samples=${BASE_SAMPLES} he_qwerty_samples=${HE_QWERTY_SAMPLES} max_corpus_words=${MAX_CORPUS_WORDS} corpus_sample_mode=${CORPUS_SAMPLE_MODE} skip_he_qwerty_finetune=${SKIP_HE_QWERTY_FINETUNE}"
-
-            should_train_base=0
-            if [ "$FORCE_RETRAIN" = "1" ]; then
-                echo -e "${YELLOW}OMFK_FORCE_RETRAIN=1 → will retrain base model.${NC}"
-                should_train_base=1
-            fi
-
-            # If layouts spec is newer than the base model, the base model is considered stale.
-            if [ "$should_train_base" = "0" ] && [ -f "$BASE_MODEL" ] && [ -f "$LAYOUTS_SPEC" ] && [ "$SKIP_RETRAIN_ON_LAYOUT_CHANGE" != "1" ]; then
-                if [ "$LAYOUTS_SPEC" -nt "$BASE_MODEL" ]; then
-                    echo -e "${YELLOW}Base model is older than layouts spec → retraining base model (set OMFK_SKIP_BASE_RETRAIN_ON_LAYOUT_CHANGE=1 to skip).${NC}"
-                    should_train_base=1
-                fi
-            fi
-
-            # Verify the checkpoint loads into current architecture; otherwise retrain.
-            if [ "$should_train_base" = "0" ] && [ -f "$BASE_MODEL" ]; then
-                python3 - <<'PY' || should_train_base=1
-import sys, torch
-from train import EnsembleModel
-path = "model_production.pth"
-try:
-    state = torch.load(path, map_location="cpu", weights_only=True)
-except TypeError:
-    state = torch.load(path, map_location="cpu")
-model = EnsembleModel()
-model.load_state_dict(state, strict=True)
-print("Base model checkpoint OK:", path)
-PY
-            fi
-            
-            if [ "$should_train_base" = "1" ] || [ ! -f "$BASE_MODEL" ]; then
-                echo -e "${YELLOW}Base model not found (${BASE_MODEL}). Training from scratch...${NC}"
-                # Generate base dataset unless user already prepared it (e.g. training_data_combined.csv).
-                if [ -f "$BASE_DATASET" ] && [ "$FORCE_REGEN_DATA" != "1" ]; then
-                    echo -e "${GREEN}Found base dataset: ${BASE_DATASET} (set OMFK_FORCE_REGEN_DATA=1 to regenerate)${NC}"
-                else
-                    echo "Generating training data from corpus (${BASE_SAMPLES} samples, balanced, up to 5 words)..."
-                    # Path to corpus is ../../data/processed relative to Tools/CoreMLTrainer
-                    python3 generate_data.py \
-                        --count "$BASE_SAMPLES" \
-                        --balance 0.5 \
-                        --max-phrase-len 5 \
-                        --max-corpus-words "$MAX_CORPUS_WORDS" \
-                        --corpus-sample-mode "$CORPUS_SAMPLE_MODE" \
-                        --output "$BASE_DATASET" \
-                        --corpus_dir "../../$PROCESSED_DIR"
-                fi
-                
-                # Train with ALL advanced techniques
-                echo "Training base model (ensemble, augmentation, mixup)..."
-                echo "This will take 30-60 minutes..."
-                python3 train.py --epochs "$BASE_EPOCHS" --batch_size "$BASE_BATCH_SIZE" --lr "$BASE_LR" --patience "$BASE_PATIENCE" \
-                    --ensemble --augment --mixup \
-                    --data "$BASE_DATASET" --model_out "$BASE_MODEL"
-            else
-                echo -e "${GREEN}Found base model: ${BASE_MODEL}${NC}"
-            fi
-
-            MODEL_FOR_EXPORT="$BASE_MODEL"
-            if [ "$SKIP_HE_QWERTY_FINETUNE" != "1" ]; then
-                echo -e "${BLUE}--- Fine-tuning for Hebrew QWERTY sofits (Ticket 23) ---${NC}"
-                echo "Generating focused he_qwerty data (${HE_QWERTY_SAMPLES} samples)..."
-                python3 generate_data.py \
-                    --count "$HE_QWERTY_SAMPLES" \
-                    --balance 0.3 \
-                    --max-phrase-len 5 \
-                    --max-corpus-words "$MAX_CORPUS_WORDS" \
-                    --corpus-sample-mode "$CORPUS_SAMPLE_MODE" \
-                    --output training_data_he_qwerty.csv \
-                    --corpus_dir "../../$PROCESSED_DIR" \
-                    --focus-layout he_qwerty
-
-                echo "Fine-tuning (lr=${HE_QWERTY_LR}, epochs=${HE_QWERTY_EPOCHS})..."
-                python3 train.py --epochs "$HE_QWERTY_EPOCHS" --batch_size "$HE_QWERTY_BATCH_SIZE" --lr "$HE_QWERTY_LR" --patience "$HE_QWERTY_PATIENCE" \
-                    --ensemble --finetune --model_in "$BASE_MODEL" --augment \
-                    --data training_data_he_qwerty.csv --model_out "$FINETUNED_MODEL"
-                MODEL_FOR_EXPORT="$FINETUNED_MODEL"
-            else
-                echo -e "${YELLOW}OMFK_SKIP_HE_QWERTY_FINETUNE=1 → skipping he_qwerty fine-tune.${NC}"
-            fi
-            
-            # Export
-            echo "Exporting to CoreML..."
-            python3 export.py --model_in "$MODEL_FOR_EXPORT" --output LayoutClassifier.mlmodel --ensemble
-
-            echo "Validating CoreML export vs PyTorch..."
-            python3 validate_export.py --ensemble --model_in "$MODEL_FOR_EXPORT" --mlmodel LayoutClassifier.mlmodel --samples 20 --tol 0.01
-            
-            # Install
-            cp LayoutClassifier.mlmodel "../../$RESOURCES_DIR/"
-            
-            cd ../..
-            echo "Running Swift test suite..."
-            swift test
-            echo -e "${GREEN}CoreML model trained and installed!${NC}"
+            ./omfk.sh train coreml
             ;;
             
         4)
             echo -e "${BLUE}--- Running Verification Tests ---${NC}"
-            swift test
+            ./omfk.sh test
             ;;
 
         7)
             echo -e "${BLUE}--- Running Synthetic Evaluation ---${NC}"
-            echo "Env overrides:"
-            echo "  OMFK_SYNTH_EVAL_CASES_PER_LANG (default: 300)"
-            echo "  OMFK_SYNTH_EVAL_SEED           (default: 42)"
-            echo "  OMFK_SYNTH_EVAL_MIN_OUTPUT_ACC (optional, percent)"
-            OMFK_RUN_SYNTH_EVAL=1 swift test --filter SyntheticEvaluationTests
+            ./omfk.sh eval synthetic
             ;;
             
         5)
@@ -279,7 +102,11 @@ PY
             done
             if [ ${#EXISTING_FILES[@]} -gt 0 ]; then
                 echo "Found ${#EXISTING_FILES[@]} Telegram export file(s). Extracting..."
-                python3 Tools/Shared/extract_telegram.py "${EXISTING_FILES[@]}" --output-dir "$PROCESSED_DIR"
+                args=()
+                for f in "${EXISTING_FILES[@]}"; do
+                    args+=(--file "$f")
+                done
+                ./omfk.sh corpus import-telegram --output-dir "$PROCESSED_DIR" "${args[@]}"
                 echo -e "${GREEN}Telegram data imported to $PROCESSED_DIR!${NC}"
             else
                 echo -e "${RED}No Telegram export files found.${NC}"
@@ -288,14 +115,7 @@ PY
             
         6)
             echo -e "${BLUE}--- Downloading OpenSubtitles (conversational data) ---${NC}"
-            cd Tools/CoreMLTrainer
-            source venv/bin/activate 2>/dev/null || python3 -m venv venv && source venv/bin/activate
-            python3 download_subtitles.py --only he_mono ru_mono --limit 2000000
-            
-            echo -e "${YELLOW}Merging subtitles into main corpus...${NC}"
-            cd ../..
-            python3 - <<'PY'\nfrom pathlib import Path\n\ndef merge(main_path: Path, sub_path: Path) -> None:\n    if not sub_path.exists():\n        return\n    if not main_path.exists():\n        main_path.write_bytes(sub_path.read_bytes())\n        sub_path.unlink(missing_ok=True)\n        print(f\"  Created {main_path} from {sub_path.name}\")\n        return\n\n    ms = main_path.stat().st_size\n    ss = sub_path.stat().st_size\n\n    # If subtitles are already appended (common when re-running option 6), delete the duplicate file.\n    if ms >= ss:\n        chunk = min(256 * 1024, ss)\n        with main_path.open('rb') as mf, sub_path.open('rb') as sf:\n            mf.seek(ms - chunk)\n            sf.seek(ss - chunk)\n            if mf.read(chunk) == sf.read(chunk):\n                sub_path.unlink(missing_ok=True)\n                print(f\"  Already merged: {sub_path.name} (deleted)\")\n                return\n\n    # Ensure the main corpus ends with a newline before appending.\n    with main_path.open('rb') as mf:\n        mf.seek(max(0, ms - 1))\n        last = mf.read(1)\n    with main_path.open('ab') as mf:\n        if last not in (b'\\n', b'\\r'):\n            mf.write(b'\\n')\n        with sub_path.open('rb') as sf:\n            while True:\n                buf = sf.read(1024 * 1024)\n                if not buf:\n                    break\n                mf.write(buf)\n\n    sub_path.unlink(missing_ok=True)\n    print(f\"  Merged and deleted: {sub_path.name} → {main_path.name}\")\n\nmerge(Path('data/processed/he.txt'), Path('data/processed/subtitles_he.txt'))\nmerge(Path('data/processed/ru.txt'), Path('data/processed/subtitles_ru.txt'))\nPY
-            echo -e "${GREEN}OpenSubtitles data imported!${NC}"
+            ./omfk.sh corpus download-subtitles --limit 2000000
             ;;
             
         q)

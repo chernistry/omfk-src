@@ -2,15 +2,17 @@
 
 ## 🚀 Быстрый старт
 
-Для обучения **всех моделей** одной командой:
+### Один вход (рекомендуется)
+
+Почти всё (корпуса → n-grams → CoreML → тесты) делается через единый скрипт:
 
 ```bash
-./train_all_models.sh
+./omfk.sh --help
 ```
 
-Или в быстром режиме (без вопросов):
+Быстрый чек статуса (что есть / что устарело / что надо запускать):
 ```bash
-./train_all_models.sh --quick
+./omfk.sh status
 ```
 
 ---
@@ -35,32 +37,39 @@
 
 ## 🎯 Пошаговое обучение
 
-### Вариант 1: N-gram модели
+### 0) Понять, что уже готово (и нужно ли что-то переучивать)
 
 ```bash
-cd Tools/NgramTrainer
-python3 train_ngrams.py --lang ru --input corpora/ru_sample.txt --output ../../OMFK/Sources/Resources/LanguageModels/ru_trigrams.json
-python3 train_ngrams.py --lang en --input corpora/en_sample.txt --output ../../OMFK/Sources/Resources/LanguageModels/en_trigrams.json
-python3 train_ngrams.py --lang he --input corpora/he_sample.txt --output ../../OMFK/Sources/Resources/LanguageModels/he_trigrams.json
-
-# unigram word-frequency (TSV)
-python3 train_unigrams.py --lang ru --input corpora/ru_sample.txt --output ../../OMFK/Sources/Resources/LanguageModels/ru_unigrams.tsv --top 200000
-python3 train_unigrams.py --lang en --input corpora/en_sample.txt --output ../../OMFK/Sources/Resources/LanguageModels/en_unigrams.tsv --top 200000
-python3 train_unigrams.py --lang he --input corpora/he_sample.txt --output ../../OMFK/Sources/Resources/LanguageModels/he_unigrams.tsv --top 200000
+./omfk.sh status
 ```
 
-### Вариант 2: CoreML модель
+Когда нужно переучивать:
+- **Поменялись** `data/processed/{ru,en,he}.txt` → переучить `train ngrams` (и при желании CoreML).
+- **Поменялись раскладки** (`.sdd/layouts.json` или `OMFK/Sources/Resources/layouts.json`) → переучить CoreML (минимум) и, если хочешь, перегенерить датасет.
+- **Нет чекпойнтов** `Tools/CoreMLTrainer/model_production*.pth` → это нормально для запуска приложения (CoreML `.mlmodel` уже может быть готов), но чтобы продолжить тренинг/файнтюн — нужен ре-трейн.
 
-**Быстро (MVP)**:
+### 1) N-gram модели (RU/EN/HE) + unigram-лексиконы
+
+Использует реальные корпуса из `data/processed/*.txt`:
+
 ```bash
-cd Tools/CoreMLTrainer
-./train_quick.sh
+./omfk.sh train ngrams
 ```
 
-**Production**:
+Полезные параметры:
+- `OMFK_UNIGRAM_TOP=200000` (сколько слов сохранять в unigram-лексикон)
+
+### 2) CoreML модель (base + optional fine-tune he_qwerty)
+
+Запускает полный пайплайн: (re)train → export → validate_export → install в ресурсы → `swift test`.
+
 ```bash
-cd Tools/CoreMLTrainer
-./train_full.sh
+./omfk.sh train coreml
+```
+
+Ultra (максимум из данных, долго):
+```bash
+OMFK_ULTRA=1 ./omfk.sh train coreml
 ```
 
 ### ⚙️ Продвинутые настройки (через `train_master.sh 3`)
@@ -75,6 +84,8 @@ cd Tools/CoreMLTrainer
 - `OMFK_CORPUS_SAMPLE_MODE=head|reservoir` — как семплировать слова из больших корпусов (по умолчанию `reservoir`).
 - `OMFK_ULTRA=1` — “ультра” пресет (увеличивает sample/epoch и ставит `OMFK_MAX_CORPUS_WORDS=0`).
 
+То же самое работает и для `./omfk.sh train coreml` (это теперь основной путь).
+
 ---
 
 ## ✅ Проверка
@@ -82,7 +93,7 @@ cd Tools/CoreMLTrainer
 После обучения запустите тесты:
 
 ```bash
-swift test
+./omfk.sh test
 ```
 
 Вы должны увидеть:
@@ -95,7 +106,7 @@ swift test
 Запускает большой синтетический набор кейсов для всех 9 комбинаций EN/RU/HE (включая “уже правильно”, чтобы ловить ложные срабатывания):
 
 ```bash
-./train_master.sh 7
+OMFK_SYNTH_EVAL_MIN_OUTPUT_ACC=98 ./omfk.sh eval synthetic
 ```
 
 Переменные окружения:
@@ -109,7 +120,9 @@ swift test
 
 ```
 OMFK/
-├── train_all_models.sh          ← Мастер-скрипт (запускайте его!)
+├── omfk.sh                      ← ЕДИНЫЙ мастер-скрипт (запускайте его!)
+├── train_all_models.sh          ← wrapper (deprecated, оставлен для совместимости)
+├── train_master.sh              ← интерактивное меню-обёртка (deprecated)
 ├── Tools/
 │   ├── NgramTrainer/
 │   │   ├── README.md             ← Документация N-gram
@@ -117,8 +130,8 @@ OMFK/
 │   │   └── corpora/              ← Корпуса текстов
 │   └── CoreMLTrainer/
 │       ├── README.md             ← Документация CoreML
-│       ├── train_quick.sh        ← Быстрое обучение
-│       ├── train_full.sh         ← Полное обучение
+│       ├── train_quick.sh        ← wrapper (deprecated)
+│       ├── train_full.sh         ← wrapper (deprecated)
 │       ├── generate_data.py      ← Генерация данных
 │       ├── train.py              ← Обучение PyTorch
 │       └── export.py             ← Экспорт в CoreML
@@ -159,10 +172,12 @@ pip install -r requirements.txt
 3. Замените файлы в `OMFK/Sources/Resources/LanguageModels/`
 
 ### CoreML модель:
-1. Реализуйте `download_corpus.py` для Wikipedia
-2. Увеличьте `--count` до 100K+
-3. Увеличьте `--epochs` до 20+
-4. Запустите `./train_full.sh`
+1. (Опционально) обновите корпуса в `data/processed/*`:
+   - `./omfk.sh corpus extract-wikipedia --lang ru|en|he ...`
+   - `./omfk.sh corpus download-subtitles --limit ...`
+   - `./omfk.sh corpus import-telegram --file ...`
+2. Запустите `OMFK_ULTRA=1 ./omfk.sh train coreml`
+3. Проверьте качество: `OMFK_SYNTH_EVAL_MIN_OUTPUT_ACC=98 ./omfk.sh eval synthetic`
 
 ---
 
@@ -179,3 +194,7 @@ pip install -r requirements.txt
 
 **Тесты падают**
 → Проверьте, что все модели на месте: `ls -l OMFK/Sources/Resources/`
+
+**Нужно “прям с нуля”**
+- Удали `Tools/CoreMLTrainer/model_production*.pth` и/или поставь `OMFK_FORCE_RETRAIN=1`
+- (Опционально) поставь `OMFK_FORCE_REGEN_DATA=1` если хочешь заново сгенерить CSV

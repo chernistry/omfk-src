@@ -38,7 +38,7 @@ open Package.swift
 ## Testing
 
 ```bash
-swift test
+./omfk.sh test
 ```
 
 ## Debugging
@@ -46,13 +46,13 @@ swift test
 The app includes comprehensive logging for debugging. To run with live logs:
 
 ```bash
-./run_with_logs.sh
+./omfk.sh run --logs
 ```
 
 Or view logs separately:
 
 ```bash
-./view_logs.sh
+./omfk.sh logs stream
 ```
 
 See [DEBUGGING.md](DEBUGGING.md) for detailed debugging guide.

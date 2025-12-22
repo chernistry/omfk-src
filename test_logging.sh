@@ -1,25 +1,9 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
-echo "Building and running OMFK with log streaming..."
-echo "Press Ctrl+C to stop"
-echo ""
+# Deprecated wrapper (kept for compatibility).
+# Canonical entrypoint: `./omfk.sh run --logs`
 
-# Build first
-swift build
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec "${ROOT_DIR}/omfk.sh" run --logs
 
-# Run app in background
-.build/debug/OMFK &
-APP_PID=$!
-
-# Wait a bit for app to start
-sleep 2
-
-# Stream logs
-echo "Streaming logs from com.chernistry.omfk..."
-log stream --predicate 'subsystem == "com.chernistry.omfk"' --level debug &
-LOG_PID=$!
-
-# Wait for user interrupt
-trap "kill $APP_PID $LOG_PID 2>/dev/null; exit" INT TERM
-
-wait

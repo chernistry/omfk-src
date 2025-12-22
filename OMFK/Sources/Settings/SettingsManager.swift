@@ -54,9 +54,9 @@ final class SettingsManager: ObservableObject {
         self.hotkeyKeyCode = UInt16(UserDefaults.standard.integer(forKey: "hotkeyKeyCode") != 0 ? UserDefaults.standard.integer(forKey: "hotkeyKeyCode") : 58) // 58 = left Alt
         
         self.activeLayouts = UserDefaults.standard.object(forKey: "activeLayouts") as? [String: String] ?? [
-            "en": "en_us",
-            "ru": "ru_pc",
-            "he": "he_standard"
+            "en": "us",
+            "ru": "russianwin",
+            "he": "hebrew"
         ]
         
         self.fastPathThreshold = UserDefaults.standard.object(forKey: "fastPathThreshold") as? Double ?? 0.95

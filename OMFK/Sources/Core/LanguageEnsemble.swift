@@ -25,8 +25,8 @@ public struct LanguageDecision: Sendable {
 /// Ensemble classifier that combines NLLanguageRecognizer with layout hypotheses and heuristics
 actor LanguageEnsemble {
     private let recognizer = NLLanguageRecognizer()
-    private let spellChecker = NSSpellChecker.shared
     private let logger = Logger.detection
+    private let wordValidator: WordValidator
     
     // Weights for scoring components
     private let weightNL: Double = 0.2
@@ -40,7 +40,8 @@ actor LanguageEnsemble {
     private var enModel: NgramLanguageModel?
     private var heModel: NgramLanguageModel?
     
-    init() {
+    init(wordValidator: WordValidator = SystemWordValidator()) {
+        self.wordValidator = wordValidator
         // Configure recognizer once
         recognizer.languageHints = [
             .russian: 0.33,
@@ -121,13 +122,22 @@ actor LanguageEnsemble {
         
         // If input is primarily HEBREW
         if hasHebrew {
-            // Check if input (Hebrew) maps to Russian (via HE→EN→RU)
-             if let ruMapped = LayoutMapper.shared.convert(token, from: .hebrew, to: .russian, activeLayouts: activeLayouts) {
-                 hypothesisScores[.ruFromHeLayout] = evaluate(text: ruMapped, target: .russian, context: context, isMapped: true)
-             }
+            // Try ALL Hebrew layout variants -> Russian
+            let ruVariants = LayoutMapper.shared.convertAllVariants(token, from: .hebrew, to: .russian, activeLayouts: activeLayouts)
+            for (_, converted) in ruVariants {
+                let score = evaluate(text: converted, target: .russian, context: context, isMapped: true)
+                if hypothesisScores[.ruFromHeLayout] == nil || score > hypothesisScores[.ruFromHeLayout]! {
+                    hypothesisScores[.ruFromHeLayout] = score
+                }
+            }
             
-            if let enFromHe = LayoutMapper.shared.convert(token, from: .hebrew, to: .english, activeLayouts: activeLayouts) {
-                hypothesisScores[.enFromHeLayout] = evaluate(text: enFromHe, target: .english, context: context, isMapped: true)
+            // Try ALL Hebrew layout variants -> English
+            let enVariants = LayoutMapper.shared.convertAllVariants(token, from: .hebrew, to: .english, activeLayouts: activeLayouts)
+            for (_, converted) in enVariants {
+                let score = evaluate(text: converted, target: .english, context: context, isMapped: true)
+                if hypothesisScores[.enFromHeLayout] == nil || score > hypothesisScores[.enFromHeLayout]! {
+                    hypothesisScores[.enFromHeLayout] = score
+                }
             }
         }
         
@@ -163,6 +173,9 @@ actor LanguageEnsemble {
     
     /// Evaluate a specific text against a target language
     private func evaluate(text: String, target: Language, context: EnsembleContext, isMapped: Bool) -> Double {
+        let lettersOnly = text.lowercased().filter { $0.isLetter }
+        let isShortLetters = lettersOnly.count <= 3
+
         // A. NLLanguageRecognizer Score
         recognizer.reset()
         recognizer.processString(text)
@@ -173,20 +186,30 @@ actor LanguageEnsemble {
         // B. Character Set Heuristic
         let charMatch = checkCharacterSet(text, for: target) ? 1.0 : 0.0
         
-        // C. N-gram Score (replaces Spell Checker)
+        // C. N-gram Score
         let ngramScore = checkNgram(text, language: target)
+
+        // D. Word validity (short text only; trigrams are uninformative for <=3 letters)
+        let wordScore = isShortLetters ? wordValidator.confidence(for: text, language: target) : 0.0
         
-        // D. Context Bonus
+        // E. Context Bonus
         let isContextMatch = context.lastLanguage == target
         let contextScore = isContextMatch ? contextBonus : 0.0
         
-        // E. Penalty for mapped hypotheses
+        // F. Penalty for mapped hypotheses
         let penalty = isMapped ? hypothesisPenalty : 0.0
         
         // Weighted Sum
-        let totalScore = (nlProb * weightNL) +
-                         (charMatch * weightChar) +
-                         (ngramScore * weightNgram) +
+        // For <=3 letters, favor word validation over trigrams.
+        let wNL = isShortLetters ? 0.15 : weightNL
+        let wChar = isShortLetters ? 0.35 : weightChar
+        let wNgram = isShortLetters ? 0.0 : weightNgram
+        let wWord = isShortLetters ? 0.50 : 0.0
+
+        let totalScore = (nlProb * wNL) +
+                         (charMatch * wChar) +
+                         (ngramScore * wNgram) +
+                         (wordScore * wWord) +
                          contextScore -
                          penalty
         

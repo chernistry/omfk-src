@@ -26,7 +26,7 @@ mkdir -p "$PROCESSED_DIR"
 AUTO_CHOICE=""
 if [[ "${1:-}" == "--run" ]]; then
     AUTO_CHOICE="${2:-}"
-elif [[ "${1:-}" =~ ^[1-6]$ ]]; then
+elif [[ "${1:-}" =~ ^[1-7]$ ]]; then
     AUTO_CHOICE="${1:-}"
 fi
 
@@ -44,6 +44,7 @@ while true; do
     echo "  4) ✅ Run Tests"
     echo "  5) 💬 Import Telegram Chat Exports (append to corpus)"
     echo "  6) 🎬 Download OpenSubtitles (conversational HE/RU data)"
+    echo "  7) 🧪 Run Synthetic Evaluation (slow)"
     echo "  q) Quit"
     echo ""
     if [ -n "$AUTO_CHOICE" ]; then
@@ -240,6 +241,15 @@ PY
         4)
             echo -e "${BLUE}--- Running Verification Tests ---${NC}"
             swift test
+            ;;
+
+        7)
+            echo -e "${BLUE}--- Running Synthetic Evaluation ---${NC}"
+            echo "Env overrides:"
+            echo "  OMFK_SYNTH_EVAL_CASES_PER_LANG (default: 300)"
+            echo "  OMFK_SYNTH_EVAL_SEED           (default: 42)"
+            echo "  OMFK_SYNTH_EVAL_MIN_OUTPUT_ACC (optional, percent)"
+            OMFK_RUN_SYNTH_EVAL=1 swift test --filter SyntheticEvaluationTests
             ;;
             
         5)

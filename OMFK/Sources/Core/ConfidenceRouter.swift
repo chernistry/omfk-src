@@ -4,7 +4,7 @@ import os.log
 /// Orchestrates language detection by routing requests through Fast (N-gram) and Standard (Ensemble) paths
 /// based on confidence thresholds.
 actor ConfidenceRouter {
-    private let ensemble = LanguageEnsemble()
+    private let ensemble: LanguageEnsemble
     // N-gram detectors are also loaded inside Ensemble, but for the "Fast Path" 
     // we might want direct access or just rely on Ensemble's underlying models.
     // For V1, we'll route everything through Ensemble but check its confidence 
@@ -28,12 +28,16 @@ actor ConfidenceRouter {
     private var enModel: NgramLanguageModel?
     private var heModel: NgramLanguageModel?
     private let coreML: CoreMLLayoutClassifier
+    private let wordValidator: WordValidator
     
     private let logger = Logger.detection
     private let settings: SettingsManager
     
     init(settings: SettingsManager) {
         self.settings = settings
+        let validator = SystemWordValidator()
+        self.wordValidator = validator
+        self.ensemble = LanguageEnsemble(wordValidator: validator)
         // We load models separately for the Fast Path to ensure independence
         self.ruModel = try? NgramLanguageModel.loadLanguage("ru")
         self.enModel = try? NgramLanguageModel.loadLanguage("en")
@@ -124,32 +128,62 @@ actor ConfidenceRouter {
                     default: sourceLayout = .english
                     }
                     
-                    // Try to convert and validate
-                    if let converted = LayoutMapper.shared.convert(token, from: sourceLayout, to: targetLanguage, activeLayouts: activeLayouts) {
-                        // Score the converted text using N-gram
-                        let targetScore = scoreWithNgram(converted, language: targetLanguage)
-                        let sourceScore = scoreWithNgram(token, language: baseline.language)
-                        
-                        logger.info("🔍 Validation: \(DecisionLogger.tokenSummary(token), privacy: .public) → \(DecisionLogger.tokenSummary(converted), privacy: .public) | source_score=\(String(format: "%.2f", sourceScore)) target_score=\(String(format: "%.2f", targetScore))")
-                        
-                        // Only accept correction if:
-                        // 1. Target score is reasonable (Russian scores tend to be lower than English/Hebrew)
-                        // 2. Target score is better than source score (original was gibberish)
-                        let isValidConversion = targetScore > -9.0 && targetScore > sourceScore
-                        
-                        if isValidConversion {
-                            let deepResult = LanguageDecision(
-                                language: targetLanguage, 
-                                layoutHypothesis: deepHypothesis,
-                                confidence: deepConf,
-                                scores: [:] 
-                            )
-                            DecisionLogger.shared.logDecision(token: token, path: "DEEP_CORRECTION", result: deepResult)
-                            return deepResult
-                        } else {
-                            let rejectedMsg = "REJECTED_VALIDATION: \(deepHypothesis.rawValue) | token=\(DecisionLogger.tokenSummary(token)) converted=\(DecisionLogger.tokenSummary(converted)) srcScore=\(String(format: "%.2f", sourceScore)) tgtScore=\(String(format: "%.2f", targetScore))"
-                            DecisionLogger.shared.log(rejectedMsg)
+                    let sourceScore = scoreWithNgram(token, language: baseline.language)
+
+                    func isShortLetters(_ text: String) -> Bool {
+                        text.filter { $0.isLetter }.count <= 3
+                    }
+
+                    func isValidConversion(_ converted: String) -> Bool {
+                        if isShortLetters(converted) {
+                            return wordValidator.confidence(for: converted, language: targetLanguage) >= 0.95
                         }
+                        let targetScore = scoreWithNgram(converted, language: targetLanguage)
+                        return targetScore > -9.0 && targetScore > sourceScore
+                    }
+
+                    // Prefer conversion using the user-selected/detected active layouts first.
+                    if let primary = LayoutMapper.shared.convert(token, from: sourceLayout, to: targetLanguage, activeLayouts: activeLayouts),
+                       primary != token,
+                       isValidConversion(primary) {
+                        let deepResult = LanguageDecision(
+                            language: targetLanguage,
+                            layoutHypothesis: deepHypothesis,
+                            confidence: deepConf,
+                            scores: [:]
+                        )
+                        DecisionLogger.shared.log("VALIDATED_PRIMARY: \(token) → \(primary)")
+                        DecisionLogger.shared.logDecision(token: token, path: "DEEP_CORRECTION", result: deepResult)
+                        return deepResult
+                    }
+
+                    // Fall back to trying ALL source layout variants (handles unknown source variants).
+                    let variants = LayoutMapper.shared.convertAllVariants(token, from: sourceLayout, to: targetLanguage, activeLayouts: activeLayouts)
+                    var bestConversion: (converted: String, score: Double)? = nil
+
+                    for (layoutId, converted) in variants {
+                        let targetScore = scoreWithNgram(converted, language: targetLanguage)
+                        DecisionLogger.shared.log("VARIANT[\(layoutId)]: \(token) → \(converted) | src=\(String(format: "%.2f", sourceScore)) tgt=\(String(format: "%.2f", targetScore))")
+
+                        if isValidConversion(converted) {
+                            if bestConversion == nil || targetScore > bestConversion!.score {
+                                bestConversion = (converted, targetScore)
+                            }
+                        }
+                    }
+                    
+                    if let best = bestConversion {
+                        let deepResult = LanguageDecision(
+                            language: targetLanguage, 
+                            layoutHypothesis: deepHypothesis,
+                            confidence: deepConf,
+                            scores: [:] 
+                        )
+                        DecisionLogger.shared.logDecision(token: token, path: "DEEP_CORRECTION", result: deepResult)
+                        return deepResult
+                    } else {
+                        let rejectedMsg = "REJECTED_VALIDATION: \(deepHypothesis.rawValue) | no valid conversion found from \(variants.count) variants"
+                        DecisionLogger.shared.log(rejectedMsg)
                     }
                 } else {
                     let rejectedMsg = "REJECTED_DEEP_CORRECTION: \(deepHypothesis.rawValue) (\(String(format: "%.2f", deepConf))) < \(correctionThreshold)"

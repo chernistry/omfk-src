@@ -8,19 +8,29 @@ final class InputSourceManager {
     
     private let logger = Logger.inputSource
     
-    /// Maps macOS layout IDs to our layout IDs
+    /// Maps macOS layout IDs to our layout IDs (must match layouts.json)
     private let macOSToLayoutID: [String: String] = [
         // Russian
-        "com.apple.keylayout.Russian": "ru_pc",
-        "com.apple.keylayout.RussianWin": "ru_pc",
-        "com.apple.keylayout.Russian-Phonetic": "ru_phonetic_yasherty",
+        "com.apple.keylayout.Russian": "russian",
+        "com.apple.keylayout.RussianWin": "russianwin",
+        "com.apple.keylayout.Russian-Phonetic": "russian_phonetic",
+        "com.apple.keylayout.Byelorussian": "byelorussian",
+        "com.apple.keylayout.Ingush": "ingush",
         // Hebrew
-        "com.apple.keylayout.Hebrew": "he_standard",
-        "com.apple.keylayout.Hebrew-QWERTY": "he_qwerty",
-        "com.apple.keylayout.Hebrew-PC": "he_pc",
+        "com.apple.keylayout.Hebrew": "hebrew",
+        "com.apple.keylayout.Hebrew-QWERTY": "hebrew_qwerty",
+        "com.apple.keylayout.Hebrew-PC": "hebrew_pc",
         // English
-        "com.apple.keylayout.US": "en_us",
-        "com.apple.keylayout.ABC": "en_us",
+        "com.apple.keylayout.US": "us",
+        "com.apple.keylayout.ABC": "abc",
+        "com.apple.keylayout.British": "british",
+        "com.apple.keylayout.British-PC": "british_pc",
+        "com.apple.keylayout.Australian": "australian",
+        "com.apple.keylayout.Canadian": "canadian",
+        "com.apple.keylayout.Irish": "irish",
+        "com.apple.keylayout.Colemak": "colemak",
+        "com.apple.keylayout.Dvorak": "dvorak",
+        "com.apple.keylayout.USInternational-PC": "usinternational_pc",
     ]
     
     private init() {
@@ -29,10 +39,38 @@ final class InputSourceManager {
     
     /// Detects all installed keyboard layouts and returns our layout IDs
     func detectInstalledLayouts() -> [String: String] {
-        var result: [String: String] = [
-            "en": "en_us",
-            "ru": "ru_pc", 
-            "he": "he_standard"
+        var best: [String: (id: String, score: Int)] = [
+            "en": ("us", 0),
+            "ru": ("russianwin", 0),
+            "he": ("hebrew", 0)
+        ]
+
+        // Prefer "most likely user" variants when multiple layouts exist.
+        // Higher score wins.
+        let layoutInfo: [String: (lang: String, score: Int)] = [
+            // English
+            "us": ("en", 300),
+            "abc": ("en", 200),
+            "british": ("en", 180),
+            "british_pc": ("en", 170),
+            "australian": ("en", 160),
+            "canadian": ("en", 150),
+            "irish": ("en", 140),
+            "colemak": ("en", 120),
+            "dvorak": ("en", 120),
+            "usinternational_pc": ("en", 110),
+
+            // Russian
+            "russianwin": ("ru", 300),
+            "russian": ("ru", 250),
+            "russian_phonetic": ("ru", 200),
+            "byelorussian": ("ru", 150),
+            "ingush": ("ru", 120),
+
+            // Hebrew
+            "hebrew_qwerty": ("he", 300),
+            "hebrew_pc": ("he", 200),
+            "hebrew": ("he", 150)
         ]
         
         let filter: [CFString: Any] = [
@@ -41,7 +79,7 @@ final class InputSourceManager {
         
         guard let list = TISCreateInputSourceList(filter as CFDictionary, false)?.takeRetainedValue() else {
             logger.warning("Failed to get input source list")
-            return result
+            return Dictionary(uniqueKeysWithValues: best.map { ($0.key, $0.value.id) })
         }
         
         for i in 0..<CFArrayGetCount(list) {
@@ -52,20 +90,17 @@ final class InputSourceManager {
             let macOSID = unsafeBitCast(idPtr, to: CFString.self) as String
             
             if let ourID = macOSToLayoutID[macOSID] {
-                // Determine language from our ID
-                if ourID.hasPrefix("ru") {
-                    result["ru"] = ourID
-                    logger.info("Detected Russian layout: \(ourID)")
-                } else if ourID.hasPrefix("he") {
-                    result["he"] = ourID
-                    logger.info("Detected Hebrew layout: \(ourID)")
-                } else if ourID.hasPrefix("en") {
-                    result["en"] = ourID
+                if let info = layoutInfo[ourID] {
+                    let current = best[info.lang]?.score ?? Int.min
+                    if info.score > current {
+                        best[info.lang] = (ourID, info.score)
+                        logger.info("Detected \(info.lang, privacy: .public) layout: \(ourID, privacy: .public)")
+                    }
                 }
             }
         }
         
-        return result
+        return Dictionary(uniqueKeysWithValues: best.map { ($0.key, $0.value.id) })
     }
     
     func currentLanguage() -> Language? {

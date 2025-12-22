@@ -11,12 +11,25 @@ public final class LayoutMapper: @unchecked Sendable {
     // Detected user layouts: Language -> LayoutID
     private var activeLayouts: [Language: String] = [:]
     
+    // All available layouts per language for brute-force conversion
+    private var allLayoutsPerLanguage: [Language: [String]] = [:]
+    
     public static let shared = LayoutMapper()
     
     public init() {
         loadLayoutData()
         buildMaps()
+        buildAllLayoutsPerLanguage()
         detectActiveLayouts()
+    }
+    
+    private func buildAllLayoutsPerLanguage() {
+        guard let layouts = layoutData?.layouts else { return }
+        for layout in layouts {
+            guard let lang = Language(rawValue: layout.language) else { continue }
+            if allLayoutsPerLanguage[lang] == nil { allLayoutsPerLanguage[lang] = [] }
+            allLayoutsPerLanguage[lang]!.append(layout.id)
+        }
     }
     
     private func loadLayoutData() {
@@ -140,5 +153,21 @@ public final class LayoutMapper: @unchecked Sendable {
         let fromID = activeLayouts?[from.rawValue] ?? self.activeLayouts[from] ?? "us"
         let toID = activeLayouts?[to.rawValue] ?? self.activeLayouts[to] ?? "us"
         return convert(text, fromLayout: fromID, toLayout: toID)
+    }
+    
+    /// Try ALL source layouts for a language and return all possible conversions
+    /// This handles cases where user might have different layout variant than detected
+    public func convertAllVariants(_ text: String, from: Language, to: Language, activeLayouts: [String: String]? = nil) -> [(layout: String, result: String)] {
+        guard let sourceLayouts = allLayoutsPerLanguage[from] else { return [] }
+        let toID = activeLayouts?[to.rawValue] ?? self.activeLayouts[to] ?? "us"
+        
+        var results: [(String, String)] = []
+        for srcLayout in sourceLayouts {
+            if let converted = convert(text, fromLayout: srcLayout, toLayout: toID),
+               converted != text {  // Only include if actually changed
+                results.append((srcLayout, converted))
+            }
+        }
+        return results
     }
 }

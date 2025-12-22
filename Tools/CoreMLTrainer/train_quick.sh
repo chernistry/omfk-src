@@ -29,20 +29,26 @@ echo -e "${GREEN}✓${NC} Окружение готово"
 echo ""
 
 # Step 2: Generate data
-echo -e "${BLUE}[2/5]${NC} Генерация тренировочных данных (10,000 примеров)..."
-python3 generate_data.py --count 10000 --output training_data.csv
-echo -e "${GREEN}✓${NC} Данные сгенерированы: training_data.csv"
+DATASET="${OMFK_DATASET:-training_data_combined.csv}"
+if [ -f "$DATASET" ]; then
+    echo -e "${BLUE}[2/5]${NC} Используем существующий датасет: ${DATASET}"
+else
+    DATASET="training_data_quick.csv"
+    echo -e "${BLUE}[2/5]${NC} Генерация тренировочных данных (10,000 примеров) → ${DATASET}..."
+    python3 generate_data.py --count 10000 --output "$DATASET"
+    echo -e "${GREEN}✓${NC} Данные сгенерированы: ${DATASET}"
+fi
 echo ""
 
 # Step 3: Train
 echo -e "${BLUE}[3/5]${NC} Обучение модели (5 эпох, ~2-3 минуты)..."
-python3 train.py --epochs 5 --data training_data.csv --model_out model.pth
+python3 train.py --epochs 5 --ensemble --augment --mixup --data "$DATASET" --model_out model.pth
 echo -e "${GREEN}✓${NC} Модель обучена: model.pth"
 echo ""
 
 # Step 4: Export
 echo -e "${BLUE}[4/5]${NC} Экспорт в CoreML..."
-python3 export.py --model_in model.pth --output LayoutClassifier.mlmodel
+python3 export.py --model_in model.pth --output LayoutClassifier.mlmodel --ensemble
 echo -e "${GREEN}✓${NC} CoreML модель создана: LayoutClassifier.mlmodel"
 echo ""
 

@@ -160,6 +160,14 @@ def main():
         default=500_000,
         help="Max words to load per language from corpus files (keeps RAM bounded). Set 0 to load all (slow, high memory).",
     )
+    parser.add_argument(
+        '--corpus-sample-mode',
+        choices=['head', 'reservoir'],
+        default='reservoir',
+        help="How to sample words from large corpora when --max-corpus-words > 0. "
+             "'head' reads the first N words (fast, biased). "
+             "'reservoir' does one pass and keeps a uniform random sample (slower, higher quality).",
+    )
     parser.add_argument('--balance', type=float, default=0.5, help="Ratio of pure language samples (vs _from_ samples)")
     parser.add_argument('--max-phrase-len', type=int, default=3, help="Max words per sample")
     parser.add_argument(
@@ -181,18 +189,34 @@ def main():
                 with open(path, 'r', encoding='utf-8') as f:
                     words = []
                     max_words = args.max_corpus_words or 0
-                    for line in f:
-                        for p in line.strip().split():
-                            if 2 < len(p) < 20:
-                                words.append(p)
-                                if max_words and len(words) >= max_words:
-                                    break
-                        if max_words and len(words) >= max_words:
-                            break
+                    if max_words and args.corpus_sample_mode == 'reservoir':
+                        seen = 0
+                        for line in f:
+                            for p in line.strip().split():
+                                # Include 2-letter words; they're important for HE (e.g. מה, לא) and short EN/RU tokens.
+                                if 2 <= len(p) < 20:
+                                    seen += 1
+                                    if len(words) < max_words:
+                                        words.append(p)
+                                    else:
+                                        j = random.randint(0, seen - 1)
+                                        if j < max_words:
+                                            words[j] = p
+                    else:
+                        # Fast path: take the first N acceptable words.
+                        for line in f:
+                            for p in line.strip().split():
+                                if 2 <= len(p) < 20:
+                                    words.append(p)
+                                    if max_words and len(words) >= max_words:
+                                        break
+                            if max_words and len(words) >= max_words:
+                                break
                     if words:
                         SEEDS[lang] = words
                         if args.max_corpus_words and len(words) >= args.max_corpus_words:
-                            print(f" {len(words)} words loaded (capped).")
+                            note = "sampled" if args.corpus_sample_mode == 'reservoir' else "capped"
+                            print(f" {len(words)} words loaded ({note}).")
                         else:
                             print(f" {len(words)} words loaded.")
                     else:

@@ -41,20 +41,26 @@ echo "  Используем расширенные синтетические �
 echo ""
 
 # Step 3: Generate large dataset
-echo -e "${BLUE}[3/6]${NC} Генерация большого датасета (100,000 примеров)..."
-python3 generate_data.py --count 100000 --output training_data_large.csv
-echo -e "${GREEN}✓${NC} Данные сгенерированы: training_data_large.csv"
+DATASET="${OMFK_DATASET:-training_data_combined.csv}"
+if [ -f "$DATASET" ]; then
+    echo -e "${BLUE}[3/6]${NC} Используем существующий датасет: ${DATASET}"
+else
+    DATASET="training_data_large.csv"
+    echo -e "${BLUE}[3/6]${NC} Генерация большого датасета (100,000 примеров) → ${DATASET}..."
+    python3 generate_data.py --count 100000 --output "$DATASET"
+    echo -e "${GREEN}✓${NC} Данные сгенерированы: ${DATASET}"
+fi
 echo ""
 
 # Step 4: Train with more epochs
 echo -e "${BLUE}[4/6]${NC} Обучение модели (20 эпох, ~15-20 минут)..."
-python3 train.py --epochs 20 --data training_data_large.csv --model_out model_production.pth
+python3 train.py --epochs 20 --ensemble --augment --mixup --data "$DATASET" --model_out model_production.pth
 echo -e "${GREEN}✓${NC} Модель обучена: model_production.pth"
 echo ""
 
 # Step 5: Export
 echo -e "${BLUE}[5/6]${NC} Экспорт в CoreML..."
-python3 export.py --model_in model_production.pth --output LayoutClassifier.mlmodel
+python3 export.py --model_in model_production.pth --output LayoutClassifier.mlmodel --ensemble
 echo -e "${GREEN}✓${NC} CoreML модель создана"
 echo ""
 

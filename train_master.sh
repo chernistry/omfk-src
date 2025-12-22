@@ -141,12 +141,14 @@ while true; do
             HE_QWERTY_PATIENCE="${OMFK_HE_QWERTY_PATIENCE:-5}"
 
             MAX_CORPUS_WORDS="${OMFK_MAX_CORPUS_WORDS:-2000000}"
+            CORPUS_SAMPLE_MODE="${OMFK_CORPUS_SAMPLE_MODE:-reservoir}"
             FORCE_RETRAIN="${OMFK_FORCE_RETRAIN:-0}"
             SKIP_RETRAIN_ON_LAYOUT_CHANGE="${OMFK_SKIP_BASE_RETRAIN_ON_LAYOUT_CHANGE:-0}"
             BASE_DATASET="${OMFK_BASE_DATASET:-training_data_combined.csv}"
             FORCE_REGEN_DATA="${OMFK_FORCE_REGEN_DATA:-0}"
+            SKIP_HE_QWERTY_FINETUNE="${OMFK_SKIP_HE_QWERTY_FINETUNE:-0}"
 
-            echo -e "${BLUE}Training config:${NC} base_dataset=${BASE_DATASET} base_samples=${BASE_SAMPLES} he_qwerty_samples=${HE_QWERTY_SAMPLES} max_corpus_words=${MAX_CORPUS_WORDS}"
+            echo -e "${BLUE}Training config:${NC} base_dataset=${BASE_DATASET} base_samples=${BASE_SAMPLES} he_qwerty_samples=${HE_QWERTY_SAMPLES} max_corpus_words=${MAX_CORPUS_WORDS} corpus_sample_mode=${CORPUS_SAMPLE_MODE} skip_he_qwerty_finetune=${SKIP_HE_QWERTY_FINETUNE}"
 
             should_train_base=0
             if [ "$FORCE_RETRAIN" = "1" ]; then
@@ -191,6 +193,7 @@ PY
                         --balance 0.5 \
                         --max-phrase-len 5 \
                         --max-corpus-words "$MAX_CORPUS_WORDS" \
+                        --corpus-sample-mode "$CORPUS_SAMPLE_MODE" \
                         --output "$BASE_DATASET" \
                         --corpus_dir "../../$PROCESSED_DIR"
                 fi
@@ -205,28 +208,35 @@ PY
                 echo -e "${GREEN}Found base model: ${BASE_MODEL}${NC}"
             fi
 
-            echo -e "${BLUE}--- Fine-tuning for Hebrew QWERTY sofits (Ticket 23) ---${NC}"
-            echo "Generating focused he_qwerty data (${HE_QWERTY_SAMPLES} samples)..."
-            python3 generate_data.py \
-                --count "$HE_QWERTY_SAMPLES" \
-                --balance 0.3 \
-                --max-phrase-len 5 \
-                --max-corpus-words "$MAX_CORPUS_WORDS" \
-                --output training_data_he_qwerty.csv \
-                --corpus_dir "../../$PROCESSED_DIR" \
-                --focus-layout he_qwerty
+            MODEL_FOR_EXPORT="$BASE_MODEL"
+            if [ "$SKIP_HE_QWERTY_FINETUNE" != "1" ]; then
+                echo -e "${BLUE}--- Fine-tuning for Hebrew QWERTY sofits (Ticket 23) ---${NC}"
+                echo "Generating focused he_qwerty data (${HE_QWERTY_SAMPLES} samples)..."
+                python3 generate_data.py \
+                    --count "$HE_QWERTY_SAMPLES" \
+                    --balance 0.3 \
+                    --max-phrase-len 5 \
+                    --max-corpus-words "$MAX_CORPUS_WORDS" \
+                    --corpus-sample-mode "$CORPUS_SAMPLE_MODE" \
+                    --output training_data_he_qwerty.csv \
+                    --corpus_dir "../../$PROCESSED_DIR" \
+                    --focus-layout he_qwerty
 
-            echo "Fine-tuning (lr=${HE_QWERTY_LR}, epochs=${HE_QWERTY_EPOCHS})..."
-            python3 train.py --epochs "$HE_QWERTY_EPOCHS" --batch_size "$HE_QWERTY_BATCH_SIZE" --lr "$HE_QWERTY_LR" --patience "$HE_QWERTY_PATIENCE" \
-                --ensemble --finetune --model_in "$BASE_MODEL" --augment \
-                --data training_data_he_qwerty.csv --model_out "$FINETUNED_MODEL"
+                echo "Fine-tuning (lr=${HE_QWERTY_LR}, epochs=${HE_QWERTY_EPOCHS})..."
+                python3 train.py --epochs "$HE_QWERTY_EPOCHS" --batch_size "$HE_QWERTY_BATCH_SIZE" --lr "$HE_QWERTY_LR" --patience "$HE_QWERTY_PATIENCE" \
+                    --ensemble --finetune --model_in "$BASE_MODEL" --augment \
+                    --data training_data_he_qwerty.csv --model_out "$FINETUNED_MODEL"
+                MODEL_FOR_EXPORT="$FINETUNED_MODEL"
+            else
+                echo -e "${YELLOW}OMFK_SKIP_HE_QWERTY_FINETUNE=1 → skipping he_qwerty fine-tune.${NC}"
+            fi
             
             # Export
             echo "Exporting to CoreML..."
-            python3 export.py --model_in "$FINETUNED_MODEL" --output LayoutClassifier.mlmodel --ensemble
+            python3 export.py --model_in "$MODEL_FOR_EXPORT" --output LayoutClassifier.mlmodel --ensemble
 
             echo "Validating CoreML export vs PyTorch..."
-            python3 validate_export.py --ensemble --model_in "$FINETUNED_MODEL" --mlmodel LayoutClassifier.mlmodel --samples 20 --tol 0.01
+            python3 validate_export.py --ensemble --model_in "$MODEL_FOR_EXPORT" --mlmodel LayoutClassifier.mlmodel --samples 20 --tol 0.01
             
             # Install
             cp LayoutClassifier.mlmodel "../../$RESOURCES_DIR/"
@@ -284,14 +294,7 @@ PY
             
             echo -e "${YELLOW}Merging subtitles into main corpus...${NC}"
             cd ../..
-            if [ -f "$PROCESSED_DIR/subtitles_he.txt" ]; then
-                cat "$PROCESSED_DIR/subtitles_he.txt" >> "$PROCESSED_DIR/he.txt"
-                echo -e "${GREEN}  Merged Hebrew subtitles into he.txt${NC}"
-            fi
-            if [ -f "$PROCESSED_DIR/subtitles_ru.txt" ]; then
-                cat "$PROCESSED_DIR/subtitles_ru.txt" >> "$PROCESSED_DIR/ru.txt"
-                echo -e "${GREEN}  Merged Russian subtitles into ru.txt${NC}"
-            fi
+            python3 - <<'PY'\nfrom pathlib import Path\n\ndef merge(main_path: Path, sub_path: Path) -> None:\n    if not sub_path.exists():\n        return\n    if not main_path.exists():\n        main_path.write_bytes(sub_path.read_bytes())\n        sub_path.unlink(missing_ok=True)\n        print(f\"  Created {main_path} from {sub_path.name}\")\n        return\n\n    ms = main_path.stat().st_size\n    ss = sub_path.stat().st_size\n\n    # If subtitles are already appended (common when re-running option 6), delete the duplicate file.\n    if ms >= ss:\n        chunk = min(256 * 1024, ss)\n        with main_path.open('rb') as mf, sub_path.open('rb') as sf:\n            mf.seek(ms - chunk)\n            sf.seek(ss - chunk)\n            if mf.read(chunk) == sf.read(chunk):\n                sub_path.unlink(missing_ok=True)\n                print(f\"  Already merged: {sub_path.name} (deleted)\")\n                return\n\n    # Ensure the main corpus ends with a newline before appending.\n    with main_path.open('rb') as mf:\n        mf.seek(max(0, ms - 1))\n        last = mf.read(1)\n    with main_path.open('ab') as mf:\n        if last not in (b'\\n', b'\\r'):\n            mf.write(b'\\n')\n        with sub_path.open('rb') as sf:\n            while True:\n                buf = sf.read(1024 * 1024)\n                if not buf:\n                    break\n                mf.write(buf)\n\n    sub_path.unlink(missing_ok=True)\n    print(f\"  Merged and deleted: {sub_path.name} → {main_path.name}\")\n\nmerge(Path('data/processed/he.txt'), Path('data/processed/subtitles_he.txt'))\nmerge(Path('data/processed/ru.txt'), Path('data/processed/subtitles_ru.txt'))\nPY
             echo -e "${GREEN}OpenSubtitles data imported!${NC}"
             ;;
             

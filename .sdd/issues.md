@@ -47,6 +47,14 @@ Provide the report in the following format:
 - Focus on root causes, not just symptoms.
 </constraints>
 
+---
+
+## Spec Conflict: CoreML vs Architect Prohibition (2025-12-22)
+
+- **Files**: `.sdd/architect.md` vs `Tools/CoreMLTrainer/*`, `OMFK/Sources/Core/CoreMLLayoutClassifier.swift`, tickets `23-finetune-hebrew-sofits.md`, `24-fix-coreml-export-ensemble.md`.
+- **Conflict**: `.sdd/architect.md` states “No external ML models: Use only Apple's NaturalLanguage framework”, but the repo and backlog rely on a bundled CoreML model for layout-mismatch detection and provide a full training/export pipeline.
+- **Recommendation**: Update `.sdd/architect.md` to explicitly allow a **bundled, offline CoreML model** (trained locally, shipped with the app) for layout detection; keep “no network / offline” constraints intact.
+
 
 
 ## Run 2025-12-22T18:02:00Z
@@ -116,4 +124,3 @@ Provide the report in the following format:
 - Keep it factual.
 - Focus on root causes, not just symptoms.
 </constraints>
-

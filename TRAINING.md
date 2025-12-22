@@ -63,6 +63,18 @@ cd Tools/CoreMLTrainer
 ./train_full.sh
 ```
 
+### ⚙️ Продвинутые настройки (через `train_master.sh 3`)
+
+`train_master.sh 3` можно тонко настроить через переменные окружения:
+
+- `OMFK_BASE_DATASET` (по умолчанию `training_data_combined.csv`) — базовый CSV для обучения.
+- `OMFK_FORCE_RETRAIN=1` — принудительно переобучить базовую модель, даже если `model_production.pth` уже есть.
+- `OMFK_FORCE_REGEN_DATA=1` — принудительно пересоздать датасет, даже если CSV уже существует.
+- `OMFK_SKIP_HE_QWERTY_FINETUNE=1` — пропустить отдельный fine-tune под Hebrew QWERTY (если базовый датасет уже покрывает `he_qwerty`).
+- `OMFK_MAX_CORPUS_WORDS` — сколько слов загружать из `data/processed/{ru,en,he}.txt` для генерации (0 = все, медленно/память).
+- `OMFK_CORPUS_SAMPLE_MODE=head|reservoir` — как семплировать слова из больших корпусов (по умолчанию `reservoir`).
+- `OMFK_ULTRA=1` — “ультра” пресет (увеличивает sample/epoch и ставит `OMFK_MAX_CORPUS_WORDS=0`).
+
 ---
 
 ## ✅ Проверка

@@ -18,8 +18,14 @@ struct MenuBarView: View {
             
             // Actions
             HStack(spacing: 12) {
-                ActionButton(icon: "gear", title: "Settings") { openWindow(id: "settings") }
-                ActionButton(icon: "clock", title: "History") { openWindow(id: "history") }
+                ActionButton(icon: "gear", title: "Settings") {
+                    NSApp.activate(ignoringOtherApps: true)
+                    openWindow(id: "settings")
+                }
+                ActionButton(icon: "clock", title: "History") {
+                    NSApp.activate(ignoringOtherApps: true)
+                    openWindow(id: "history")
+                }
             }
             
             // Quit
@@ -31,7 +37,7 @@ struct MenuBarView: View {
             .buttonStyle(.plain)
         }
         .padding(20)
-        .frame(width: 260)
+        .frame(width: 280)
     }
     
     private var statusPill: some View {

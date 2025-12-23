@@ -6,7 +6,7 @@ struct SettingsView: View {
     
     var body: some View {
         VStack(spacing: 0) {
-            // Header
+            // Header (fixed)
             VStack(spacing: 20) {
                 // App icon
                 ZStack {
@@ -36,8 +36,8 @@ struct SettingsView: View {
             .padding(.top, 28)
             .padding(.bottom, 20)
             
-            // Content
-            Group {
+            // Content (fixed height container)
+            ZStack {
                 switch selectedTab {
                 case 0: GeneralTab(settings: settings)
                 case 1: HotkeyTab(settings: settings)
@@ -45,6 +45,7 @@ struct SettingsView: View {
                 default: AboutTab()
                 }
             }
+            .frame(height: 280)
         }
         .frame(width: 380, height: 460)
         .background(.ultraThinMaterial)
@@ -87,17 +88,18 @@ struct GeneralTab: View {
                     }
                     
                     HStack(spacing: 10) {
-                        LangPill(label: "EN", flag: "🇺🇸", isSelected: settings.preferredLanguage == .english) { settings.preferredLanguage = .english }
-                        LangPill(label: "RU", flag: "🇷🇺", isSelected: settings.preferredLanguage == .russian) { settings.preferredLanguage = .russian }
-                        LangPill(label: "HE", flag: "🇮🇱", isSelected: settings.preferredLanguage == .hebrew) { settings.preferredLanguage = .hebrew }
+                        LangPill(lang: "EN", isSelected: settings.preferredLanguage == .english) { settings.preferredLanguage = .english }
+                        LangPill(lang: "RU", isSelected: settings.preferredLanguage == .russian) { settings.preferredLanguage = .russian }
+                        LangPill(lang: "HE", isSelected: settings.preferredLanguage == .hebrew) { settings.preferredLanguage = .hebrew }
                     }
                 }
                 .frame(maxWidth: .infinity)
             }
             
-            Spacer()
+            Spacer(minLength: 0)
         }
         .padding(20)
+        .frame(maxHeight: .infinity, alignment: .top)
     }
 }
 
@@ -149,9 +151,10 @@ struct HotkeyTab: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(.yellow.opacity(0.1), in: RoundedRectangle(cornerRadius: 12))
             
-            Spacer()
+            Spacer(minLength: 0)
         }
         .padding(20)
+        .frame(maxHeight: .infinity, alignment: .top)
     }
     
     private func keyName(_ code: UInt16) -> String {
@@ -206,20 +209,24 @@ struct AppsTab: View {
                                 .foregroundStyle(.tertiary)
                         }
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 24)
+                        .padding(.vertical, 20)
                     } else {
-                        VStack(spacing: 8) {
-                            ForEach(Array(settings.excludedApps), id: \.self) { bundleId in
-                                AppRow(bundleId: bundleId) { settings.toggleApp(bundleId) }
+                        ScrollView {
+                            VStack(spacing: 8) {
+                                ForEach(Array(settings.excludedApps), id: \.self) { bundleId in
+                                    AppRow(bundleId: bundleId) { settings.toggleApp(bundleId) }
+                                }
                             }
                         }
+                        .frame(maxHeight: 120)
                     }
                 }
             }
             
-            Spacer()
+            Spacer(minLength: 0)
         }
         .padding(20)
+        .frame(maxHeight: .infinity, alignment: .top)
         .sheet(isPresented: $showingAppPicker) {
             AppPickerSheet(settings: settings, isPresented: $showingAppPicker)
         }
@@ -293,7 +300,7 @@ struct AboutTab: View {
     
     var body: some View {
         VStack(spacing: 20) {
-            Spacer()
+            Spacer(minLength: 20)
             
             VStack(spacing: 6) {
                 Text("Oh My F***ing Keyboard")
@@ -305,7 +312,7 @@ struct AboutTab: View {
                 .font(.system(size: 12, weight: .medium, design: .monospaced))
                 .foregroundStyle(.tertiary)
             
-            Spacer()
+            Spacer(minLength: 20)
             
             VStack(spacing: 4) {
                 Text("Created by Alex Chernysh")
@@ -315,9 +322,10 @@ struct AboutTab: View {
                     .foregroundStyle(.tertiary)
             }
             
-            Spacer()
+            Spacer(minLength: 20)
         }
         .padding(20)
+        .frame(maxHeight: .infinity)
     }
 }
 
@@ -362,22 +370,19 @@ struct SettingRow: View {
 }
 
 struct LangPill: View {
-    let label: String
-    let flag: String
+    let lang: String
     let isSelected: Bool
     let action: () -> Void
     
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 6) {
-                Text(flag)
-                Text(label).font(.system(size: 12, weight: .medium))
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
-            .background(isSelected ? .blue : .clear, in: Capsule())
-            .background(.ultraThinMaterial, in: Capsule())
-            .foregroundStyle(isSelected ? .white : .primary)
+            Text(lang)
+                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .background(isSelected ? .blue : .clear, in: Capsule())
+                .background(.ultraThinMaterial, in: Capsule())
+                .foregroundStyle(isSelected ? .white : .primary)
         }
         .buttonStyle(.plain)
     }

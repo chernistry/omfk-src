@@ -256,6 +256,9 @@ final class EventMonitor {
         DecisionLogger.shared.log("HOTKEY: \(convertPhrase ? "PHRASE" : "WORD") mode")
         
         let bundleId = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        let appName = NSWorkspace.shared.frontmostApplication?.localizedName ?? "unknown"
+        logger.info("📱 App: \(appName) (\(bundleId ?? "nil"))")
+        DecisionLogger.shared.log("HOTKEY: App=\(appName)")
         
         // Check cycling state FIRST - before getting fresh selection
         // After replaceText, selection is lost, so getSelectedTextFresh() returns garbage
@@ -284,6 +287,10 @@ final class EventMonitor {
             return
         }
         
+        // Log buffer state before getting selection
+        logger.info("📋 Buffer state: '\(self.buffer)' (\(self.buffer.count) chars), phraseBuffer: '\(self.phraseBuffer.prefix(50))...' (\(self.phraseBuffer.count) chars)")
+        DecisionLogger.shared.log("HOTKEY: Buffer='\(self.buffer)' (\(self.buffer.count)), phrase=\(self.phraseBuffer.count) chars")
+        
         // No cycling - get fresh text to convert
         let rawText: String
         if convertPhrase {
@@ -293,7 +300,9 @@ final class EventMonitor {
         } else {
             let freshSelection = await getSelectedTextFresh()
             rawText = freshSelection
-            logger.info("📝 Fresh selection result: '\(rawText)' (\(rawText.count) chars)")
+            // Log hex for debugging
+            let hex = rawText.unicodeScalars.prefix(20).map { String(format: "%04X", $0.value) }.joined(separator: " ")
+            logger.info("📝 Fresh selection: '\(rawText)' (\(rawText.count) chars) hex: \(hex)")
             DecisionLogger.shared.log("HOTKEY: Fresh selection: '\(rawText)' (\(rawText.count) chars)")
         }
         
@@ -428,18 +437,17 @@ final class EventMonitor {
             return nil
         }
         
+        // Log what AX returned
+        let hex = text.unicodeScalars.prefix(30).map { String(format: "%04X", $0.value) }.joined(separator: " ")
+        logger.info("🔍 AX raw: '\(text)' len=\(text.count) utf16=\(text.utf16.count) hex=\(hex)")
+        DecisionLogger.shared.log("AX_RAW: '\(text.prefix(50))' len=\(text.count) hex=\(hex.prefix(60))")
+        
         // Validate: if text has too many non-printable characters, it's garbage
         let printableCount = text.filter { !$0.isWhitespace || $0 == " " || $0 == "\n" || $0 == "\t" }.count
         let totalCount = text.count
         if totalCount > 0 && printableCount == 0 {
             logger.warning("⚠️ AX: Selection contains only non-printable chars, ignoring")
             return nil
-        }
-        
-        // Log hex for debugging weird characters
-        if text.count != text.unicodeScalars.count || text.contains(where: { $0.asciiValue == nil && !$0.isLetter && !$0.isNumber && !$0.isPunctuation && !$0.isWhitespace }) {
-            let hex = text.unicodeScalars.map { String(format: "%04X", $0.value) }.joined(separator: " ")
-            logger.info("🔍 AX selection hex: \(hex)")
         }
         
         return text

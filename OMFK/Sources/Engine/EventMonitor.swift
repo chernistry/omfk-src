@@ -356,63 +356,59 @@ final class EventMonitor {
     }
     
     /// Get FRESH selected text - prioritizes actual selection over buffer
+    // Cache for apps that don't support AX selection
+    private var appsWithoutAXSelection: Set<String> = []
+    
     private func getSelectedTextFresh() async -> String {
         logger.info("🔍 Getting fresh selected text...")
         
-        // Priority 1: Try Accessibility API FIRST (this is the actual selection)
-        if let axText = getSelectedTextViaAccessibility(), !axText.isEmpty {
-            // Sanity check: if visible chars are much less than total, something is wrong
-            let visibleChars = axText.filter { $0.isLetter || $0.isNumber || $0.isPunctuation || $0 == " " }.count
-            if visibleChars > 0 && Double(visibleChars) / Double(axText.count) > 0.3 {
-                logger.info("✅ Using AX selected text: '\(axText)' (\(axText.count) chars, \(visibleChars) visible)")
-                buffer = ""  // Clear buffer since we have real selection
-                return axText
-            } else {
-                logger.warning("⚠️ AX selection looks corrupted (\(visibleChars)/\(axText.count) visible), skipping")
+        let bundleId = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
+        let appSupportsAX = !appsWithoutAXSelection.contains(bundleId)
+        
+        // Priority 1: Try Accessibility API FIRST (if app supports it)
+        if appSupportsAX {
+            if let axText = getSelectedTextViaAccessibility(), !axText.isEmpty {
+                let visibleChars = axText.filter { $0.isLetter || $0.isNumber || $0.isPunctuation || $0 == " " }.count
+                if visibleChars > 0 && Double(visibleChars) / Double(axText.count) > 0.3 {
+                    logger.info("✅ Using AX selected text: '\(axText.prefix(50))' (\(axText.count) chars)")
+                    buffer = ""
+                    return axText
+                }
             }
         }
         
-        // Priority 2: Try clipboard-based selection (for apps like Sublime Text that don't support AX)
-        // Only do this if buffer is stale (user selected with mouse, not typed)
+        // Priority 2: Try clipboard if AX failed or app doesn't support it
         let timeSinceLastKey = Date().timeIntervalSince(lastEventTime)
-        if timeSinceLastKey > 0.5 {
-            logger.info("🔍 Buffer stale, trying clipboard-based selection...")
+        let bufferIsStale = timeSinceLastKey > 0.3  // Reduced from 0.5s
+        
+        if !appSupportsAX || bufferIsStale {
             if let clipboardText = await getSelectionViaClipboard() {
                 logger.info("✅ Using clipboard selection: '\(clipboardText.prefix(50))' (\(clipboardText.count) chars)")
+                // Mark this app as not supporting AX if we got clipboard but not AX
+                if appSupportsAX && !bundleId.isEmpty {
+                    appsWithoutAXSelection.insert(bundleId)
+                    logger.info("📝 Marked '\(bundleId)' as not supporting AX selection")
+                }
                 return clipboardText
             }
         }
         
-        // Priority 3: Use buffer ONLY if user JUST typed (not selected with mouse)
+        // Priority 3: Use recent buffer
         if !buffer.isEmpty && timeSinceLastKey < 2.0 {
-            logger.info("✅ Using recent buffer text: '\(self.buffer)' (\(self.buffer.count) chars, age: \(String(format: "%.1f", timeSinceLastKey))s)")
+            logger.info("✅ Using recent buffer: '\(self.buffer)' (\(self.buffer.count) chars)")
             return buffer
-        } else if !buffer.isEmpty {
-            logger.info("⚠️ Buffer is stale (\(String(format: "%.1f", timeSinceLastKey))s old), trying clipboard...")
-            // Try clipboard as last resort for stale buffer
-            if let clipboardText = await getSelectionViaClipboard() {
-                logger.info("✅ Using clipboard selection (stale buffer): '\(clipboardText.prefix(50))' (\(clipboardText.count) chars)")
-                return clipboardText
-            }
         }
         
-        // Priority 4: Last resort - select word backward via keyboard
-        logger.info("⚠️ No selection found, trying word selection backward...")
-        postKeyEvent(keyCode: 0x7B, flags: [.maskAlternate, .maskShift]) // Option+Shift+Left
-        try? await Task.sleep(nanoseconds: 80_000_000) // 80ms
+        // Priority 4: Select word backward
+        logger.info("⚠️ No selection, trying word selection backward...")
+        postKeyEvent(keyCode: 0x7B, flags: [.maskAlternate, .maskShift])
+        try? await Task.sleep(nanoseconds: 60_000_000) // 60ms
         
-        // Now try AX again to get the selected word
         if let selectedWord = getSelectedTextViaAccessibility(), !selectedWord.isEmpty {
-            let visibleChars = selectedWord.filter { $0.isLetter || $0.isNumber || $0.isPunctuation || $0 == " " }.count
-            if visibleChars > 0 {
-                logger.info("✅ Selected word backward via AX: '\(selectedWord)' (\(selectedWord.count) chars)")
-                return selectedWord
-            }
+            return selectedWord
         }
         
-        // Try clipboard for the word we just selected
         if let clipboardText = await getSelectionViaClipboard() {
-            logger.info("✅ Selected word backward via clipboard: '\(clipboardText)' (\(clipboardText.count) chars)")
             return clipboardText
         }
         
@@ -420,7 +416,7 @@ final class EventMonitor {
         return ""
     }
     
-    /// Get selection via clipboard (Cmd+C) - for apps that don't support AX
+    /// Get selection via clipboard (Cmd+C)
     private func getSelectionViaClipboard() async -> String? {
         let pb = NSPasteboard.general
         let originalContents = pb.string(forType: .string)
@@ -428,11 +424,9 @@ final class EventMonitor {
         pb.clearContents()
         
         postKeyEvent(keyCode: 0x08, flags: .maskCommand) // Cmd+C
-        try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
+        try? await Task.sleep(nanoseconds: 80_000_000) // 80ms
         
-        // Check if clipboard changed
         guard pb.changeCount != originalChangeCount else {
-            // Clipboard didn't change - no selection or Cmd+C didn't work
             if let original = originalContents {
                 pb.clearContents()
                 pb.setString(original, forType: .string)
@@ -442,17 +436,14 @@ final class EventMonitor {
         
         let result = pb.string(forType: .string)
         
-        // Restore original clipboard
         if let original = originalContents {
             pb.clearContents()
             pb.setString(original, forType: .string)
         }
         
-        // Validate result - should not be same as original (that would mean no selection)
         if let result = result, !result.isEmpty, result != originalContents {
             return result
         }
-        
         return nil
     }
     

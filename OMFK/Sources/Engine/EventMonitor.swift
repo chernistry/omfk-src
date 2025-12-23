@@ -372,16 +372,31 @@ final class EventMonitor {
             }
         }
         
-        // Priority 2: Use buffer ONLY if user JUST typed (not selected with mouse)
+        // Priority 2: Try clipboard-based selection (for apps like Sublime Text that don't support AX)
+        // Only do this if buffer is stale (user selected with mouse, not typed)
         let timeSinceLastKey = Date().timeIntervalSince(lastEventTime)
+        if timeSinceLastKey > 0.5 {
+            logger.info("🔍 Buffer stale, trying clipboard-based selection...")
+            if let clipboardText = await getSelectionViaClipboard() {
+                logger.info("✅ Using clipboard selection: '\(clipboardText.prefix(50))' (\(clipboardText.count) chars)")
+                return clipboardText
+            }
+        }
+        
+        // Priority 3: Use buffer ONLY if user JUST typed (not selected with mouse)
         if !buffer.isEmpty && timeSinceLastKey < 2.0 {
             logger.info("✅ Using recent buffer text: '\(self.buffer)' (\(self.buffer.count) chars, age: \(String(format: "%.1f", timeSinceLastKey))s)")
             return buffer
         } else if !buffer.isEmpty {
-            logger.info("⚠️ Buffer is stale (\(String(format: "%.1f", timeSinceLastKey))s old), ignoring: '\(self.buffer)'")
+            logger.info("⚠️ Buffer is stale (\(String(format: "%.1f", timeSinceLastKey))s old), trying clipboard...")
+            // Try clipboard as last resort for stale buffer
+            if let clipboardText = await getSelectionViaClipboard() {
+                logger.info("✅ Using clipboard selection (stale buffer): '\(clipboardText.prefix(50))' (\(clipboardText.count) chars)")
+                return clipboardText
+            }
         }
         
-        // Priority 3: Last resort - select word backward via keyboard
+        // Priority 4: Last resort - select word backward via keyboard
         logger.info("⚠️ No selection found, trying word selection backward...")
         postKeyEvent(keyCode: 0x7B, flags: [.maskAlternate, .maskShift]) // Option+Shift+Left
         try? await Task.sleep(nanoseconds: 80_000_000) // 80ms
@@ -395,15 +410,37 @@ final class EventMonitor {
             }
         }
         
-        // Fallback: try clipboard but only for the word we just selected
+        // Try clipboard for the word we just selected
+        if let clipboardText = await getSelectionViaClipboard() {
+            logger.info("✅ Selected word backward via clipboard: '\(clipboardText)' (\(clipboardText.count) chars)")
+            return clipboardText
+        }
+        
+        logger.warning("❌ Failed to get any text")
+        return ""
+    }
+    
+    /// Get selection via clipboard (Cmd+C) - for apps that don't support AX
+    private func getSelectionViaClipboard() async -> String? {
         let pb = NSPasteboard.general
         let originalContents = pb.string(forType: .string)
+        let originalChangeCount = pb.changeCount
         pb.clearContents()
         
         postKeyEvent(keyCode: 0x08, flags: .maskCommand) // Cmd+C
         try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
         
-        let result = pb.string(forType: .string) ?? ""
+        // Check if clipboard changed
+        guard pb.changeCount != originalChangeCount else {
+            // Clipboard didn't change - no selection or Cmd+C didn't work
+            if let original = originalContents {
+                pb.clearContents()
+                pb.setString(original, forType: .string)
+            }
+            return nil
+        }
+        
+        let result = pb.string(forType: .string)
         
         // Restore original clipboard
         if let original = originalContents {
@@ -411,12 +448,12 @@ final class EventMonitor {
             pb.setString(original, forType: .string)
         }
         
-        if !result.isEmpty {
-            logger.info("✅ Selected word backward via clipboard: '\(result)' (\(result.count) chars)")
-        } else {
-            logger.warning("❌ Failed to get any text")
+        // Validate result - should not be same as original (that would mean no selection)
+        if let result = result, !result.isEmpty, result != originalContents {
+            return result
         }
-        return result
+        
+        return nil
     }
     
     /// Get selected text via Accessibility API (kAXSelectedTextAttribute)

@@ -163,14 +163,7 @@ final class EventMonitor {
             phraseBuffer.append(chars)
             logger.info("⌨️ Typed: \(DecisionLogger.tokenSummary(chars), privacy: .public) | Buffer: \(DecisionLogger.tokenSummary(self.buffer), privacy: .public)")
             
-            // Reset cycling state on new input
-            Task { @MainActor in
-                await engine.resetCycling()
-                lastCorrectedLength = 0
-                lastCorrectedText = ""
-            }
-            
-            // Process on word boundaries
+            // Process on word boundaries (space/newline triggers auto-correction)
             if chars.rangeOfCharacter(from: .whitespacesAndNewlines) != nil {
                 logger.info("📍 Word boundary detected (space/newline) - processing buffer")
                 // Capture buffer content before clearing to avoid race condition
@@ -178,6 +171,13 @@ final class EventMonitor {
                 buffer = ""  // Clear immediately to prevent next char from being added
                 Task { @MainActor in
                     await self.processBufferContent(textToProcess)
+                }
+            } else {
+                // Reset cycling state only on non-whitespace input (new word being typed)
+                Task { @MainActor in
+                    await engine.resetCycling()
+                    lastCorrectedLength = 0
+                    lastCorrectedText = ""
                 }
             }
         } else {
@@ -243,7 +243,7 @@ final class EventMonitor {
             let textWithSpace = corrected + " "
             await replaceText(with: textWithSpace, originalLength: wordLength + 1)
             lastCorrectedLength = textWithSpace.count
-            lastCorrectedText = corrected
+            lastCorrectedText = textWithSpace  // Include space for accurate cycling
         } else {
             logger.info("ℹ️ No correction needed for: \(DecisionLogger.tokenSummary(text), privacy: .public)")
         }
@@ -261,20 +261,25 @@ final class EventMonitor {
         // After replaceText, selection is lost, so getSelectedTextFresh() returns garbage
         if await engine.hasCyclingState() && !lastCorrectedText.isEmpty {
             let savedLength = lastCorrectedLength
-            let savedText = lastCorrectedText
-            logger.info("🔄 CYCLING: using saved text (\(savedLength) chars)")
+            logger.info("🔄 CYCLING: using saved length (\(savedLength) chars)")
             DecisionLogger.shared.log("HOTKEY: CYCLING - savedLen=\(savedLength)")
             
             if let corrected = await engine.cycleCorrection(bundleId: bundleId) {
-                // Preserve trailing whitespace from saved text
-                let trailingWS = String(savedText.reversed().prefix(while: { $0.isWhitespace }).reversed())
-                let finalCorrected = corrected + trailingWS
+                // Check if we had trailing space (auto-correction adds space)
+                let hadSpace = await engine.cyclingHadTrailingSpace()
+                let finalCorrected = hadSpace ? corrected + " " : corrected
                 
-                logger.info("✅ CYCLING: → '\(corrected)' (deleting \(savedLength) chars)")
+                logger.info("✅ CYCLING: → '\(corrected)' (deleting \(savedLength) chars, hadSpace=\(hadSpace))")
                 DecisionLogger.shared.log("HOTKEY: CYCLE RESULT: '\(corrected)' (delete \(savedLength))")
                 await replaceText(with: finalCorrected, originalLength: savedLength)
                 lastCorrectedLength = finalCorrected.count
                 lastCorrectedText = finalCorrected
+                
+                // Switch layout to match cycled result
+                if let targetLang = await engine.getLastCorrectionTargetLanguage() {
+                    InputSourceManager.shared.switchTo(language: targetLang)
+                    logger.info("🔄 Switched system layout to: \(targetLang.rawValue)")
+                }
             }
             return
         }

@@ -351,14 +351,16 @@ final class EventMonitor {
         logger.info("🔍 Getting fresh selected text...")
         
         // Priority 1: Try Accessibility API FIRST (this is the actual selection)
-        let axText = getSelectedTextViaAccessibility()
-        logger.info("🔍 AX API returned: '\(axText ?? "nil")' (\(axText?.count ?? 0) chars)")
-        
-        if let axText = axText, !axText.isEmpty {
-            logger.info("✅ Using AX selected text: '\(axText)' (\(axText.count) chars)")
-            // Clear buffer since we have real selection
-            buffer = ""
-            return axText
+        if let axText = getSelectedTextViaAccessibility(), !axText.isEmpty {
+            // Sanity check: if visible chars are much less than total, something is wrong
+            let visibleChars = axText.filter { $0.isLetter || $0.isNumber || $0.isPunctuation || $0 == " " }.count
+            if visibleChars > 0 && Double(visibleChars) / Double(axText.count) > 0.3 {
+                logger.info("✅ Using AX selected text: '\(axText)' (\(axText.count) chars, \(visibleChars) visible)")
+                buffer = ""  // Clear buffer since we have real selection
+                return axText
+            } else {
+                logger.warning("⚠️ AX selection looks corrupted (\(visibleChars)/\(axText.count) visible), skipping")
+            }
         }
         
         // Priority 2: Use buffer ONLY if user JUST typed (not selected with mouse)
@@ -371,15 +373,17 @@ final class EventMonitor {
         }
         
         // Priority 3: Last resort - select word backward via keyboard
-        // NOTE: We do NOT use Cmd+C clipboard probing because it can copy entire line in some apps
         logger.info("⚠️ No selection found, trying word selection backward...")
         postKeyEvent(keyCode: 0x7B, flags: [.maskAlternate, .maskShift]) // Option+Shift+Left
         try? await Task.sleep(nanoseconds: 80_000_000) // 80ms
         
         // Now try AX again to get the selected word
         if let selectedWord = getSelectedTextViaAccessibility(), !selectedWord.isEmpty {
-            logger.info("✅ Selected word backward via AX: '\(selectedWord)' (\(selectedWord.count) chars)")
-            return selectedWord
+            let visibleChars = selectedWord.filter { $0.isLetter || $0.isNumber || $0.isPunctuation || $0 == " " }.count
+            if visibleChars > 0 {
+                logger.info("✅ Selected word backward via AX: '\(selectedWord)' (\(selectedWord.count) chars)")
+                return selectedWord
+            }
         }
         
         // Fallback: try clipboard but only for the word we just selected
@@ -422,6 +426,20 @@ final class EventMonitor {
               let text = selectedText as? String else {
             logger.debug("⚠️ AX: Could not get selected text attribute")
             return nil
+        }
+        
+        // Validate: if text has too many non-printable characters, it's garbage
+        let printableCount = text.filter { !$0.isWhitespace || $0 == " " || $0 == "\n" || $0 == "\t" }.count
+        let totalCount = text.count
+        if totalCount > 0 && printableCount == 0 {
+            logger.warning("⚠️ AX: Selection contains only non-printable chars, ignoring")
+            return nil
+        }
+        
+        // Log hex for debugging weird characters
+        if text.count != text.unicodeScalars.count || text.contains(where: { $0.asciiValue == nil && !$0.isLetter && !$0.isNumber && !$0.isPunctuation && !$0.isWhitespace }) {
+            let hex = text.unicodeScalars.map { String(format: "%04X", $0.value) }.joined(separator: " ")
+            logger.info("🔍 AX selection hex: \(hex)")
         }
         
         return text

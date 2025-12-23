@@ -361,31 +361,7 @@ final class EventMonitor {
             return axText
         }
         
-        // Priority 2: Try clipboard (Cmd+C to copy selection)
-        logger.info("⚠️ No AX selection, trying clipboard...")
-        let pb = NSPasteboard.general
-        let originalContents = pb.string(forType: .string)
-        pb.clearContents()
-
-        postKeyEvent(keyCode: 0x08, flags: .maskCommand) // Cmd+C
-        try? await Task.sleep(nanoseconds: 150_000_000) // 150ms - give more time
-        
-        if let selected = pb.string(forType: .string), 
-           !selected.isEmpty,
-           selected != originalContents {
-            logger.info("✅ Using clipboard selection: '\(selected)' (\(selected.count) chars)")
-            // Restore original clipboard
-            if let original = originalContents {
-                pb.clearContents()
-                pb.setString(original, forType: .string)
-            }
-            return selected
-        }
-        
-        // Priority 3: Use buffer ONLY if user JUST typed (not selected with mouse)
-        // Buffer should only be used for "convert last typed word" scenario
-        // If user selected text with mouse, buffer is stale
-        // We can detect this: if buffer is old (>2 sec since last keystroke), don't use it
+        // Priority 2: Use buffer ONLY if user JUST typed (not selected with mouse)
         let timeSinceLastKey = Date().timeIntervalSince(lastEventTime)
         if !buffer.isEmpty && timeSinceLastKey < 2.0 {
             logger.info("✅ Using recent buffer text: '\(self.buffer)' (\(self.buffer.count) chars, age: \(String(format: "%.1f", timeSinceLastKey))s)")
@@ -394,14 +370,25 @@ final class EventMonitor {
             logger.info("⚠️ Buffer is stale (\(String(format: "%.1f", timeSinceLastKey))s old), ignoring: '\(self.buffer)'")
         }
         
-        // Priority 4: Last resort - select word backward
+        // Priority 3: Last resort - select word backward via keyboard
+        // NOTE: We do NOT use Cmd+C clipboard probing because it can copy entire line in some apps
         logger.info("⚠️ No selection found, trying word selection backward...")
-        pb.clearContents()
         postKeyEvent(keyCode: 0x7B, flags: [.maskAlternate, .maskShift]) // Option+Shift+Left
-        try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
+        try? await Task.sleep(nanoseconds: 80_000_000) // 80ms
+        
+        // Now try AX again to get the selected word
+        if let selectedWord = getSelectedTextViaAccessibility(), !selectedWord.isEmpty {
+            logger.info("✅ Selected word backward via AX: '\(selectedWord)' (\(selectedWord.count) chars)")
+            return selectedWord
+        }
+        
+        // Fallback: try clipboard but only for the word we just selected
+        let pb = NSPasteboard.general
+        let originalContents = pb.string(forType: .string)
+        pb.clearContents()
         
         postKeyEvent(keyCode: 0x08, flags: .maskCommand) // Cmd+C
-        try? await Task.sleep(nanoseconds: 150_000_000) // 150ms
+        try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
         
         let result = pb.string(forType: .string) ?? ""
         
@@ -412,7 +399,7 @@ final class EventMonitor {
         }
         
         if !result.isEmpty {
-            logger.info("✅ Selected word backward: '\(result)' (\(result.count) chars)")
+            logger.info("✅ Selected word backward via clipboard: '\(result)' (\(result.count) chars)")
         } else {
             logger.warning("❌ Failed to get any text")
         }
@@ -453,13 +440,15 @@ final class EventMonitor {
     }
     
     private func replaceText(with newText: String, originalLength: Int) async {
-        logger.info("🔄 Replacing text: deleting \(originalLength) chars, typing \(DecisionLogger.tokenSummary(newText), privacy: .public)")
+        logger.info("🔄 Replacing text: deleting \(originalLength) chars, typing '\(newText)' (\(newText.count) chars, \(newText.utf16.count) utf16)")
         
         // Set flag to ignore our own events
         isReplacing = true
         defer { isReplacing = false }
         
         // Delete original text using backspace
+        // Note: backspace deletes one "character" as perceived by the text system,
+        // which usually corresponds to one Character (extended grapheme cluster)
         for _ in 0..<originalLength {
             postKeyEvent(keyCode: 0x33, flags: []) // Backspace key
         }

@@ -28,6 +28,7 @@ struct SettingsView: View {
                     Text("General").tag(0)
                     Text("Hotkey").tag(1)
                     Text("Apps").tag(2)
+                    Text("About").tag(3)
                 }
                 .pickerStyle(.segmented)
                 .padding(.horizontal, 40)
@@ -40,7 +41,8 @@ struct SettingsView: View {
                 switch selectedTab {
                 case 0: GeneralTab(settings: settings)
                 case 1: HotkeyTab(settings: settings)
-                default: AppsTab(settings: settings)
+                case 2: AppsTab(settings: settings)
+                default: AboutTab()
                 }
             }
         }
@@ -275,6 +277,47 @@ struct AppPickerSheet: View {
         }
         .padding(20)
         .frame(width: 300)
+    }
+}
+
+// MARK: - About Tab
+
+struct AboutTab: View {
+    private var appVersion: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
+    }
+    
+    private var buildNumber: String {
+        Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1"
+    }
+    
+    var body: some View {
+        VStack(spacing: 20) {
+            Spacer()
+            
+            VStack(spacing: 6) {
+                Text("Oh My F***ing Keyboard")
+                    .font(.system(size: 14))
+                    .foregroundStyle(.secondary)
+            }
+            
+            Text("Version \(appVersion) (\(buildNumber))")
+                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                .foregroundStyle(.tertiary)
+            
+            Spacer()
+            
+            VStack(spacing: 4) {
+                Text("Created by Alex Chernysh")
+                    .font(.system(size: 12, weight: .medium))
+                Text("© 2025")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.tertiary)
+            }
+            
+            Spacer()
+        }
+        .padding(20)
     }
 }
 

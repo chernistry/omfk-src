@@ -246,7 +246,7 @@ cmd_test() {
 
 cmd_eval_synthetic() {
   info "Running synthetic evaluation..."
-  local cases="${OMFK_SYNTH_EVAL_CASES_PER_LANG:-300}"
+  local cases="${OMFK_SYNTH_EVAL_CASES_PER_LANG:-500}"
   local seed="${OMFK_SYNTH_EVAL_SEED:-42}"
   local min="${OMFK_SYNTH_EVAL_MIN_OUTPUT_ACC:-}"
   say "Env:"

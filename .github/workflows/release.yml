@@ -58,6 +58,13 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "📦 Building version: $VERSION"
       
+      - name: Update Info.plist version
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" OMFK/Info.plist
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $VERSION" OMFK/Info.plist
+          echo "✅ Updated Info.plist to version $VERSION"
+      
       - name: Build release
         run: |
           swift build -c release

@@ -226,10 +226,8 @@ actor CorrectionEngine {
             return nil
         }
         
-        // Check if we're cycling through alternatives for the same text
-        if let state = cyclingState, state.originalText == text || state.alternatives.contains(where: { $0.text == text }) {
-            return await cycleCorrection(bundleId: bundleId)
-        }
+        // Note: cycling is now managed by EventMonitor, not here
+        // This function always creates fresh alternatives
         
         let activeLayouts = await settings.activeLayouts
         

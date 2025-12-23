@@ -143,11 +143,6 @@ public final class CoreMLLayoutClassifier {
             // Argmax
             let (maxIndex, maxScore) = argmax(scores)
             
-            // DEBUG: Log prediction without persisting raw typed text.
-            let predictedLabel = maxIndex < CoreMLLayoutClassifier.classLabels.count ? CoreMLLayoutClassifier.classLabels[maxIndex] : "unknown"
-            let tokenInfo = DecisionLogger.tokenSummary(text)
-            DecisionLogger.shared.log("COREML_RAW: \(tokenInfo) -> \(predictedLabel) (idx:\(maxIndex), conf:\(String(format: "%.2f", maxScore)))")
-            
             if maxIndex < CoreMLLayoutClassifier.classLabels.count {
                 let label = CoreMLLayoutClassifier.classLabels[maxIndex]
                 if let hypothesis = LanguageHypothesis(rawValue: label) {

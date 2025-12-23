@@ -615,9 +615,11 @@ actor ConfidenceRouter {
         // These are deliberately small; they shouldn't override strong evidence.
         switch hypothesis {
         case .heFromRuLayout:
-            return -0.08 // RU→HE is rarer than RU→EN for Cyrillic gibberish.
+            return -0.28 // RU→HE is rarer than RU→EN for Cyrillic gibberish.
         case .ruFromHeLayout:
-            return -0.03 // HE→RU is rarer than HE→EN for Hebrew gibberish.
+            return 0.06 // Encourage HE→RU when Russian looks strong.
+        case .enFromHeLayout:
+            return 0.08 // Hebrew-QWERTY collisions: prefer EN.
         default:
             return 0.0
         }
@@ -660,6 +662,10 @@ actor ConfidenceRouter {
         let dominant = dominantScriptLanguage(token)
 
         var best: Candidate? = nil
+        var bestEnFromHe: Candidate? = nil
+        var bestRuFromHe: Candidate? = nil
+        var bestEnFromRu: Candidate? = nil
+        var bestHeFromRu: Candidate? = nil
         for (hyp, source, target) in mapped {
             // Script gate: don't consider hypotheses whose source script doesn't match the token.
             // This prevents false positives for already-correct text with punctuation (e.g. "how,what").
@@ -678,9 +684,50 @@ actor ConfidenceRouter {
             }
             let cand = Candidate(hypothesis: hyp, target: target, converted: converted, targetWord: targetWord, targetFreq: targetFreq, q: q, isWhitelisted: whitelisted)
             if best == nil || cand.q > best!.q { best = cand }
+
+            switch hyp {
+            case .enFromHeLayout:
+                if bestEnFromHe == nil || cand.q > bestEnFromHe!.q { bestEnFromHe = cand }
+            case .ruFromHeLayout:
+                if bestRuFromHe == nil || cand.q > bestRuFromHe!.q { bestRuFromHe = cand }
+            case .enFromRuLayout:
+                if bestEnFromRu == nil || cand.q > bestEnFromRu!.q { bestEnFromRu = cand }
+            case .heFromRuLayout:
+                if bestHeFromRu == nil || cand.q > bestHeFromRu!.q { bestHeFromRu = cand }
+            default:
+                break
+            }
         }
 
-        guard let best else { return nil }
+        guard var best = best else { return nil }
+
+        // Tie-break: for ambiguous scripts, prefer the more plausible correction target
+        // instead of letting small scoring noise flip between EN/RU/HE.
+        if dominant == .hebrew, let en = bestEnFromHe, let ru = bestRuFromHe {
+            let enStrong = en.isWhitelisted || en.targetWord >= 0.92 || en.targetFreq >= 0.50
+            let ruStrong = ru.isWhitelisted || ru.targetWord >= 0.92 || ru.targetFreq >= 0.50
+
+            if enStrong, !ruStrong, en.q + 0.05 >= ru.q {
+                best = en
+            } else if ruStrong, !enStrong, ru.q + 0.05 >= en.q {
+                best = ru
+            } else if enStrong, ruStrong {
+                // Prefer EN when both are strong and close.
+                if en.q >= ru.q - 0.10 { best = en }
+            }
+        }
+
+        if dominant == .russian, let en = bestEnFromRu, let he = bestHeFromRu {
+            let enStrong = en.isWhitelisted || en.targetWord >= 0.92 || en.targetFreq >= 0.50
+            let heStrong = he.isWhitelisted || he.targetWord >= 0.92 || he.targetFreq >= 0.50
+
+            // Prefer EN unless Hebrew is clearly stronger (Hebrew-on-Russian-layout is rare).
+            if enStrong, !heStrong, en.q + 0.05 >= he.q {
+                best = en
+            } else if enStrong, heStrong, en.q >= he.q - 0.15 {
+                best = en
+            }
+        }
 
         // Collision handler for Hebrew-QWERTY: the typed Hebrew token can be a valid Hebrew word,
         // but the mapped EN/RU candidate is also a very plausible, high-frequency word.
@@ -707,9 +754,9 @@ actor ConfidenceRouter {
 
             // For auto mode: require very strong target evidence + clear frequency advantage.
             // For manual mode: be a bit more permissive.
-            let minTargetWord = mode == .manual ? 0.92 : 0.96
-            let minTargetFreq = mode == .manual ? 0.30 : 0.45
-            let minFreqGain = mode == .manual ? 0.12 : 0.18
+            let minTargetWord = mode == .manual ? 0.90 : 0.90
+            let minTargetFreq = mode == .manual ? 0.25 : 0.25
+            let minFreqGain = mode == .manual ? 0.08 : 0.10
 
             let sourceLooksIntentionallyHebrew = srcBuiltin >= 0.99 && srcWord >= 0.95
             let sourceHasFinalArtefact = endsWithHebrewNonFinalForm(token)
@@ -727,6 +774,9 @@ actor ConfidenceRouter {
         // Only accept if the best mapped hypothesis is substantially better than any as-is option.
         let letterCount = token.filter { $0.isLetter }.count
         var requiredMargin = letterCount <= 3 ? thresholds.shortWordMargin : thresholds.longWordMargin
+        if dominant == .hebrew {
+            requiredMargin = letterCount <= 3 ? 0.10 : max(0.25, requiredMargin - 0.40)
+        }
         if dominant == .hebrew, endsWithHebrewNonFinalForm(token) {
             // Reduce the barrier a bit: Hebrew words ending in non-final forms are often mapping artefacts.
             requiredMargin = max(0.10, requiredMargin - 0.10)

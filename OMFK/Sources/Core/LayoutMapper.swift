@@ -225,6 +225,19 @@ public final class LayoutMapper: @unchecked Sendable {
     private static let boundaryPunctuation: Set<Character> = [
         ".", ",", "!", "?", ":", ";", "-", "(", ")", "[", "]", "{", "}"
     ]
+
+    // Some Hebrew layout outputs use combining marks (notably dagesh U+05BC) that may join with the
+    // preceding letter into a single grapheme cluster. Split only these cases to keep mapping reversible.
+    private static let splitCombiningScalarValues: Set<UInt32> = [0x05BC]
+
+    private static func splitIfNeeded(_ ch: Character) -> [Character] {
+        let scalars = Array(ch.unicodeScalars)
+        guard scalars.count > 1,
+              scalars.contains(where: { splitCombiningScalarValues.contains($0.value) }) else {
+            return [ch]
+        }
+        return scalars.map(Character.init)
+    }
     
     /// Converts text from source layout to target layout
     public func convert(_ text: String, fromLayout: String, toLayout: String) -> String? {
@@ -235,28 +248,29 @@ public final class LayoutMapper: @unchecked Sendable {
         
         var result = ""
         result.reserveCapacity(text.count)
-        
-        let chars = Array(text)
-        for (i, char) in chars.enumerated() {
-            // Preserve special characters that aren't layout-dependent
-            if Self.preserveChars.contains(char) {
-                result.append(char)
-                continue
-            }
-            
-            if let (keyCode, mod) = sourceMap[char],
-               let targetMapping = fullMap[keyCode]?[toLayout] {
-                let targetChar: String?
-                switch mod {
-                case "n": targetChar = targetMapping.n
-                case "s": targetChar = targetMapping.s
-                case "a": targetChar = targetMapping.a
-                case "sa": targetChar = targetMapping.sa
-                default: targetChar = nil
+
+        for char in text {
+            for c in Self.splitIfNeeded(char) {
+                // Preserve special characters that aren't layout-dependent
+                if Self.preserveChars.contains(c) {
+                    result.append(c)
+                    continue
                 }
-                result.append(targetChar ?? String(char))
-            } else {
-                result.append(char)
+
+                if let (keyCode, mod) = sourceMap[c],
+                   let targetMapping = fullMap[keyCode]?[toLayout] {
+                    let targetChar: String?
+                    switch mod {
+                    case "n": targetChar = targetMapping.n
+                    case "s": targetChar = targetMapping.s
+                    case "a": targetChar = targetMapping.a
+                    case "sa": targetChar = targetMapping.sa
+                    default: targetChar = nil
+                    }
+                    result.append(targetChar ?? String(c))
+                } else {
+                    result.append(c)
+                }
             }
         }
         return result
@@ -287,7 +301,7 @@ public final class LayoutMapper: @unchecked Sendable {
         var result = ""
         result.reserveCapacity(text.count)
 
-        var buffer = ""
+        var buffer: [Character] = []
         buffer.reserveCapacity(text.count)
 
         func flushBuffer() {
@@ -295,7 +309,7 @@ public final class LayoutMapper: @unchecked Sendable {
             if let converted = convertAmbiguousWord(buffer, fromLayout: fromLayout, toLayout: toLayout, candidatesMap: candidatesMap, fullMap: fullMap, targetLanguage: targetLanguage, targetNgram: targetNgram, targetUnigram: targetUnigram) {
                 result.append(contentsOf: converted)
             } else {
-                result.append(contentsOf: buffer)
+                result.append(contentsOf: String(buffer))
             }
             buffer.removeAll(keepingCapacity: true)
         }
@@ -333,27 +347,29 @@ public final class LayoutMapper: @unchecked Sendable {
         }
 
         for char in text {
-            if isConvertibleWordChar(char) {
-                buffer.append(char)
-                continue
-            }
-
-            flushBuffer()
-
-            // Convert non-letters deterministically (punctuation often isn't ambiguous).
-            if let (keyCode, mod) = sourceMap[char],
-               let targetMapping = fullMap[keyCode]?[toLayout] {
-                let targetChar: String?
-                switch mod {
-                case "n": targetChar = targetMapping.n
-                case "s": targetChar = targetMapping.s
-                case "a": targetChar = targetMapping.a
-                case "sa": targetChar = targetMapping.sa
-                default: targetChar = nil
+            for c in Self.splitIfNeeded(char) {
+                if isConvertibleWordChar(c) {
+                    buffer.append(c)
+                    continue
                 }
-                result.append(targetChar ?? String(char))
-            } else {
-                result.append(char)
+
+                flushBuffer()
+
+                // Convert non-letters deterministically (punctuation often isn't ambiguous).
+                if let (keyCode, mod) = sourceMap[c],
+                   let targetMapping = fullMap[keyCode]?[toLayout] {
+                    let targetChar: String?
+                    switch mod {
+                    case "n": targetChar = targetMapping.n
+                    case "s": targetChar = targetMapping.s
+                    case "a": targetChar = targetMapping.a
+                    case "sa": targetChar = targetMapping.sa
+                    default: targetChar = nil
+                    }
+                    result.append(targetChar ?? String(c))
+                } else {
+                    result.append(c)
+                }
             }
         }
 
@@ -385,7 +401,7 @@ public final class LayoutMapper: @unchecked Sendable {
     }
 
     private func convertAmbiguousWord(
-        _ word: String,
+        _ word: [Character],
         fromLayout: String,
         toLayout: String,
         candidatesMap: [Character: [(key: String, mod: String)]]?,
@@ -419,6 +435,14 @@ public final class LayoutMapper: @unchecked Sendable {
             var bestPenaltyByChar: [Character: Double] = [:]
             bestPenaltyByChar.reserveCapacity(max(1, keyCands.count))
 
+            let allowHyphenOutput: Bool = {
+                // Hyphen-like graphemes can appear from layout conversions (e.g. RU "где-то" → HE text).
+                // When decoding back to the target language, prefer preserving the hyphen over mapping
+                // it to a letter from an alternative key candidate.
+                let s = String(ch)
+                return s == "-" || s == "–" || s == "—" || s == "־"
+            }()
+
             for (key, mod) in keyCands {
                 guard let mapping = fullMap[key]?[toLayout] else { continue }
                 let targetChar: String?
@@ -429,7 +453,7 @@ public final class LayoutMapper: @unchecked Sendable {
                 case "sa": targetChar = mapping.sa
                 default: targetChar = nil
                 }
-                if let s = targetChar, s.count == 1, let c = s.first, c.isLetter {
+                if let s = targetChar, s.count == 1, let c = s.first, (c.isLetter || (allowHyphenOutput && c == "-")) {
                     let p = modPenalty(mod)
                     if let existing = bestPenaltyByChar[c] {
                         if p < existing { bestPenaltyByChar[c] = p }
@@ -465,8 +489,9 @@ public final class LayoutMapper: @unchecked Sendable {
             let wconf: Double = (unigramHit || whitelistHit) ? 1.0 : 0.0
             let freq = targetUnigram?.score(candidate) ?? 0.0
             let ngram = targetNgram.normalizedScore(candidate)
-            let ngramWeight = candidate.count >= 3 ? 0.8 : 0.0
-            let freqWeight = candidate.count <= 3 ? 0.8 : 1.4
+            let isEnglish = lang == .english
+            let ngramWeight = candidate.count >= 3 ? (isEnglish ? 0.45 : 0.8) : 0.0
+            let freqWeight = candidate.count <= 3 ? (isEnglish ? 1.2 : 0.8) : (isEnglish ? 2.0 : 1.4)
             let builtinBonus: Double
             if let lang, BuiltinLexicon.contains(candidate, language: lang) {
                 builtinBonus = candidate.count <= 3 ? 1.2 : 0.6

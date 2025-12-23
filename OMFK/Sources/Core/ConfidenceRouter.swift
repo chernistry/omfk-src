@@ -662,10 +662,6 @@ actor ConfidenceRouter {
         let dominant = dominantScriptLanguage(token)
 
         var best: Candidate? = nil
-        var bestEnFromHe: Candidate? = nil
-        var bestRuFromHe: Candidate? = nil
-        var bestEnFromRu: Candidate? = nil
-        var bestHeFromRu: Candidate? = nil
         for (hyp, source, target) in mapped {
             // Script gate: don't consider hypotheses whose source script doesn't match the token.
             // This prevents false positives for already-correct text with punctuation (e.g. "how,what").
@@ -684,50 +680,9 @@ actor ConfidenceRouter {
             }
             let cand = Candidate(hypothesis: hyp, target: target, converted: converted, targetWord: targetWord, targetFreq: targetFreq, q: q, isWhitelisted: whitelisted)
             if best == nil || cand.q > best!.q { best = cand }
-
-            switch hyp {
-            case .enFromHeLayout:
-                if bestEnFromHe == nil || cand.q > bestEnFromHe!.q { bestEnFromHe = cand }
-            case .ruFromHeLayout:
-                if bestRuFromHe == nil || cand.q > bestRuFromHe!.q { bestRuFromHe = cand }
-            case .enFromRuLayout:
-                if bestEnFromRu == nil || cand.q > bestEnFromRu!.q { bestEnFromRu = cand }
-            case .heFromRuLayout:
-                if bestHeFromRu == nil || cand.q > bestHeFromRu!.q { bestHeFromRu = cand }
-            default:
-                break
-            }
         }
 
-        guard var best = best else { return nil }
-
-        // Tie-break: for ambiguous scripts, prefer the more plausible correction target
-        // instead of letting small scoring noise flip between EN/RU/HE.
-        if dominant == .hebrew, let en = bestEnFromHe, let ru = bestRuFromHe {
-            let enStrong = en.isWhitelisted || en.targetWord >= 0.92 || en.targetFreq >= 0.50
-            let ruStrong = ru.isWhitelisted || ru.targetWord >= 0.92 || ru.targetFreq >= 0.50
-
-            if enStrong, !ruStrong, en.q + 0.05 >= ru.q {
-                best = en
-            } else if ruStrong, !enStrong, ru.q + 0.05 >= en.q {
-                best = ru
-            } else if enStrong, ruStrong {
-                // Prefer EN when both are strong and close.
-                if en.q >= ru.q - 0.10 { best = en }
-            }
-        }
-
-        if dominant == .russian, let en = bestEnFromRu, let he = bestHeFromRu {
-            let enStrong = en.isWhitelisted || en.targetWord >= 0.92 || en.targetFreq >= 0.50
-            let heStrong = he.isWhitelisted || he.targetWord >= 0.92 || he.targetFreq >= 0.50
-
-            // Prefer EN unless Hebrew is clearly stronger (Hebrew-on-Russian-layout is rare).
-            if enStrong, !heStrong, en.q + 0.05 >= he.q {
-                best = en
-            } else if enStrong, heStrong, en.q >= he.q - 0.15 {
-                best = en
-            }
-        }
+        guard let best else { return nil }
 
         // Collision handler for Hebrew-QWERTY: the typed Hebrew token can be a valid Hebrew word,
         // but the mapped EN/RU candidate is also a very plausible, high-frequency word.

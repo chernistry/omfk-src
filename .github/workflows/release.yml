@@ -99,7 +99,7 @@ jobs:
             --repo "$RELEASES_REPO" \
             --title "OMFK $TAG" \
             --notes "## OMFK $TAG
-          
+
 Download the DMG and drag OMFK to Applications.
 
 **Requirements:** macOS 14.0+

@@ -405,6 +405,45 @@ This approach aligns with best practices:
 - Alt #3 → `привет` (back to original)
 - **Result: ✅ PASS**
 
+**Test: Cycling with selected text in TextEdit**
+- Input: `נתרצנ целенаправленно yfgbcfyysq ד неправильной הפצרכפלרת`
+- Select all → Alt
+- **Result: ✅ PASS** (works via Accessibility API)
+
+**Test: Cycling with selected text in Sublime Text**
+- Input: Same mixed-layout text
+- Select all → Alt
+- `Fresh selection: '' (0 chars)` — Accessibility API returns empty
+- **Result: ❌ FAIL** — Sublime Text doesn't support AX selection
+
+### Known Issue: Apps Without Accessibility Support
+
+**Problem:** Some apps (Sublime Text, VS Code, etc.) don't expose selected text via Accessibility API (`kAXSelectedTextAttribute` returns empty).
+
+**Current behavior:** 
+- `getSelectedTextFresh()` tries AX first, falls back to buffer
+- But buffer is empty if text was pasted (not typed)
+- Result: "no text to correct"
+
+**Required fix:** Implement clipboard-based fallback for apps without AX support:
+1. Detect if app supports AX selection (cache per bundle ID)
+2. If not, use clipboard fallback:
+   - Save current clipboard
+   - Send Cmd+C to copy selection
+   - Read clipboard
+   - Restore original clipboard
+3. Use detected text for correction
+
+**Apps known to need fallback:**
+- Sublime Text (`com.sublimetext.4`)
+- VS Code (`com.microsoft.VSCode`)
+- Terminal (`com.apple.Terminal`)
+
+**Apps with working AX support:**
+- TextEdit (`com.apple.TextEdit`)
+- Typora (`abnerworks.Typora`)
+- Safari (`com.apple.Safari`)
+
 ### Next Steps
 
 1. ~~Restart OMFK with `OMFK_DEBUG_LOG=1`~~ ✅

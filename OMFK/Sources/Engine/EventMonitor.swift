@@ -334,7 +334,12 @@ final class EventMonitor {
         let timeSinceLastCorrection = Date().timeIntervalSince(lastCorrectionTime)
         let noNewTyping = buffer.isEmpty && timeSinceLastCorrection < 3.0
         
-        if hasCycling && noNewTyping && lastCorrectedLength > 0 {
+        // But first check if there's a fresh selection - it takes priority over cycling
+        let freshSelection = await getSelectedTextFresh()
+        let hasNewSelection = lastSelectionWasExplicit && !freshSelection.isEmpty && 
+                              freshSelection.trimmingCharacters(in: .whitespacesAndNewlines) != lastCorrectedText.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        if hasCycling && noNewTyping && lastCorrectedLength > 0 && !hasNewSelection {
             let savedLength = lastCorrectedLength
             
             // Get the expected length from cycling state to verify consistency
@@ -375,8 +380,7 @@ final class EventMonitor {
             }
         }
         
-        // Get fresh selection or buffer for new correction
-        let freshSelection = await getSelectedTextFresh()
+        // Use fresh selection for new correction
         let rawText = freshSelection
         let hex = rawText.unicodeScalars.prefix(20).map { String(format: "%04X", $0.value) }.joined(separator: " ")
         logger.info("📝 Fresh selection: '\(rawText)' (\(rawText.count) chars) hex: \(hex)")
@@ -447,6 +451,7 @@ final class EventMonitor {
     private func getSelectedTextFresh() async -> String {
         lastSelectionWasExplicit = false
         let timeSinceLastKey = Date().timeIntervalSince(lastEventTime)
+        let bundleId = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
         
         // Fast path: use buffer if fresh (< 0.5s)
         if !buffer.isEmpty && timeSinceLastKey < 0.5 {
@@ -454,10 +459,28 @@ final class EventMonitor {
             return buffer
         }
         
-        // Try AX selection (instant, no delay)
-        if let axText = getSelectedTextViaAccessibility(), !axText.isEmpty {
-            lastSelectionWasExplicit = true
-            return axText
+        // Check if this app is known to not support AX selection
+        if appsWithoutAXSelection.contains(bundleId) {
+            // Go straight to clipboard fallback
+            if let clipboardText = await getSelectedTextViaClipboard() {
+                lastSelectionWasExplicit = true
+                return clipboardText
+            }
+        } else {
+            // Try AX selection first (instant, no delay)
+            if let axText = getSelectedTextViaAccessibility(), !axText.isEmpty {
+                lastSelectionWasExplicit = true
+                return axText
+            }
+            
+            // AX returned empty - try clipboard fallback
+            if let clipboardText = await getSelectedTextViaClipboard(), !clipboardText.isEmpty {
+                // Remember this app doesn't support AX selection
+                appsWithoutAXSelection.insert(bundleId)
+                logger.info("📋 App '\(bundleId)' added to clipboard fallback list")
+                lastSelectionWasExplicit = true
+                return clipboardText
+            }
         }
         
         // Fallback to buffer even if stale
@@ -467,6 +490,59 @@ final class EventMonitor {
         }
         
         return ""
+    }
+    
+    /// Get selected text via clipboard (Cmd+C) - fallback for apps without AX support
+    private func getSelectedTextViaClipboard() async -> String? {
+        let pasteboard = NSPasteboard.general
+        
+        // Save current clipboard content
+        let savedContent = pasteboard.string(forType: .string)
+        let savedChangeCount = pasteboard.changeCount
+        
+        // Clear clipboard to detect if copy worked
+        pasteboard.clearContents()
+        
+        // Send Cmd+C
+        guard let cmdC_down = CGEvent(keyboardEventSource: syntheticEventSource, virtualKey: 8, keyDown: true),
+              let cmdC_up = CGEvent(keyboardEventSource: syntheticEventSource, virtualKey: 8, keyDown: false) else {
+            // Restore clipboard
+            if let saved = savedContent {
+                pasteboard.clearContents()
+                pasteboard.setString(saved, forType: .string)
+            }
+            return nil
+        }
+        
+        cmdC_down.flags = .maskCommand
+        cmdC_up.flags = .maskCommand
+        
+        if let proxy = currentProxy {
+            cmdC_down.tapPostEvent(proxy)
+            cmdC_up.tapPostEvent(proxy)
+        } else {
+            cmdC_down.post(tap: .cghidEventTap)
+            cmdC_up.post(tap: .cghidEventTap)
+        }
+        
+        // Wait for clipboard to update
+        try? await Task.sleep(nanoseconds: 150_000_000) // 150ms
+        
+        // Check if clipboard changed
+        let newContent = pasteboard.string(forType: .string)
+        let gotNewContent = pasteboard.changeCount != savedChangeCount && newContent != nil
+        
+        // Restore original clipboard
+        if let saved = savedContent {
+            pasteboard.clearContents()
+            pasteboard.setString(saved, forType: .string)
+        }
+        
+        if gotNewContent {
+            return newContent
+        }
+        
+        return nil
     }
     
     /// Get selected text via Accessibility API
@@ -515,7 +591,57 @@ final class EventMonitor {
     
     /// Type over selected text
     private func typeOverSelection(with newText: String) async {
-        typeUnicodeString(newText)
+        let bundleId = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
+        
+        // For apps without AX support, use clipboard paste instead of typing
+        if appsWithoutAXSelection.contains(bundleId) {
+            await pasteText(newText)
+        } else {
+            typeUnicodeString(newText)
+        }
+    }
+    
+    /// Paste text via clipboard (Cmd+V) - for apps that don't accept CGEvent typing
+    private func pasteText(_ text: String) async {
+        let pasteboard = NSPasteboard.general
+        
+        // Save current clipboard
+        let savedContent = pasteboard.string(forType: .string)
+        
+        // Set new content
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+        
+        // Send Cmd+V
+        guard let cmdV_down = CGEvent(keyboardEventSource: syntheticEventSource, virtualKey: 9, keyDown: true),
+              let cmdV_up = CGEvent(keyboardEventSource: syntheticEventSource, virtualKey: 9, keyDown: false) else {
+            // Restore clipboard
+            if let saved = savedContent {
+                pasteboard.clearContents()
+                pasteboard.setString(saved, forType: .string)
+            }
+            return
+        }
+        
+        cmdV_down.flags = .maskCommand
+        cmdV_up.flags = .maskCommand
+        
+        if let proxy = currentProxy {
+            cmdV_down.tapPostEvent(proxy)
+            cmdV_up.tapPostEvent(proxy)
+        } else {
+            cmdV_down.post(tap: .cghidEventTap)
+            cmdV_up.post(tap: .cghidEventTap)
+        }
+        
+        // Wait for paste to complete
+        try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
+        
+        // Restore original clipboard
+        if let saved = savedContent {
+            pasteboard.clearContents()
+            pasteboard.setString(saved, forType: .string)
+        }
     }
     
     private func replaceText(with newText: String, originalLength: Int) async {

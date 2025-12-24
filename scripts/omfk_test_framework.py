@@ -332,11 +332,11 @@ class OMFKTestFramework:
 # ==================== Test Runner ====================
 
 def run_test_cycling_after_autocorrect():
-    """Test: Cycling should work after auto-correction."""
+    """Test: Cycling should work with selected text in Sublime Text."""
     fw = OMFKTestFramework()
     
     print("=" * 60)
-    print("Test: Cycling after auto-correction")
+    print("Test: Cycling with SELECTED text in Sublime Text")
     print("=" * 60)
     
     # Check OMFK
@@ -344,117 +344,113 @@ def run_test_cycling_after_autocorrect():
         print("❌ OMFK is not running!")
         return False
     
-    # Close any existing TextEdit windows without saving
-    print("Closing existing TextEdit windows...")
-    subprocess.run(['osascript', '-e', '''
-        tell application "TextEdit"
-            close every window saving no
-        end tell
-    '''], capture_output=True)
-    fw.wait(0.3)
-    
-    # Open fresh TextEdit document
-    print("Opening fresh TextEdit document...")
-    subprocess.run(['osascript', '-e', '''
-        tell application "TextEdit"
-            activate
-            make new document
-        end tell
-    '''], capture_output=True)
-    fw.wait(0.5)
-    
-    # Ensure focus is in the text area by clicking
-    subprocess.run(['osascript', '-e', '''
-        tell application "System Events"
-            tell process "TextEdit"
-                set frontmost to true
-                -- Click in the text area
-                click text area 1 of scroll area 1 of window 1
-            end tell
-        end tell
-    '''], capture_output=True)
-    fw.wait(0.5)
-    
-    # Double-check TextEdit is frontmost
-    subprocess.run(['osascript', '-e', 'tell application "TextEdit" to activate'], capture_output=True)
-    fw.wait(0.5)
-    
-    # Verify TextEdit is active
-    app_info = fw.get_frontmost_app()
-    print(f"   Active app: {app_info['name']}")
-    if app_info['name'] != 'TextEdit':
-        print("❌ TextEdit is not active!")
-        return False
-    
-    # Note: Layout switching is unreliable via automation
-    # The test will work with whatever layout triggers auto-correction
-    print("Note: Test works with any layout that triggers auto-correction")
-    
     fw.clear_log()
     
-    # Activate TextEdit RIGHT BEFORE typing (no subprocess calls between)
-    subprocess.run(['osascript', '-e', 'tell application "TextEdit" to activate'], capture_output=True)
-    time.sleep(0.5)
-    
-    # Type word in wrong layout (ghbdtn = привет on RU keyboard)
-    print("\n1. Typing 'ghbdtn' + space (should trigger auto-correction)...")
-    fw.type_text("ghbdtn")
-    fw.take_screenshot("01_after_type")
-    
-    text_before_space = fw.get_element_value()
-    print(f"   Text before space: '{text_before_space.strip()}'")
-    
-    fw.press_space()  # Triggers auto-correction
+    # Open Sublime Text
+    print("Opening Sublime Text...")
+    subprocess.run(['osascript', '-e', '''
+        tell application "Sublime Text"
+            activate
+        end tell
+    '''], capture_output=True)
     fw.wait(1.0)
-    fw.take_screenshot("03_after_space")
     
-    text_after_auto = fw.get_element_value()
-    print(f"   Text after auto-correction: '{text_after_auto.strip()}'")
-    
-    # Check log
-    log = fw.get_log()
-    has_correction = "CORRECTION APPLIED" in log
-    print(f"   Auto-correction triggered: {has_correction}")
-    
-    # Press Option to cycle
-    print("\n2. Pressing Option (should cycle to original)...")
-    fw.press_option()
+    # Create new file
+    print("Creating new file (Cmd+N)...")
+    event = CGEventCreateKeyboardEvent(None, 45, True)  # 'n' = keycode 45
+    CGEventSetFlags(event, Quartz.kCGEventFlagMaskCommand)
+    CGEventPost(kCGHIDEventTap, event)
+    event = CGEventCreateKeyboardEvent(None, 45, False)
+    CGEventSetFlags(event, Quartz.kCGEventFlagMaskCommand)
+    CGEventPost(kCGHIDEventTap, event)
     fw.wait(0.5)
-    fw.take_screenshot("04_after_option1")
     
-    text_after_opt1 = fw.get_element_value()
-    print(f"   Text after Option #1: '{text_after_opt1.strip()}'")
+    # Test text
+    test_text = "נתרצנ целенаправленно yfgbcfyysq ד неправильной הפצרכפלרת"
+    print(f"\n1. Pasting test text via clipboard...")
+    
+    # Copy to clipboard and paste
+    subprocess.run(['osascript', '-e', f'set the clipboard to "{test_text}"'], capture_output=True)
+    fw.wait(0.2)
+    
+    # Paste (Cmd+V)
+    event = CGEventCreateKeyboardEvent(None, 9, True)  # 'v' = keycode 9
+    CGEventSetFlags(event, Quartz.kCGEventFlagMaskCommand)
+    CGEventPost(kCGHIDEventTap, event)
+    event = CGEventCreateKeyboardEvent(None, 9, False)
+    CGEventSetFlags(event, Quartz.kCGEventFlagMaskCommand)
+    CGEventPost(kCGHIDEventTap, event)
+    fw.wait(0.5)
+    
+    # Select all (Cmd+A)
+    print("2. Selecting all text (Cmd+A)...")
+    event = CGEventCreateKeyboardEvent(None, 0, True)  # 'a' = keycode 0
+    CGEventSetFlags(event, Quartz.kCGEventFlagMaskCommand)
+    CGEventPost(kCGHIDEventTap, event)
+    event = CGEventCreateKeyboardEvent(None, 0, False)
+    CGEventSetFlags(event, Quartz.kCGEventFlagMaskCommand)
+    CGEventPost(kCGHIDEventTap, event)
+    fw.wait(0.5)
+    
+    # Check what's selected via clipboard (Cmd+C)
+    event = CGEventCreateKeyboardEvent(None, 8, True)  # 'c' = keycode 8
+    CGEventSetFlags(event, Quartz.kCGEventFlagMaskCommand)
+    CGEventPost(kCGHIDEventTap, event)
+    event = CGEventCreateKeyboardEvent(None, 8, False)
+    CGEventSetFlags(event, Quartz.kCGEventFlagMaskCommand)
+    CGEventPost(kCGHIDEventTap, event)
+    fw.wait(0.3)
+    
+    result = subprocess.run(['osascript', '-e', 'get the clipboard'], capture_output=True, text=True)
+    text_before = result.stdout.strip()
+    print(f"   Selected text: '{text_before[:50]}...'")
+    
+    # Press Option to correct selected text
+    print("\n3. Pressing Option (should correct selected text)...")
+    fw.press_option()
+    fw.wait(1.0)
+    
+    # Copy result
+    event = CGEventCreateKeyboardEvent(None, 8, True)
+    CGEventSetFlags(event, Quartz.kCGEventFlagMaskCommand)
+    CGEventPost(kCGHIDEventTap, event)
+    event = CGEventCreateKeyboardEvent(None, 8, False)
+    CGEventSetFlags(event, Quartz.kCGEventFlagMaskCommand)
+    CGEventPost(kCGHIDEventTap, event)
+    fw.wait(0.3)
+    
+    result = subprocess.run(['osascript', '-e', 'get the clipboard'], capture_output=True, text=True)
+    text_after_opt1 = result.stdout.strip()
+    print(f"   Text after Option #1: '{text_after_opt1[:50]}...'")
     
     # Press Option again
-    print("\n3. Pressing Option again...")
-    fw.press_option()
-    fw.wait(0.5)
-    fw.take_screenshot("05_after_option2")
-    
-    text_after_opt2 = fw.get_element_value()
-    print(f"   Text after Option #2: '{text_after_opt2.strip()}'")
-    
-    # Press Option third time
     print("\n4. Pressing Option again...")
     fw.press_option()
     fw.wait(0.5)
-    fw.take_screenshot("06_after_option3")
     
-    text_after_opt3 = fw.get_element_value()
-    print(f"   Text after Option #3: '{text_after_opt3.strip()}'")
+    event = CGEventCreateKeyboardEvent(None, 8, True)
+    CGEventSetFlags(event, Quartz.kCGEventFlagMaskCommand)
+    CGEventPost(kCGHIDEventTap, event)
+    event = CGEventCreateKeyboardEvent(None, 8, False)
+    CGEventSetFlags(event, Quartz.kCGEventFlagMaskCommand)
+    CGEventPost(kCGHIDEventTap, event)
+    fw.wait(0.3)
+    
+    result = subprocess.run(['osascript', '-e', 'get the clipboard'], capture_output=True, text=True)
+    text_after_opt2 = result.stdout.strip()
+    print(f"   Text after Option #2: '{text_after_opt2[:50]}...'")
     
     # Results
     print("\n" + "=" * 60)
     print("Results:")
     print("=" * 60)
     
-    texts = [text_after_auto.strip(), text_after_opt1.strip(), 
-             text_after_opt2.strip(), text_after_opt3.strip()]
-    unique = list(dict.fromkeys(texts))
+    texts = [text_before, text_after_opt1, text_after_opt2]
+    unique = list(dict.fromkeys([t for t in texts if t]))
     
     print(f"Unique texts: {len(unique)}")
     for i, t in enumerate(unique):
-        print(f"  [{i}] '{t}'")
+        print(f"  [{i}] '{t[:70]}{'...' if len(t) > 70 else ''}'")
     
     cycling_works = len(unique) > 1
     
@@ -465,20 +461,28 @@ def run_test_cycling_after_autocorrect():
     
     # Show relevant log entries
     print("\n" + "=" * 60)
-    print("OMFK Log (last 20 lines):")
+    print("OMFK Log (last 30 lines):")
     print("=" * 60)
-    for line in fw.get_log_lines()[-20:]:
+    for line in fw.get_log_lines()[-30:]:
         print(f"  {line}")
     
-    print(f"\n📁 Screenshots saved to: {fw.screenshot_dir}")
+    # Close Sublime tab without saving (Cmd+W, then Don't Save)
+    print("\nClosing Sublime Text tab...")
+    event = CGEventCreateKeyboardEvent(None, 13, True)  # 'w' = keycode 13
+    CGEventSetFlags(event, Quartz.kCGEventFlagMaskCommand)
+    CGEventPost(kCGHIDEventTap, event)
+    event = CGEventCreateKeyboardEvent(None, 13, False)
+    CGEventSetFlags(event, Quartz.kCGEventFlagMaskCommand)
+    CGEventPost(kCGHIDEventTap, event)
+    fw.wait(0.5)
     
-    # Close TextEdit window without saving
-    print("\nClosing TextEdit window...")
-    subprocess.run(['osascript', '-e', '''
-        tell application "TextEdit"
-            close front window saving no
-        end tell
-    '''], capture_output=True)
+    # Press Cmd+D for "Don't Save"
+    event = CGEventCreateKeyboardEvent(None, 2, True)  # 'd' = keycode 2
+    CGEventSetFlags(event, Quartz.kCGEventFlagMaskCommand)
+    CGEventPost(kCGHIDEventTap, event)
+    event = CGEventCreateKeyboardEvent(None, 2, False)
+    CGEventSetFlags(event, Quartz.kCGEventFlagMaskCommand)
+    CGEventPost(kCGHIDEventTap, event)
     
     return cycling_works
 

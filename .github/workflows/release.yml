@@ -87,7 +87,7 @@ jobs:
       
       - name: Create GitHub Release (releases repo)
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           TAG="v$VERSION"
@@ -99,11 +99,11 @@ jobs:
             --repo "$RELEASES_REPO" \
             --title "OMFK $TAG" \
             --notes "## OMFK $TAG
-
+          
 Download the DMG and drag OMFK to Applications.
 
 **Requirements:** macOS 14.0+
 
-**Feedback:** [Telegram](https://t.me/ohmyfuckingkeyboard) | alex@hireex.ai"
+**Feedback:** [Telegram](https://t.me/ohmyfuckingkeyboard)"
           
           echo "✅ Published to https://github.com/$RELEASES_REPO/releases/tag/$TAG"

@@ -662,13 +662,14 @@ cmd_release_github() {
   info "Triggering GitHub Actions release for v${version}..."
   
   gh workflow run release.yml \
+    --repo chernistry/omfk-src \
     --field version="${version}" \
     --field release_type="${release_type}"
   
   success "Release workflow triggered!"
-  info "Watch progress: gh run watch"
+  info "Watch progress: gh run watch --repo chernistry/omfk-src"
   echo ""
-  info "Or open: https://github.com/$(gh repo view --json nameWithOwner -q .nameWithOwner)/actions"
+  info "Or open: https://github.com/chernistry/omfk-src/actions"
 }
 
 cmd_logs_stream() {

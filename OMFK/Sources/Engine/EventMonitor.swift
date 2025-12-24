@@ -112,7 +112,6 @@ final class EventMonitor {
     }
     
     private var optionKeyWasPressed = false  // Track Option key state for tap detection
-    private var shiftWasHeldWithOption = false  // Track if Shift was held with Option
     private var phraseBuffer: String = ""  // Buffer for entire phrase (cleared on app switch/click)
     private var lastHotkeyTime: Date = .distantPast  // Debounce hotkey
     private var currentProxy: CGEventTapProxy?  // Store proxy for posting events "after" our tap
@@ -142,19 +141,15 @@ final class EventMonitor {
         // Handle flagsChanged for Option key (modifier keys don't generate keyDown)
         if type == .flagsChanged {
             let isOptionPressed = flags.contains(.maskAlternate)
-            let isShiftPressed = flags.contains(.maskShift)
             
             // Detect Option key tap (press and release without other keys)
             if settings.hotkeyEnabled && settings.hotkeyKeyCode == 58 {
                 if isOptionPressed && !optionKeyWasPressed {
-                    // Option just pressed - track if Shift is also held
+                    // Option just pressed
                     optionKeyWasPressed = true
-                    shiftWasHeldWithOption = isShiftPressed
                 } else if !isOptionPressed && optionKeyWasPressed {
                     // Option just released - this is a tap!
                     optionKeyWasPressed = false
-                    let wasShiftHeld = shiftWasHeldWithOption
-                    shiftWasHeldWithOption = false
                     
                     // Debounce: ignore if hotkey was triggered recently
                     let now = Date()
@@ -167,18 +162,10 @@ final class EventMonitor {
                     // Freeze buffers BEFORE starting async task
                     cyclingActive = true
                     
-                    if wasShiftHeld {
-                        // Shift+Option = convert last phrase/line
-                        logger.info("🔥 SHIFT+OPTION TAP - converting last phrase")
-                        Task { @MainActor in
-                            await handleHotkeyPress(convertPhrase: true)
-                        }
-                    } else {
-                        // Option only = convert selected text or last word
-                        logger.info("🔥 OPTION TAP - converting selected/last word")
-                        Task { @MainActor in
-                            await handleHotkeyPress(convertPhrase: false)
-                        }
+                    // Single hotkey - context-aware behavior
+                    logger.info("🔥 OPTION TAP - context-aware correction")
+                    Task { @MainActor in
+                        await handleHotkeyPress()
                     }
                 }
             }
@@ -188,7 +175,6 @@ final class EventMonitor {
         // Reset option tracking if any other key is pressed while Option is held
         if optionKeyWasPressed {
             optionKeyWasPressed = false
-            shiftWasHeldWithOption = false
         }
         
         guard type == .keyDown else {
@@ -312,6 +298,7 @@ final class EventMonitor {
             await replaceText(with: textWithSpace, originalLength: wordLength + 1)
             lastCorrectedLength = textWithSpace.count
             lastCorrectedText = textWithSpace  // Include space for accurate cycling
+            lastCorrectionTime = Date()  // Enable cycling after auto-correction
         } else {
             logger.info("ℹ️ No correction needed for: \(DecisionLogger.tokenSummary(text), privacy: .public)")
         }
@@ -319,13 +306,13 @@ final class EventMonitor {
         logger.debug("🧹 Buffer processing complete")
     }
     
-    private func handleHotkeyPress(convertPhrase: Bool = false) async {
+    private func handleHotkeyPress() async {
         // Freeze buffers for the entire duration of hotkey handling
         cyclingActive = true
         defer { cyclingActive = false }
         
-        logger.info("🔥 === HOTKEY PRESSED - \(convertPhrase ? "PHRASE" : "WORD") Mode ===")
-        DecisionLogger.shared.log("HOTKEY: \(convertPhrase ? "PHRASE" : "WORD") mode")
+        logger.info("🔥 === HOTKEY PRESSED ===")
+        DecisionLogger.shared.log("HOTKEY: pressed")
         
         let bundleId = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
         let appName = NSWorkspace.shared.frontmostApplication?.localizedName ?? "unknown"
@@ -333,8 +320,8 @@ final class EventMonitor {
         DecisionLogger.shared.log("HOTKEY: App=\(appName)")
         
         // Log buffer state
-        logger.info("📋 Buffer state: '\(self.buffer)' (\(self.buffer.count) chars), phraseBuffer: '\(self.phraseBuffer.prefix(50))...' (\(self.phraseBuffer.count) chars)")
-        DecisionLogger.shared.log("HOTKEY: Buffer='\(self.buffer)' (\(self.buffer.count)), phrase=\(self.phraseBuffer.count) chars")
+        logger.info("📋 Buffer state: '\(self.buffer)' (\(self.buffer.count) chars)")
+        DecisionLogger.shared.log("HOTKEY: Buffer='\(self.buffer)' (\(self.buffer.count))")
         
         // Check cycling FIRST - if we have valid cycling state and no new typing, continue cycling
         // This is needed because after replaceText, selection is lost
@@ -372,7 +359,6 @@ final class EventMonitor {
                     lastCorrectedLength = finalCorrected.count
                     lastCorrectedText = finalCorrected
                     lastCorrectionTime = Date()
-                    phraseBuffer = ""
                     buffer = ""
                     
                     if let targetLang = await engine.getLastCorrectionTargetLanguage() {
@@ -384,19 +370,12 @@ final class EventMonitor {
             }
         }
         
-        // Get fresh selection for new correction
-        let rawText: String
-        if convertPhrase {
-            rawText = phraseBuffer
-            logger.info("📝 Phrase mode - raw: \(rawText.count) chars")
-            DecisionLogger.shared.log("HOTKEY: Phrase buffer: \(rawText.count) chars")
-        } else {
-            let freshSelection = await getSelectedTextFresh()
-            rawText = freshSelection
-            let hex = rawText.unicodeScalars.prefix(20).map { String(format: "%04X", $0.value) }.joined(separator: " ")
-            logger.info("📝 Fresh selection: '\(rawText)' (\(rawText.count) chars) hex: \(hex)")
-            DecisionLogger.shared.log("HOTKEY: Fresh selection: '\(rawText)' (\(rawText.count) chars)")
-        }
+        // Get fresh selection or buffer for new correction
+        let freshSelection = await getSelectedTextFresh()
+        let rawText = freshSelection
+        let hex = rawText.unicodeScalars.prefix(20).map { String(format: "%04X", $0.value) }.joined(separator: " ")
+        logger.info("📝 Fresh selection: '\(rawText)' (\(rawText.count) chars) hex: \(hex)")
+        DecisionLogger.shared.log("HOTKEY: Fresh selection: '\(rawText)' (\(rawText.count) chars)")
         
         // Reset cycling state for new text
         if hasCycling {
@@ -444,11 +423,6 @@ final class EventMonitor {
             lastCorrectionTime = Date()
             buffer = ""  // Clear buffer after replacement
             DecisionLogger.shared.log("HOTKEY: Done. lastCorrectedLength=\(lastCorrectedLength)")
-            
-            // Clear phrase buffer after successful phrase correction
-            if convertPhrase {
-                phraseBuffer = ""
-            }
             
             // Switch system layout to match the corrected text language
             if let targetLang = await engine.getLastCorrectionTargetLanguage() {

@@ -26,7 +26,7 @@ echo "================================"
 echo "$VERSION" > "$PROJECT_DIR/VERSION"
 
 # Update fallback version in SettingsView.swift
-LC_ALL=C sed -i '' "s/return \"[0-9]*\.[0-9]*\.[0-9]*\"/return \"$VERSION\"/" "$PROJECT_DIR/OMFK/Sources/UI/SettingsView.swift"
+perl -i -pe "s/return \"\\d+\\.\\d+\\.\\d+\"/return \"$VERSION\"/" "$PROJECT_DIR/OMFK/Sources/UI/SettingsView.swift"
 
 # Clean
 rm -rf "$BUILD_DIR"

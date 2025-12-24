@@ -92,7 +92,7 @@ jobs:
           VERSION="${{ steps.version.outputs.version }}"
           TAG="v$VERSION"
           DMG_PATH="releases/OMFK-$VERSION.dmg"
-          RELEASES_REPO="chernistry/omfk-releases"
+          RELEASES_REPO="chernistry/omfk"
           
           # Create release in releases repo
           gh release create "$TAG" "$DMG_PATH" \

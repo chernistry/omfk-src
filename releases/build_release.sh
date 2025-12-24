@@ -145,7 +145,7 @@ if [ "$2" = "--publish" ] || [ "$1" = "--publish" ]; then
     echo ""
     echo "🚀 Publishing to GitHub..."
     
-    RELEASES_REPO="chernistry/omfk-releases"
+    RELEASES_REPO="chernistry/omfk"
     TAG="v$VERSION"
     
     # Check if release already exists

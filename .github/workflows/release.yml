@@ -82,12 +82,6 @@ jobs:
           gh release create "$TAG" "$PKG_PATH" \
             --repo "$RELEASES_REPO" \
             --title "OMFK $TAG" \
-            --notes "## OMFK $TAG
-
-Download and run the installer.
-
-**Requirements:** macOS 13.0+
-
-**Feedback:** [GitHub Issues](https://github.com/chernistry/omfk/issues)"
+            --notes "## OMFK $TAG - Download and run the installer. macOS 13.0+ required."
           
           echo "✅ Published to https://github.com/$RELEASES_REPO/releases/tag/$TAG"

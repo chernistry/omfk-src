@@ -4,7 +4,7 @@
 
 ### Automatic keyboard layout correction for macOS
 
-*Type in the wrong layout. Get the right text.*
+![OMFK Banner](assets/banner.png)
 
 [![macOS](https://img.shields.io/badge/macOS-14.0+-000?style=flat-square&logo=apple&logoColor=white)](https://www.apple.com/macos/)
 [![Download](https://img.shields.io/badge/Download-Latest_Release-6366f1?style=flat-square)](https://github.com/chernistry/omfk/releases/latest)

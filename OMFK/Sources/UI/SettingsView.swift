@@ -60,6 +60,7 @@ struct SettingsView: View {
 
 struct GeneralTab: View {
     @ObservedObject var settings: SettingsManager
+    @State private var launchAtLogin = LaunchAtLogin.isEnabled
     
     var body: some View {
         VStack(spacing: 14) {
@@ -80,6 +81,22 @@ struct GeneralTab: View {
                     title: "Auto-switch layout",
                     subtitle: "Change system layout after fix",
                     toggle: $settings.autoSwitchLayout
+                )
+            }
+            
+            GlassCard {
+                SettingRow(
+                    icon: "power",
+                    iconColor: .purple,
+                    title: "Launch at login",
+                    subtitle: "Start OMFK with system",
+                    toggle: Binding(
+                        get: { launchAtLogin },
+                        set: { newValue in
+                            launchAtLogin = newValue
+                            LaunchAtLogin.isEnabled = newValue
+                        }
+                    )
                 )
             }
             

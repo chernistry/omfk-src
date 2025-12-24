@@ -4,6 +4,10 @@ struct SettingsView: View {
     @StateObject private var settings = SettingsManager.shared
     @State private var selectedTab = 0
     
+    private var appVersion: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
+    }
+    
     var body: some View {
         VStack(spacing: 0) {
             // Header (fixed)
@@ -20,7 +24,7 @@ struct SettingsView: View {
                 
                 VStack(spacing: 4) {
                     Text("OMFK").font(.system(size: 20, weight: .semibold, design: .rounded))
-                    Text("v1.0").font(.system(size: 11)).foregroundStyle(.tertiary)
+                    Text("v\(appVersion)").font(.system(size: 11)).foregroundStyle(.tertiary)
                 }
                 
                 // Segmented control

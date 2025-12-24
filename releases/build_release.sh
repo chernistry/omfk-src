@@ -162,9 +162,9 @@ if [ "$2" = "--publish" ] || [ "$1" = "--publish" ]; then
 
 Download the DMG and drag OMFK to Applications.
 
-**Requirements:** macOS 14.0+
+**Requirements:** macOS 13.0+
 
-**Feedback:** [Telegram](https://t.me/ohmyfuckingkeyboard) | alex@hireex.ai"
+**Feedback:** [GitHub Issues](https://github.com/chernistry/omfk/issues)"
     
     echo "✅ Published to https://github.com/$RELEASES_REPO/releases/tag/$TAG"
 fi

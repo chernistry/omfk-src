@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "OMFK",
-    platforms: [.macOS(.v14)],
+    platforms: [.macOS(.v13)],
     products: [
         .executable(name: "OMFK", targets: ["OMFK"])
     ],

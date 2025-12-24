@@ -26,13 +26,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Need full history for tags
+          fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
       
-      - name: Setup Xcode 26
+      - name: Setup Xcode 16
         uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: '26.0'
+          xcode-version: '16.0'
       
       - name: Determine version
         id: version
@@ -40,9 +40,8 @@ jobs:
           if [ -n "${{ inputs.version }}" ]; then
             VERSION="${{ inputs.version }}"
           else
-            # Get latest tag
             LATEST=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
-            LATEST=${LATEST#v}  # Remove 'v' prefix
+            LATEST=${LATEST#v}
             
             IFS='.' read -r MAJOR MINOR PATCH <<< "$LATEST"
             
@@ -58,21 +57,7 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "📦 Building version: $VERSION"
       
-      - name: Update Info.plist version
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" OMFK/Info.plist
-          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $VERSION" OMFK/Info.plist
-          # Update VERSION file and fallback in code
-          echo "$VERSION" > VERSION
-          sed -i '' "s/return \"[0-9]*\.[0-9]*\.[0-9]*\"/return \"$VERSION\"/" OMFK/Sources/UI/SettingsView.swift
-          echo "✅ Updated version to $VERSION"
-      
       - name: Build release
-        run: |
-          swift build -c release
-      
-      - name: Create app bundle
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           ./releases/build_release.sh "$VERSION"
@@ -85,30 +70,24 @@ jobs:
           git tag -a "v$VERSION" -m "Release v$VERSION"
           git push origin "v$VERSION"
       
-      - name: Create GitHub Release (releases repo)
+      - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           TAG="v$VERSION"
-          DMG_PATH="releases/OMFK-$VERSION.dmg"
+          PKG_PATH="releases/OMFK-$VERSION.pkg"
           RELEASES_REPO="chernistry/omfk"
           
-          NOTES=$(cat <<'EOF'
-          ## OMFK $TAG
-          
-          Download the DMG and drag OMFK to Applications.
-          
-          **Requirements:** macOS 14.0+
-          
-          **Feedback:** [Telegram](https://t.me/ohmyfuckingkeyboard)
-          EOF
-          )
-          NOTES="${NOTES//\$TAG/$TAG}"
-          
-          gh release create "$TAG" "$DMG_PATH" \
+          gh release create "$TAG" "$PKG_PATH" \
             --repo "$RELEASES_REPO" \
             --title "OMFK $TAG" \
-            --notes "$NOTES"
+            --notes "## OMFK $TAG
+
+Download and run the installer.
+
+**Requirements:** macOS 13.0+
+
+**Feedback:** [GitHub Issues](https://github.com/chernistry/omfk/issues)"
           
           echo "✅ Published to https://github.com/$RELEASES_REPO/releases/tag/$TAG"

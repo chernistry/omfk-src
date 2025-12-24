@@ -1,33 +1,44 @@
 import SwiftUI
 
+// Version is read from VERSION file at build time via build script
+// For debug builds, fallback to reading file directly
+let appVersion: String = {
+    // Try reading from VERSION file (works in debug)
+    let possiblePaths = [
+        Bundle.main.bundlePath + "/../../../VERSION",  // .build/debug/OMFK -> project root
+        Bundle.main.bundlePath + "/../../VERSION",     // OMFK.app/Contents/MacOS -> project root (dev)
+    ]
+    for path in possiblePaths {
+        if let version = try? String(contentsOfFile: path, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines) {
+            return version
+        }
+    }
+    // Fallback: embedded at build time by release script
+    return "0.0.6"
+}()
+
 struct SettingsView: View {
     @StateObject private var settings = SettingsManager.shared
     @State private var selectedTab = 0
     
-    private var appVersion: String {
-        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
-    }
-    
     var body: some View {
         VStack(spacing: 0) {
-            // Header (fixed)
-            VStack(spacing: 20) {
-                // App icon
+            // Header
+            VStack(spacing: 16) {
                 ZStack {
                     Circle()
                         .fill(.linearGradient(colors: [.blue.opacity(0.8), .purple.opacity(0.6)], startPoint: .topLeading, endPoint: .bottomTrailing))
-                        .frame(width: 56, height: 56)
+                        .frame(width: 52, height: 52)
                     Image(systemName: "keyboard")
-                        .font(.system(size: 24, weight: .light))
+                        .font(.system(size: 22, weight: .light))
                         .foregroundStyle(.white)
                 }
                 
                 VStack(spacing: 4) {
-                    Text("OMFK").font(.system(size: 20, weight: .semibold, design: .rounded))
+                    Text("OMFK").font(.system(size: 18, weight: .semibold, design: .rounded))
                     Text("v\(appVersion)").font(.system(size: 11)).foregroundStyle(.tertiary)
                 }
                 
-                // Segmented control
                 Picker("", selection: $selectedTab) {
                     Text("General").tag(0)
                     Text("Hotkey").tag(1)
@@ -35,13 +46,15 @@ struct SettingsView: View {
                     Text("About").tag(3)
                 }
                 .pickerStyle(.segmented)
-                .padding(.horizontal, 40)
+                .padding(.horizontal, 30)
             }
-            .padding(.top, 28)
-            .padding(.bottom, 20)
+            .padding(.top, 24)
+            .padding(.bottom, 16)
             
-            // Content (fixed height container)
-            ZStack {
+            Divider().padding(.horizontal, 20)
+            
+            // Content
+            Group {
                 switch selectedTab {
                 case 0: GeneralTab(settings: settings)
                 case 1: HotkeyTab(settings: settings)
@@ -49,9 +62,8 @@ struct SettingsView: View {
                 default: AboutTab()
                 }
             }
-            .frame(height: 280)
         }
-        .frame(width: 380, height: 520)
+        .frame(width: 360, height: 480)
         .background(.ultraThinMaterial)
     }
 }
@@ -63,64 +75,40 @@ struct GeneralTab: View {
     @State private var launchAtLogin = LaunchAtLogin.isEnabled
     
     var body: some View {
-        VStack(spacing: 14) {
+        VStack(spacing: 12) {
             GlassCard {
-                SettingRow(
-                    icon: "wand.and.stars",
-                    iconColor: .green,
-                    title: "Auto-correction",
-                    subtitle: "Fix wrong layout automatically",
-                    toggle: $settings.isEnabled
-                )
+                SettingRow(icon: "wand.and.stars", iconColor: .green,
+                    title: "Auto-correction", subtitle: "Fix wrong layout automatically",
+                    toggle: $settings.isEnabled)
             }
-            
             GlassCard {
-                SettingRow(
-                    icon: "arrow.left.arrow.right",
-                    iconColor: .blue,
-                    title: "Auto-switch layout",
-                    subtitle: "Change system layout after fix",
-                    toggle: $settings.autoSwitchLayout
-                )
+                SettingRow(icon: "arrow.left.arrow.right", iconColor: .blue,
+                    title: "Auto-switch layout", subtitle: "Change system layout after fix",
+                    toggle: $settings.autoSwitchLayout)
             }
-            
             GlassCard {
-                SettingRow(
-                    icon: "power",
-                    iconColor: .purple,
-                    title: "Launch at login",
-                    subtitle: "Start OMFK with system",
-                    toggle: Binding(
-                        get: { launchAtLogin },
-                        set: { newValue in
-                            launchAtLogin = newValue
-                            LaunchAtLogin.isEnabled = newValue
-                        }
-                    )
-                )
+                SettingRow(icon: "power", iconColor: .purple,
+                    title: "Launch at login", subtitle: "Start OMFK with system",
+                    toggle: Binding(get: { launchAtLogin }, set: { launchAtLogin = $0; LaunchAtLogin.isEnabled = $0 }))
             }
-            
             GlassCard {
                 VStack(spacing: 12) {
-                    Label {
-                        Text("Preferred language").font(.system(size: 13, weight: .medium))
-                    } icon: {
-                        Image(systemName: "globe").foregroundStyle(.orange)
-                    }
+                    Label { Text("Preferred language").font(.system(size: 13, weight: .medium)) }
+                        icon: { Image(systemName: "globe").foregroundStyle(.orange) }
                     
                     HStack(spacing: 10) {
-                        LangPill(lang: "EN", isSelected: settings.preferredLanguage == .english) { settings.preferredLanguage = .english }
-                        LangPill(lang: "RU", isSelected: settings.preferredLanguage == .russian) { settings.preferredLanguage = .russian }
-                        LangPill(lang: "HE", isSelected: settings.preferredLanguage == .hebrew) { settings.preferredLanguage = .hebrew }
+                        LangPill(lang: "🇺🇸 EN", isSelected: settings.preferredLanguage == .english) { settings.preferredLanguage = .english }
+                        LangPill(lang: "🇷🇺 RU", isSelected: settings.preferredLanguage == .russian) { settings.preferredLanguage = .russian }
+                        LangPill(lang: "🇮🇱 HE", isSelected: settings.preferredLanguage == .hebrew) { settings.preferredLanguage = .hebrew }
                     }
                 }
                 .frame(maxWidth: .infinity)
             }
-            
+            Divider().padding(.horizontal, 10)
             Spacer(minLength: 0)
         }
-        .padding(20)
-        .frame(maxHeight: .infinity, alignment: .top)
+        .padding(16)
+        .padding(.bottom, 8)
     }
 }
 
@@ -311,14 +299,6 @@ struct AppPickerSheet: View {
 // MARK: - About Tab
 
 struct AboutTab: View {
-    private var appVersion: String {
-        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
-    }
-    
-    private var buildNumber: String {
-        Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1"
-    }
-    
     var body: some View {
         VStack(spacing: 20) {
             Spacer(minLength: 20)
@@ -329,7 +309,7 @@ struct AboutTab: View {
                     .foregroundStyle(.secondary)
             }
             
-            Text("Version \(appVersion) (\(buildNumber))")
+            Text("Version \(appVersion)")
                 .font(.system(size: 12, weight: .medium, design: .monospaced))
                 .foregroundStyle(.tertiary)
             

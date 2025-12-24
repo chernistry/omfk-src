@@ -63,7 +63,10 @@ jobs:
           VERSION="${{ steps.version.outputs.version }}"
           /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" OMFK/Info.plist
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $VERSION" OMFK/Info.plist
-          echo "✅ Updated Info.plist to version $VERSION"
+          # Update VERSION file and fallback in code
+          echo "$VERSION" > VERSION
+          sed -i '' "s/return \"[0-9]*\.[0-9]*\.[0-9]*\"/return \"$VERSION\"/" OMFK/Sources/UI/SettingsView.swift
+          echo "✅ Updated version to $VERSION"
       
       - name: Build release
         run: |

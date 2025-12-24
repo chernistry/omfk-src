@@ -5,15 +5,28 @@ set -e
 # Creates .app bundle and .dmg for distribution
 
 APP_NAME="OMFK"
-VERSION="${1:-1.0.0}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+
+# Read version from VERSION file or use argument
+if [ -n "$1" ]; then
+    VERSION="$1"
+else
+    VERSION=$(cat "$PROJECT_DIR/VERSION" | tr -d '[:space:]')
+fi
+
 BUILD_DIR="$SCRIPT_DIR/build"
 APP_PATH="$BUILD_DIR/$APP_NAME.app"
 DMG_PATH="$SCRIPT_DIR/$APP_NAME-$VERSION.dmg"
 
 echo "🚀 Building $APP_NAME v$VERSION"
 echo "================================"
+
+# Update VERSION file
+echo "$VERSION" > "$PROJECT_DIR/VERSION"
+
+# Update fallback version in SettingsView.swift
+sed -i '' "s/return \"[0-9]*\.[0-9]*\.[0-9]*\"/return \"$VERSION\"/" "$PROJECT_DIR/OMFK/Sources/UI/SettingsView.swift"
 
 # Clean
 rm -rf "$BUILD_DIR"

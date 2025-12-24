@@ -17,7 +17,6 @@ fi
 
 BUILD_DIR="$SCRIPT_DIR/build"
 APP_PATH="$BUILD_DIR/$APP_NAME.app"
-PKG_ROOT="$BUILD_DIR/pkg_root"
 PKG_PATH="$SCRIPT_DIR/$APP_NAME-$VERSION.pkg"
 
 echo "🚀 Building $APP_NAME v$VERSION"
@@ -116,19 +115,14 @@ echo "✅ App bundle created: $APP_PATH"
 echo "📦 Creating PKG installer..."
 rm -f "$PKG_PATH"
 
-# Create pkg root with app in Applications
-mkdir -p "$PKG_ROOT/Applications"
-cp -r "$APP_PATH" "$PKG_ROOT/Applications/"
-
-# Build pkg
+# Build pkg - app goes directly to /Applications
 pkgbuild \
-    --root "$PKG_ROOT" \
+    --root "$APP_PATH" \
     --identifier "com.chernistry.omfk" \
     --version "$VERSION" \
+    --install-location "/Applications/OMFK.app" \
     --scripts "$SCRIPT_DIR/pkg_scripts" \
     "$PKG_PATH"
-
-rm -rf "$PKG_ROOT"
 
 echo "✅ PKG created: $PKG_PATH"
 echo ""

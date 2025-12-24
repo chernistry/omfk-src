@@ -138,7 +138,34 @@ actor CorrectionEngine {
         }
         
         guard needsCorrection else {
-            logger.info("ℹ️ No correction needed - text is in correct layout")
+            logger.info("ℹ️ No correction needed - text is in correct layout, but creating cycling state for manual override")
+            
+            // Even if no correction needed, create cycling state so user can force-convert
+            let activeLayouts = await settings.activeLayouts
+            var alternatives: [CyclingState.Alternative] = [
+                CyclingState.Alternative(text: text, hypothesis: decision.layoutHypothesis)  // [0] Original (current)
+            ]
+            
+            // Add conversions to other languages
+            for target in Language.allCases where target != decision.language {
+                if let alt = LayoutMapper.shared.convertBest(text, from: decision.language, to: target, activeLayouts: activeLayouts), alt != text {
+                    let hyp = hypothesisFor(source: decision.language, target: target)
+                    alternatives.append(CyclingState.Alternative(text: alt, hypothesis: hyp))
+                }
+            }
+            
+            if alternatives.count > 1 {
+                cyclingState = CyclingState(
+                    originalText: text,
+                    alternatives: alternatives,
+                    currentIndex: 0,  // Currently showing original
+                    wasAutomatic: false,  // No auto-correction happened
+                    autoHypothesis: decision.layoutHypothesis,
+                    timestamp: Date(),
+                    hadTrailingSpace: true
+                )
+            }
+            
             return nil
         }
         

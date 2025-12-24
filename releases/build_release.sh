@@ -38,10 +38,11 @@ mkdir -p "$APP_PATH/Contents/Resources"
 # Copy binary
 cp "$BINARY_PATH" "$APP_PATH/Contents/MacOS/$APP_NAME"
 
-# Copy resources from bundle
-RESOURCES_SRC="$PROJECT_DIR/OMFK/Sources/Resources"
-if [ -d "$RESOURCES_SRC" ]; then
-    cp -r "$RESOURCES_SRC"/* "$APP_PATH/Contents/Resources/" 2>/dev/null || true
+# Copy resource bundle (required by Swift Package Manager)
+# Bundle.main.bundleURL points to OMFK.app/, so bundle goes there
+BUNDLE_PATH="$PROJECT_DIR/.build/release/OMFK_OMFK.bundle"
+if [ -d "$BUNDLE_PATH" ]; then
+    cp -r "$BUNDLE_PATH" "$APP_PATH/"
 fi
 
 # Copy icon

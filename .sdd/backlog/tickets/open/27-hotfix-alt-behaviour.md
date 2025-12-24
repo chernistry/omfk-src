@@ -336,3 +336,97 @@ This approach aligns with best practices:
 - `CorrectionEngine.swift`: `correctText()`, `correctLastWord()`, `CyclingState`
 - `.sdd/architect.md`: Architecture decisions
 - `.sdd/best_practices.md`: Testing and implementation guidelines
+
+---
+
+## Implementation Progress
+
+### Completed Changes
+
+1. **Added `lastCorrectionTime = Date()` in `processBufferContent()`** — Enables cycling detection after auto-correction
+2. **Removed Option+Shift handling** — Unified to single Option hotkey
+3. **Removed `shiftWasHeldWithOption` variable** — No longer needed
+4. **Simplified `handleHotkeyPress()`** — Removed `convertPhrase` parameter, always uses selection/buffer
+
+### Files Modified
+- `OMFK/Sources/Engine/EventMonitor.swift`
+
+### Build Status
+- ✅ Compiles successfully
+
+---
+
+## Testing Progress
+
+### Test Framework Created
+- `scripts/omfk_test_framework.py` — Python framework with:
+  - CGEvent-based keyboard input (keycode-based, layout-independent)
+  - Accessibility API for reading text from UI elements
+  - Screenshot capture
+  - OMFK log parsing
+
+### Test Execution Log
+
+#### Attempt 1: AppleScript keystroke
+- **Problem**: AppleScript `keystroke` uses current layout, typed `aaadaa` instead of `ghbdtn`
+- **Result**: FAIL
+
+#### Attempt 2: CGEvent keycodes
+- **Problem**: Focus returned to Terminal after subprocess calls, text typed in Terminal
+- **Result**: FAIL
+
+#### Attempt 3: Added TextEdit activation before typing
+- **Problem**: Text typed as `привет` (Russian layout active), not `ghbdtn`
+- **Problem**: OMFK logs empty — events not captured
+- **Result**: PARTIAL — text goes to TextEdit but wrong layout
+
+#### Attempt 4: (NEXT)
+- **TODO**: Enable OMFK debug logging with `OMFK_DEBUG_LOG=1`
+- **TODO**: Fix layout switching (Ctrl+Space may not work)
+- **TODO**: Screenshot only TextEdit window, not full screen
+
+### Hypotheses to Test
+
+| # | Hypothesis | Status | Result |
+|---|------------|--------|--------|
+| 1 | CGEvent not captured by OMFK when sent programmatically | TESTED | Works fine |
+| 2 | Layout switch via Ctrl+Space not working | TESTED | Need Option+Space |
+| 3 | Need to use `CGEventSourceCreate` with proper source state | NOT NEEDED | — |
+| 4 | OMFK needs `OMFK_DEBUG_LOG=1` env var for logging | CONFIRMED | Required |
+| 5 | Cycling state not created when no correction needed | FIXED | Added cycling state creation |
+| 6 | lastCorrectedText not saved when no correction | FIXED | Now saved |
+
+### Test Results (Latest)
+
+**Test: Cycling after typing "correct" text (no auto-correction needed)**
+- Input: `привет` (typed in Russian layout)
+- Alt #1 → `ghbdtn` (English)
+- Alt #2 → `גהבדתנ` (Hebrew)
+- Alt #3 → `привет` (back to original)
+- **Result: ✅ PASS**
+
+### Next Steps
+
+1. ~~Restart OMFK with `OMFK_DEBUG_LOG=1`~~ ✅
+2. ~~Update screenshot to capture only TextEdit window~~ ✅
+3. ~~Verify layout is English before typing~~ (not critical - works with any layout)
+4. ~~Check if OMFK sees CGEvent events~~ ✅
+5. ~~Fix cycling state creation for "correct" text~~ ✅
+6. Test with actual wrong-layout input (ghbdtn → привет → cycling)
+7. Commit and push changes
+
+---
+
+## Manual Test Checklist
+
+If automated testing fails, use manual testing:
+
+```
+1. Open TextEdit, new document
+2. Switch to English layout
+3. Type: ghbdtn
+4. Press Space → should auto-correct to "привет "
+5. Press Option → should cycle to "ghbdtn "
+6. Press Option → should cycle to next alternative
+7. Check ~/.omfk/debug.log for entries
+```

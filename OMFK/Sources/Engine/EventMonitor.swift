@@ -301,6 +301,11 @@ final class EventMonitor {
             lastCorrectionTime = Date()  // Enable cycling after auto-correction
         } else {
             logger.info("ℹ️ No correction needed for: \(DecisionLogger.tokenSummary(text), privacy: .public)")
+            // Still save the text for potential manual cycling
+            let textWithSpace = text + " "
+            lastCorrectedLength = textWithSpace.count
+            lastCorrectedText = textWithSpace
+            lastCorrectionTime = Date()  // Enable cycling even without auto-correction
         }
         
         logger.debug("🧹 Buffer processing complete")

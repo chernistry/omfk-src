@@ -415,26 +415,23 @@ This approach aligns with best practices:
 - Select all → Alt
 - `Fresh selection: '' (0 chars)` — Accessibility API returns empty
 - **Result: ❌ FAIL** — Sublime Text doesn't support AX selection
+- **FIX APPLIED**: Added clipboard fallback (Cmd+C to get selection, Cmd+V to paste)
+- **Result after fix: ✅ PASS**
 
-### Known Issue: Apps Without Accessibility Support
+### Known Issue: Apps Without Accessibility Support — RESOLVED
 
 **Problem:** Some apps (Sublime Text, VS Code, etc.) don't expose selected text via Accessibility API (`kAXSelectedTextAttribute` returns empty).
 
-**Current behavior:** 
-- `getSelectedTextFresh()` tries AX first, falls back to buffer
-- But buffer is empty if text was pasted (not typed)
-- Result: "no text to correct"
-
-**Required fix:** Implement clipboard-based fallback for apps without AX support:
-1. Detect if app supports AX selection (cache per bundle ID)
-2. If not, use clipboard fallback:
+**Solution implemented:**
+1. Auto-detect if app supports AX selection (cache per bundle ID in `appsWithoutAXSelection`)
+2. If AX returns empty, try clipboard fallback:
    - Save current clipboard
    - Send Cmd+C to copy selection
    - Read clipboard
    - Restore original clipboard
-3. Use detected text for correction
+3. For text replacement, use Cmd+V paste instead of CGEvent typing
 
-**Apps known to need fallback:**
+**Apps automatically detected as needing fallback:**
 - Sublime Text (`com.sublimetext.4`)
 - VS Code (`com.microsoft.VSCode`)
 - Terminal (`com.apple.Terminal`)

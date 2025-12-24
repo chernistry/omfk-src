@@ -698,6 +698,25 @@ final class EventMonitor {
         // Avoid referencing the global `kAXTrustedCheckOptionPrompt` var (Swift 6 concurrency warning).
         let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
         AXIsProcessTrustedWithOptions(options)
+        
+        // Start polling for permission grant
+        Task { @MainActor in
+            await self.startAccessibilityPolling()
+        }
+    }
+    
+    private var accessibilityPollTimer: Timer?
+    
+    private func startAccessibilityPolling() async {
+        // Poll every 2 seconds to check if permission was granted
+        accessibilityPollTimer?.invalidate()
+        
+        while !AXIsProcessTrusted() {
+            try? await Task.sleep(nanoseconds: 2_000_000_000) // 2 seconds
+        }
+        
+        logger.info("✅ Accessibility permission granted - restarting event monitor")
+        await start()
     }
 }
 

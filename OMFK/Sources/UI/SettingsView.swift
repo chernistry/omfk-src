@@ -51,7 +51,7 @@ struct SettingsView: View {
             }
             .frame(height: 280)
         }
-        .frame(width: 380, height: 460)
+        .frame(width: 380, height: 520)
         .background(.ultraThinMaterial)
     }
 }

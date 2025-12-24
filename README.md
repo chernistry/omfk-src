@@ -6,6 +6,10 @@
 
 ![OMFK Banner](assets/banner.png)
 
+---
+
+![How it works](assets/howitworks.gif)
+
 [![macOS](https://img.shields.io/badge/macOS-14.0+-000?style=flat-square&logo=apple&logoColor=white)](https://www.apple.com/macos/)
 [![Download](https://img.shields.io/badge/Download-Latest_Release-6366f1?style=flat-square)](https://github.com/chernistry/omfk/releases/latest)
 [![License](https://img.shields.io/badge/License-Proprietary-374151?style=flat-square)]()

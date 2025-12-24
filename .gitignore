@@ -23,3 +23,4 @@ Tools/CoreMLTrainer/*.csv
 releases/build/*
 .vscode/settings.json
 releases/*
+data/*

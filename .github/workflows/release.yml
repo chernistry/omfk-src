@@ -94,16 +94,21 @@ jobs:
           DMG_PATH="releases/OMFK-$VERSION.dmg"
           RELEASES_REPO="chernistry/omfk"
           
-          # Create release in releases repo
+          NOTES=$(cat <<'EOF'
+          ## OMFK $TAG
+          
+          Download the DMG and drag OMFK to Applications.
+          
+          **Requirements:** macOS 14.0+
+          
+          **Feedback:** [Telegram](https://t.me/ohmyfuckingkeyboard)
+          EOF
+          )
+          NOTES="${NOTES//\$TAG/$TAG}"
+          
           gh release create "$TAG" "$DMG_PATH" \
             --repo "$RELEASES_REPO" \
             --title "OMFK $TAG" \
-            --notes "## OMFK $TAG
-
-Download the DMG and drag OMFK to Applications.
-
-**Requirements:** macOS 14.0+
-
-**Feedback:** [Telegram](https://t.me/ohmyfuckingkeyboard)"
+            --notes "$NOTES"
           
           echo "✅ Published to https://github.com/$RELEASES_REPO/releases/tag/$TAG"

@@ -85,15 +85,25 @@ jobs:
           git tag -a "v$VERSION" -m "Release v$VERSION"
           git push origin "v$VERSION"
       
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: v${{ steps.version.outputs.version }}
-          name: OMFK v${{ steps.version.outputs.version }}
-          draft: false
-          prerelease: false
-          files: |
-            releases/OMFK-${{ steps.version.outputs.version }}.dmg
-          generate_release_notes: true
+      - name: Create GitHub Release (releases repo)
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          TAG="v$VERSION"
+          DMG_PATH="releases/OMFK-$VERSION.dmg"
+          RELEASES_REPO="chernistry/omfk-releases"
+          
+          # Create release in releases repo
+          gh release create "$TAG" "$DMG_PATH" \
+            --repo "$RELEASES_REPO" \
+            --title "OMFK $TAG" \
+            --notes "## OMFK $TAG
+
+Download the DMG and drag OMFK to Applications.
+
+**Requirements:** macOS 14.0+
+
+**Feedback:** [Telegram](https://t.me/ohmyfuckingkeyboard) | alex@hireex.ai"
+          
+          echo "✅ Published to https://github.com/$RELEASES_REPO/releases/tag/$TAG"

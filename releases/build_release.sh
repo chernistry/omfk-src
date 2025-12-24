@@ -139,3 +139,32 @@ echo "   App: $APP_PATH"
 echo "   DMG: $DMG_PATH"
 echo ""
 echo "To install: Open DMG and drag $APP_NAME to Applications"
+
+# Publish to GitHub releases repo if --publish flag is passed
+if [ "$2" = "--publish" ] || [ "$1" = "--publish" ]; then
+    echo ""
+    echo "🚀 Publishing to GitHub..."
+    
+    RELEASES_REPO="chernistry/omfk-releases"
+    TAG="v$VERSION"
+    
+    # Check if release already exists
+    if gh release view "$TAG" --repo "$RELEASES_REPO" >/dev/null 2>&1; then
+        echo "⚠️  Release $TAG already exists. Deleting and recreating..."
+        gh release delete "$TAG" --repo "$RELEASES_REPO" --yes
+    fi
+    
+    # Create release
+    gh release create "$TAG" "$DMG_PATH" \
+        --repo "$RELEASES_REPO" \
+        --title "OMFK $TAG" \
+        --notes "## OMFK $TAG
+
+Download the DMG and drag OMFK to Applications.
+
+**Requirements:** macOS 14.0+
+
+**Feedback:** [Telegram](https://t.me/ohmyfuckingkeyboard) | alex@hireex.ai"
+    
+    echo "✅ Published to https://github.com/$RELEASES_REPO/releases/tag/$TAG"
+fi

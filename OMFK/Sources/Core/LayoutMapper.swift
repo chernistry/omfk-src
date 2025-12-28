@@ -152,49 +152,22 @@ public final class LayoutMapper: @unchecked Sendable {
         }
     }
     
-    /// Detects user's active keyboard layouts from macOS
+    /// Detects user's active keyboard layouts from macOS using InputSourceManager's scoring
     private func detectActiveLayouts() {
         // HIToolbox enforces main-queue usage.
-        if !Thread.isMainThread {
+        guard Thread.isMainThread else {
             setDefaults()
             return
         }
 
-        let conditions: CFDictionary = [
-            kTISPropertyInputSourceCategory as String: kTISCategoryKeyboardInputSource as Any,
-            kTISPropertyInputSourceIsSelectCapable as String: true
-        ] as CFDictionary
-        
-        guard let sources = TISCreateInputSourceList(conditions, false)?.takeRetainedValue() as? [TISInputSource] else {
-            setDefaults()
-            return
+        // Call InputSourceManager on main actor
+        let detected = MainActor.assumeIsolated {
+            InputSourceManager.shared.detectInstalledLayouts()
         }
-        
-        guard let layouts = layoutData?.layouts else {
-            setDefaults()
-            return
-        }
-        
-        // Build appleId -> layoutInfo lookup
-        var appleIdToLayout: [String: LayoutInfo] = [:]
-        for layout in layouts {
-            appleIdToLayout[layout.appleId] = layout
-        }
-        
-        // Match installed layouts
-        for source in sources {
-            guard let ptr = TISGetInputSourceProperty(source, kTISPropertyInputSourceID),
-                  TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData) != nil else { continue }
-            
-            let appleId = Unmanaged<CFString>.fromOpaque(ptr).takeUnretainedValue() as String
-            
-            if let layoutInfo = appleIdToLayout[appleId],
-               let lang = Language(rawValue: layoutInfo.language) {
-                // First match wins for each language
-                if activeLayouts[lang] == nil {
-                    activeLayouts[lang] = layoutInfo.id
-                    print("LayoutMapper: Detected \(lang.rawValue) -> \(layoutInfo.id) (\(layoutInfo.name))")
-                }
+        for (langCode, layoutID) in detected {
+            if let lang = Language(rawValue: langCode) {
+                activeLayouts[lang] = layoutID
+                print("LayoutMapper: Detected \(langCode) -> \(layoutID)")
             }
         }
         

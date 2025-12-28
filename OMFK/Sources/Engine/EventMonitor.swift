@@ -291,7 +291,21 @@ final class EventMonitor {
             logger.info("🎯 Auto-switch enabled, expected layout: \(expected.rawValue, privacy: .public)")
         }
 
-        if let corrected = await engine.correctText(text, expectedLayout: expectedLayout) {
+        let result = await engine.correctText(text, expectedLayout: expectedLayout)
+        
+        // Handle pending word correction first (previous word that was boosted by context)
+        if let pendingCorrected = result.pendingCorrection, let pendingOriginal = result.pendingOriginal {
+            logger.info("🔗 PENDING CORRECTION: '\(pendingOriginal)' → '\(pendingCorrected)'")
+            // Need to go back and fix the previous word
+            // Previous word is: pendingOriginal + " " + current word
+            // We need to delete: pendingOriginal.count + 1 (space) + wordLength + 1 (current space)
+            let totalDeleteLength = pendingOriginal.count + 1 + wordLength + 1
+            let replacement = pendingCorrected + " " + (result.corrected ?? text) + " "
+            await replaceText(with: replacement, originalLength: totalDeleteLength)
+            lastCorrectedLength = replacement.count
+            lastCorrectedText = replacement
+            lastCorrectionTime = Date()
+        } else if let corrected = result.corrected {
             logger.info("✅ CORRECTION APPLIED: \(DecisionLogger.tokenSummary(text), privacy: .public) → \(DecisionLogger.tokenSummary(corrected), privacy: .public)")
             // Delete word + the space that triggered (cursor is after space)
             let textWithSpace = corrected + " "

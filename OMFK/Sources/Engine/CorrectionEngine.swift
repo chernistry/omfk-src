@@ -12,6 +12,29 @@ actor CorrectionEngine {
     // Cycling state for hotkey corrections
     private var cyclingState: CyclingState?
     
+    // Pending word that was below threshold but might be boosted by context
+    private var pendingWord: PendingWord?
+    
+    /// Word that didn't meet threshold but could be corrected if next word confirms language
+    struct PendingWord {
+        let text: String
+        let decision: LanguageDecision
+        let adjustedConfidence: Double
+        let timestamp: Date
+        
+        var isValid: Bool { Date().timeIntervalSince(timestamp) < 5.0 }
+    }
+    
+    /// Result of correction attempt, may include pending word correction
+    struct CorrectionResult {
+        let corrected: String?           // Current word correction (nil if no correction)
+        let pendingCorrection: String?   // Previous pending word correction (nil if none)
+        let pendingOriginal: String?     // Original pending word text (for calculating delete length)
+    }
+    
+    // How much to boost pending word confidence when next word confirms language
+    private let contextBoostAmount: Double = 0.20
+    
     struct CorrectionRecord: Identifiable {
         let id = UUID()
         let original: String
@@ -74,8 +97,8 @@ actor CorrectionEngine {
         return true
     }
     
-    func correctText(_ text: String, expectedLayout: Language?) async -> String? {
-        guard !text.isEmpty else { return nil }
+    func correctText(_ text: String, expectedLayout: Language?) async -> CorrectionResult {
+        guard !text.isEmpty else { return CorrectionResult(corrected: nil, pendingCorrection: nil, pendingOriginal: nil) }
         
         logger.info("🔍 === CORRECTION ATTEMPT ===")
         logger.info("Input: \(DecisionLogger.tokenSummary(text), privacy: .public)")
@@ -94,18 +117,53 @@ actor CorrectionEngine {
         logger.info("✅ Decision: \(decision.language.rawValue, privacy: .public) (Hypothesis: \(decision.layoutHypothesis.rawValue, privacy: .public), Conf: \(decision.confidence))")
         
         // Adjust confidence based on user profile
-        let adjustedConfidence = await profile.adjustThreshold(
+        var adjustedConfidence = await profile.adjustThreshold(
             for: text,
             lastLanguage: lastLang,
             baseConfidence: decision.confidence
         )
         logger.info("📊 Adjusted confidence: \(decision.confidence) → \(adjustedConfidence)")
         
-        // Only apply correction if adjusted confidence is high enough
+        // Check if we should boost and correct a pending word based on this word's language
+        var pendingCorrectionResult: String? = nil
+        var pendingOriginalText: String? = nil
         let threshold = await settings.standardPathThreshold
+        
+        if let pending = pendingWord, pending.isValid {
+            // If current word is high confidence and same language as pending word's decision
+            if adjustedConfidence > threshold && decision.language == pending.decision.language {
+                let boostedConfidence = pending.adjustedConfidence + contextBoostAmount
+                logger.info("🔗 Context boost: pending '\(pending.text)' \(pending.adjustedConfidence) → \(boostedConfidence)")
+                
+                if boostedConfidence > threshold {
+                    // Now the pending word passes threshold - correct it too
+                    if let corrected = await applyCorrection(pending.text, decision: pending.decision) {
+                        pendingCorrectionResult = corrected
+                        pendingOriginalText = pending.text
+                        logger.info("✅ Pending word corrected via context boost: '\(pending.text)' → '\(corrected)'")
+                    }
+                }
+            }
+            pendingWord = nil  // Clear pending regardless
+        }
+        
+        // Only apply correction if adjusted confidence is high enough
         guard adjustedConfidence > threshold else {
             logger.info("⏭️ Skipping correction (confidence too low after adjustment)")
-            return nil
+            
+            // Store as pending if confidence is in "uncertain" range (e.g., 0.4-0.7)
+            let minPendingConfidence = 0.40
+            if adjustedConfidence >= minPendingConfidence {
+                pendingWord = PendingWord(
+                    text: text,
+                    decision: decision,
+                    adjustedConfidence: adjustedConfidence,
+                    timestamp: Date()
+                )
+                logger.info("📌 Stored as pending word (conf: \(adjustedConfidence))")
+            }
+            
+            return CorrectionResult(corrected: nil, pendingCorrection: pendingCorrectionResult, pendingOriginal: pendingOriginalText)
         }
         
         // Check if the decision implies a layout correction
@@ -166,7 +224,7 @@ actor CorrectionEngine {
                 )
             }
             
-            return nil
+            return CorrectionResult(corrected: nil, pendingCorrection: pendingCorrectionResult, pendingOriginal: pendingOriginalText)
         }
         
         // Attempt conversion
@@ -201,7 +259,7 @@ actor CorrectionEngine {
                 hadTrailingSpace: true
             )
             
-            let result = await applyCorrection(original: text, corrected: corrected, from: sourceLayout, to: decision.language, hypothesis: decision.layoutHypothesis)
+            let correctedText = await applyCorrection(original: text, corrected: corrected, from: sourceLayout, to: decision.language, hypothesis: decision.layoutHypothesis)
             
             // Log for learning
             let bundleId = await MainActor.run { NSWorkspace.shared.frontmostApplication?.bundleIdentifier }
@@ -216,11 +274,11 @@ actor CorrectionEngine {
             // Record as accepted
             let ctx = ProfileContext(token: text, lastLanguage: lastLang)
             await profile.record(context: ctx, outcome: .accepted, hypothesis: decision.layoutHypothesis)
-            return result
+            return CorrectionResult(corrected: correctedText, pendingCorrection: pendingCorrectionResult, pendingOriginal: pendingOriginalText)
         }
         
         logger.info("ℹ️ No correction found")
-        return nil
+        return CorrectionResult(corrected: nil, pendingCorrection: pendingCorrectionResult, pendingOriginal: pendingOriginalText)
     }
     
     private func applyCorrection(original: String, corrected: String, from: Language, to: Language, hypothesis: LanguageHypothesis) async -> String {
@@ -234,6 +292,24 @@ actor CorrectionEngine {
             }
         }
         return corrected
+    }
+    
+    /// Apply correction based on a decision (for pending word boost)
+    private func applyCorrection(_ text: String, decision: LanguageDecision) async -> String? {
+        let sourceLayout: Language
+        switch decision.layoutHypothesis {
+        case .ru, .en, .he: return nil  // No correction needed
+        case .ruFromEnLayout, .heFromEnLayout: sourceLayout = .english
+        case .enFromRuLayout, .heFromRuLayout: sourceLayout = .russian
+        case .enFromHeLayout, .ruFromHeLayout: sourceLayout = .hebrew
+        }
+        
+        let activeLayouts = await settings.activeLayouts
+        guard let corrected = LayoutMapper.shared.convertBest(text, from: sourceLayout, to: decision.language, activeLayouts: activeLayouts) else {
+            return nil
+        }
+        
+        return await applyCorrection(original: text, corrected: corrected, from: sourceLayout, to: decision.language, hypothesis: decision.layoutHypothesis)
     }
     
     func getHistory() async -> [CorrectionRecord] {

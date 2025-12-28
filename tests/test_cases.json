@@ -1,0 +1,313 @@
+{
+  "version": "2.0",
+  "description": "OMFK comprehensive real-world test cases",
+  
+  "single_words": {
+    "description": "Basic single word corrections",
+    "cases": [
+      {"input": "ghbdtn", "expected": "привет", "desc": "привет"},
+      {"input": "ntrcn", "expected": "текст", "desc": "текст"},
+      {"input": "ckjdf", "expected": "слова", "desc": "слова"},
+      {"input": "vbh", "expected": "мир", "desc": "мир"},
+      {"input": "rjl", "expected": "код", "desc": "код"},
+      {"input": "ghbdtnbr", "expected": "приветик", "desc": "приветик (diminutive)"},
+      {"input": "cgfcb,j", "expected": "спасибо", "desc": "спасибо"},
+      {"input": "ljhjuf", "expected": "дорога", "desc": "дорога"}
+    ]
+  },
+  
+  "real_paragraphs": {
+    "description": "Real multi-sentence paragraphs as people actually type",
+    "cases": [
+      {
+        "input": "ghbdtn! rfr ltkf? lfyyj yt dbltk ntyz? ult ns ,sk? z pdjybk nt,t dxthf? yj ns yt jndtnbk",
+        "expected": "привет! как дела? давно не видел тебя. где ты был? я звонил тебе вчера, но ты не ответил",
+        "desc": "Casual chat with multiple sentences and punctuation"
+      },
+      {
+        "input": "gj;fkeqcnf? jnghfdmnt vyt ljrevtyn lj rjywf lyz? 'nj jxtym df;yj lkz yfituj ghjtrna? ,tp ytuj vs yt cvj;tv ghjljk;bnm hf,jne",
+        "expected": "пожалуйста, отправьте мне документ до конца дня. это очень важно для нашего проекта. без него мы не сможем продолжить работу",
+        "desc": "Work email - formal request"
+      },
+      {
+        "input": "z yt vjue gjyznm? gjxtve 'nj yt hf,jnftn? vs ghjdthbkb dct yfcnhjqrb? gthtpfuhepmkb cthdth? yj ghjuktvf jcnftncz",
+        "expected": "я не могу понять, почему это не работает. мы проверили все настройки, перезагрузили сервер, но проблема остается",
+        "desc": "Tech support frustration"
+      },
+      {
+        "input": "pfdhf vs blv d rbyjntfnh? [jxtim gjqnb c yfvb? abkmv yfxbyftncz d 8 dtxthf? yt jpflfq",
+        "expected": "завтра мы идем в кинотеатр. хочешь пойти с нами? фильм начинается в 8 вечера. не опаздай",
+        "desc": "Casual invitation with time"
+      },
+      {
+        "input": "ljhjufz? c lytv hj;ltybz! ;tkf. nt,t cxfcnmz b pljhjdmz? gentq ,eltn vyjuj? yj dct ,eltn [jhjij",
+        "expected": "дорогая, с днем рождения! желаю тебе счастья и здоровья. пусть будет много, но все будет хорошо",
+        "desc": "Birthday greeting"
+      }
+    ]
+  },
+  
+  "multiline_realistic": {
+    "description": "Multi-line text as in real documents",
+    "cases": [
+      {
+        "input": "pfujkjdjr\n\ngthdst cnhjrb ntrcnf? rjnjhst jxtym df;ys?\ndnjhst cnhjrb ntrcnf? rjnjhst njt df;ys?\n\ypfrk.xtybt",
+        "expected": "заголовок\n\nпервые строки текста, которые очень важны.\nвторые строки текста, которые тоже важны.\n\nзаключение",
+        "desc": "Document with header, paragraphs, conclusion"
+      },
+      {
+        "input": "cgbcjr gjregr:\n- [kt,\n- vjkjrj\n- zqwf\n- vfckj\n\nbnjuj: 500 he,",
+        "expected": "список покупок:\n- хлеб\n- молоко\n- яйца\n- масло\n\nитого: 500 руб",
+        "desc": "Shopping list with bullets and total"
+      }
+    ]
+  },
+  
+  "context_boost_hard": {
+    "description": "Hard cases where first word is very ambiguous",
+    "cases": [
+      {
+        "words": ["z", "nt,z", "k.,k."],
+        "expected_final": "я тебя люблю",
+        "desc": "я тебя люблю - classic"
+      },
+      {
+        "words": ["d", "'njv", "ujle", "vs", "pfgecnbkb", "ghjtrn"],
+        "expected_final": "в этом году мы запустили проект",
+        "desc": "в этом году... - preposition + long phrase"
+      },
+      {
+        "words": ["f", "ns", "xnj", "levftim"],
+        "expected_final": "а ты что думаешь",
+        "desc": "а ты что думаешь - starts with single letter"
+      },
+      {
+        "words": ["j", "xtv", "ds", "ujdjhbnt"],
+        "expected_final": "о чем вы говорите",
+        "desc": "о чем вы говорите - question starting with о"
+      },
+      {
+        "words": ["e", "vtyz", "tcnm", "bltq"],
+        "expected_final": "у меня есть идея",
+        "desc": "у меня есть идея - starts with у"
+      },
+      {
+        "words": ["r", "cj;fktyb.", "'nj", "ytdjpvj;yj"],
+        "expected_final": "к сожалению это невозможно",
+        "desc": "к сожалению - formal phrase"
+      },
+      {
+        "words": ["yj", "'nj", "yt", "njxyj"],
+        "expected_final": "но это не точно",
+        "desc": "но это не точно - meme phrase"
+      }
+    ]
+  },
+  
+  "ambiguous_words": {
+    "description": "Words that look similar in multiple languages or are international",
+    "cases": [
+      {"input": "ok", "expected": "ok", "should_change": false, "desc": "ok - international"},
+      {"input": "no", "expected": "no", "should_change": false, "desc": "no - valid EN"},
+      {"input": "test", "expected": "test", "should_change": false, "desc": "test - valid EN"},
+      {"input": "a", "expected": "a", "should_change": false, "desc": "single a - too ambiguous"},
+      {"input": "I", "expected": "I", "should_change": false, "desc": "single I - valid EN"},
+      {"input": "TV", "expected": "TV", "should_change": false, "desc": "TV - abbreviation"},
+      {"input": "DNA", "expected": "DNA", "should_change": false, "desc": "DNA - scientific"},
+      {"input": "API", "expected": "API", "should_change": false, "desc": "API - tech term"},
+      {"input": "CEO", "expected": "CEO", "should_change": false, "desc": "CEO - business term"},
+      {"input": "lol", "expected": "lol", "should_change": false, "desc": "lol - internet slang"},
+      {"input": "brb", "expected": "brb", "should_change": false, "desc": "brb - internet slang"}
+    ]
+  },
+  
+  "mixed_language_real": {
+    "description": "Real mixed language scenarios",
+    "cases": [
+      {
+        "input": "ghbdtn! rfr ltkf? I'm fine, cgfcb,j",
+        "expected": "привет! как дела? I'm fine, спасибо",
+        "desc": "RU-EN-RU mix in conversation"
+      },
+      {
+        "input": "jnghfdm email yf test@mail.ru gj;fkeqcnf",
+        "expected": "отправь email на test@mail.ru пожалуйста",
+        "desc": "RU with email address"
+      },
+      {
+        "input": "pfqnb yf https://google.com b yfqlb byajhvfwb.",
+        "expected": "зайти на https://google.com и найди информацию",
+        "desc": "RU with URL"
+      },
+      {
+        "input": "bcgjkmpez API jn Google? vs cvj;tv cjplfnm ghbkj;tybt",
+        "expected": "используя API от Google, мы сможем создать приложение",
+        "desc": "RU with tech terms"
+      }
+    ]
+  },
+  
+  "punctuation_triggers": {
+    "description": "Test different punctuation as word boundaries",
+    "cases": [
+      {
+        "input": "ghbdtn.rfr ltkf",
+        "expected": "привет.как дела",
+        "desc": "Period without space"
+      },
+      {
+        "input": "ghbdtn,rfr ltkf",
+        "expected": "привет,как дела",
+        "desc": "Comma without space"
+      },
+      {
+        "input": "ghbdtn!rfr ltkf",
+        "expected": "привет!как дела",
+        "desc": "Exclamation without space"
+      },
+      {
+        "input": "ghbdtn?rfr ltkf",
+        "expected": "привет?как дела",
+        "desc": "Question mark without space"
+      },
+      {
+        "input": "(ghbdtn)",
+        "expected": "(привет)",
+        "desc": "Word in parentheses"
+      },
+      {
+        "input": "\"ghbdtn\"",
+        "expected": "\"привет\"",
+        "desc": "Word in quotes"
+      },
+      {
+        "input": "ghbdtn - vbh",
+        "expected": "привет - мир",
+        "desc": "Words with dash"
+      }
+    ]
+  },
+  
+  "typos_and_errors": {
+    "description": "Text with typos - should still be corrected",
+    "cases": [
+      {
+        "input": "ghbdtn vbhh",
+        "expected": "привет мирр",
+        "desc": "Double letter typo"
+      },
+      {
+        "input": "ghbdtn vb",
+        "expected": "привет ми",
+        "desc": "Incomplete word"
+      },
+      {
+        "input": "ghbdtnn",
+        "expected": "приветт",
+        "desc": "Extra letter"
+      }
+    ]
+  },
+  
+  "numbers_and_special": {
+    "description": "Text with numbers and special characters",
+    "cases": [
+      {
+        "input": "dcnhtxf d 15:00",
+        "expected": "встреча в 15:00",
+        "desc": "Time format"
+      },
+      {
+        "input": "wtyf 1000 he,",
+        "expected": "цена 1000 руб",
+        "desc": "Price"
+      },
+      {
+        "input": "ntktajy +7-999-123-45-67",
+        "expected": "телефон +7-999-123-45-67",
+        "desc": "Phone number"
+      },
+      {
+        "input": "lfnf 25.12.2024",
+        "expected": "дата 25.12.2024",
+        "desc": "Date format"
+      }
+    ]
+  },
+  
+  "cycling_tests": {
+    "description": "Alt cycling through alternatives",
+    "cases": [
+      {
+        "input": "ghbdtn",
+        "alt_presses": 1,
+        "desc": "Single Alt corrects to RU"
+      },
+      {
+        "input": "ghbdtn",
+        "alt_presses": 2,
+        "desc": "Two Alt - cycles to HE or back"
+      },
+      {
+        "input": "ghbdtn",
+        "alt_presses": 5,
+        "desc": "Five Alt - stress test cycling"
+      },
+      {
+        "input": "ghbdtn vbh ntrcn",
+        "alt_presses": 3,
+        "desc": "Multi-word cycling"
+      }
+    ]
+  },
+  
+  "rapid_typing_simulation": {
+    "description": "Simulate fast typing with corrections",
+    "cases": [
+      {
+        "sequence": ["ghb", "dtn", " ", "vbh"],
+        "final_text": "ghbdtn vbh",
+        "expected_after_correction": "привет мир",
+        "desc": "Fast typing simulation"
+      }
+    ]
+  },
+  
+  "edge_cases_system": {
+    "description": "System-level edge cases",
+    "cases": [
+      {
+        "input": "",
+        "expected": "",
+        "desc": "Empty string"
+      },
+      {
+        "input": "   ",
+        "expected": "   ",
+        "desc": "Only spaces"
+      },
+      {
+        "input": "\n\n\n",
+        "expected": "\n\n\n",
+        "desc": "Only newlines"
+      },
+      {
+        "input": "ghbdtn\t\tvbh",
+        "expected": "привет\t\tмир",
+        "desc": "Tabs between words"
+      }
+    ]
+  },
+  
+  "performance_stress": {
+    "description": "Large text for performance testing",
+    "cases": [
+      {
+        "input": "'njn jxtym lkbyysq ntrcn yfgbcfy cgtwbfkmyj lkz njuj? xnj,s ghjdthbnm? rfr ,scnhj hf,jnftn fkujhbnv bcghfdktybz hfcrkflrb? rjulf ntrcn cjcnjbn bp vyjub[ ckjd b ghtlkj;tybq? f nfr;t cjlth;bn pyfr ghtgbyfybz b lheue. geyrnefwb.? rjnjhfz ljk;yf ,snm cj[hfytyf ,tp bpvtytybq? 'njn ntrcn ljk;ty ,snm bcghfdkty ghfdbkmyj? xnj,s vs vjukb e,tlbnmcz? xnj fkujhbnv hf,jnftn rjhhtrnyjq",
+        "expected": "этот очень длинный текст написан специально для того, чтобы проверить, как быстро работает алгоритм исправления раскладки, когда текст состоит из многих слов и предложений, а также содержит знак препинания и другую пунктуацию, которая должна быть сохранена без изменений. этот текст должен быть исправлен правильно, чтобы мы могли убедиться, что алгоритм работает корректной",
+        "desc": "100+ word paragraph",
+        "max_time_ms": 2000
+      }
+    ]
+  }
+}

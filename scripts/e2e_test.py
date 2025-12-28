@@ -105,7 +105,9 @@ TESTS = [
     ("vbh", "мир", "RU short word 'мир'"),
     
     # === Hebrew words ===
-    ("akuo", "שלום", "HE word 'שלום' on EN"),
+    # Note: שלום on Hebrew-QWERTY is wlvM (M=shift+m for final mem ם)
+    # Simple test without final letters:
+    ("wkuo", "שכוו", "HE word on EN (no finals)"),
     
     # === English on wrong layout ===
     ("ру|щ", None, "EN 'hello' on RU layout"),

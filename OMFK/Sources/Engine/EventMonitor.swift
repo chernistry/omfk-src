@@ -164,8 +164,9 @@ final class EventMonitor {
                     
                     // Single hotkey - context-aware behavior
                     logger.info("🔥 OPTION TAP - context-aware correction")
+                    let capturedProxy = proxy
                     Task { @MainActor in
-                        await handleHotkeyPress()
+                        await handleHotkeyPress(proxy: capturedProxy)
                     }
                 }
             }
@@ -220,11 +221,12 @@ final class EventMonitor {
             // Process on word boundaries (space/newline triggers auto-correction)
             if chars.rangeOfCharacter(from: .whitespacesAndNewlines) != nil {
                 logger.info("📍 Word boundary detected (space/newline) - processing buffer")
-                // Capture buffer content before clearing to avoid race condition
+                // Capture buffer content AND proxy before clearing to avoid race condition
                 let textToProcess = buffer
+                let capturedProxy = proxy
                 buffer = ""  // Clear immediately to prevent next char from being added
                 Task { @MainActor in
-                    await self.processBufferContent(textToProcess)
+                    await self.processBufferContent(textToProcess, proxy: capturedProxy)
                 }
             } else {
                 // Reset cycling state only on non-whitespace input (new word being typed)
@@ -241,7 +243,7 @@ final class EventMonitor {
         return Unmanaged.passUnretained(event)
     }
     
-    private func processBufferContent(_ bufferContent: String) async {
+    private func processBufferContent(_ bufferContent: String, proxy: CGEventTapProxy) async {
         let text = bufferContent.trimmingCharacters(in: .whitespacesAndNewlines)
         let letterCount = text.filter { $0.isLetter }.count
         
@@ -258,7 +260,7 @@ final class EventMonitor {
             if settings.preferredLanguage == .russian {
                 let corrected = char.isUppercase ? String(ruPreposition).uppercased() : String(ruPreposition)
                 logger.info("✅ Single letter preposition: '\(text)' → '\(corrected)'")
-                await replaceText(with: corrected + " ", originalLength: 2) // +1 for space
+                await replaceText(with: corrected + " ", originalLength: 2, proxy: proxy) // +1 for space
                 lastCorrectedLength = corrected.count + 1
                 lastCorrectedText = corrected
                 return
@@ -301,7 +303,7 @@ final class EventMonitor {
             // We need to delete: pendingOriginal.count + 1 (space) + wordLength + 1 (current space)
             let totalDeleteLength = pendingOriginal.count + 1 + wordLength + 1
             let replacement = pendingCorrected + " " + (result.corrected ?? text) + " "
-            await replaceText(with: replacement, originalLength: totalDeleteLength)
+            await replaceText(with: replacement, originalLength: totalDeleteLength, proxy: proxy)
             lastCorrectedLength = replacement.count
             lastCorrectedText = replacement
             lastCorrectionTime = Date()
@@ -309,7 +311,7 @@ final class EventMonitor {
             logger.info("✅ CORRECTION APPLIED: \(DecisionLogger.tokenSummary(text), privacy: .public) → \(DecisionLogger.tokenSummary(corrected), privacy: .public)")
             // Delete word + the space that triggered (cursor is after space)
             let textWithSpace = corrected + " "
-            await replaceText(with: textWithSpace, originalLength: wordLength + 1)
+            await replaceText(with: textWithSpace, originalLength: wordLength + 1, proxy: proxy)
             lastCorrectedLength = textWithSpace.count
             lastCorrectedText = textWithSpace  // Include space for accurate cycling
             lastCorrectionTime = Date()  // Enable cycling after auto-correction
@@ -325,7 +327,7 @@ final class EventMonitor {
         logger.debug("🧹 Buffer processing complete")
     }
     
-    private func handleHotkeyPress() async {
+    private func handleHotkeyPress(proxy: CGEventTapProxy) async {
         // Freeze buffers for the entire duration of hotkey handling
         cyclingActive = true
         defer { cyclingActive = false }
@@ -349,7 +351,7 @@ final class EventMonitor {
         let noNewTyping = buffer.isEmpty && timeSinceLastCorrection < 3.0
         
         // But first check if there's a fresh selection - it takes priority over cycling
-        let freshSelection = await getSelectedTextFresh()
+        let freshSelection = await getSelectedTextFresh(proxy: proxy)
         let hasNewSelection = lastSelectionWasExplicit && !freshSelection.isEmpty && 
                               freshSelection.trimmingCharacters(in: .whitespacesAndNewlines) != lastCorrectedText.trimmingCharacters(in: .whitespacesAndNewlines)
         
@@ -377,7 +379,7 @@ final class EventMonitor {
                     logger.info("✅ CYCLING: → '\(corrected)' (deleting \(savedLength) chars, hadSpace=\(hadSpace))")
                     DecisionLogger.shared.log("HOTKEY: CYCLE RESULT: '\(corrected)' (delete \(savedLength))")
                     
-                    await replaceText(with: finalCorrected, originalLength: savedLength)
+                    await replaceText(with: finalCorrected, originalLength: savedLength, proxy: proxy)
                     
                     // Update to new length for next cycle
                     lastCorrectedLength = finalCorrected.count
@@ -434,11 +436,11 @@ final class EventMonitor {
             if lastSelectionWasExplicit {
                 // Text is selected - just type over it (no backspaces needed)
                 DecisionLogger.shared.log("HOTKEY: Typing over selection with '\(finalText)' (\(finalText.count) chars)")
-                await typeOverSelection(with: finalText)
+                await typeOverSelection(with: finalText, proxy: proxy)
             } else {
                 // No selection - use backspaces to delete buffer content
                 DecisionLogger.shared.log("HOTKEY: Replacing \(rawText.count) chars with '\(finalText)' (\(finalText.count) chars)")
-                await replaceText(with: finalText, originalLength: rawText.count)
+                await replaceText(with: finalText, originalLength: rawText.count, proxy: proxy)
             }
             
             lastCorrectedLength = finalText.count
@@ -462,7 +464,7 @@ final class EventMonitor {
     private var appsWithoutAXSelection: Set<String> = []
     private var lastSelectionWasExplicit: Bool = false
     
-    private func getSelectedTextFresh() async -> String {
+    private func getSelectedTextFresh(proxy: CGEventTapProxy) async -> String {
         lastSelectionWasExplicit = false
         let timeSinceLastKey = Date().timeIntervalSince(lastEventTime)
         let bundleId = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
@@ -476,7 +478,7 @@ final class EventMonitor {
         // Check if this app is known to not support AX selection
         if appsWithoutAXSelection.contains(bundleId) {
             // Go straight to clipboard fallback
-            if let clipboardText = await getSelectedTextViaClipboard() {
+            if let clipboardText = await getSelectedTextViaClipboard(proxy: proxy) {
                 lastSelectionWasExplicit = true
                 return clipboardText
             }
@@ -488,7 +490,7 @@ final class EventMonitor {
             }
             
             // AX returned empty - try clipboard fallback
-            if let clipboardText = await getSelectedTextViaClipboard(), !clipboardText.isEmpty {
+            if let clipboardText = await getSelectedTextViaClipboard(proxy: proxy), !clipboardText.isEmpty {
                 // Remember this app doesn't support AX selection
                 appsWithoutAXSelection.insert(bundleId)
                 logger.info("📋 App '\(bundleId)' added to clipboard fallback list")
@@ -507,7 +509,7 @@ final class EventMonitor {
     }
     
     /// Get selected text via clipboard (Cmd+C) - fallback for apps without AX support
-    private func getSelectedTextViaClipboard() async -> String? {
+    private func getSelectedTextViaClipboard(proxy: CGEventTapProxy) async -> String? {
         let pasteboard = NSPasteboard.general
         
         // Save current clipboard content
@@ -531,13 +533,8 @@ final class EventMonitor {
         cmdC_down.flags = .maskCommand
         cmdC_up.flags = .maskCommand
         
-        if let proxy = currentProxy {
-            cmdC_down.tapPostEvent(proxy)
-            cmdC_up.tapPostEvent(proxy)
-        } else {
-            cmdC_down.post(tap: .cghidEventTap)
-            cmdC_up.post(tap: .cghidEventTap)
-        }
+        cmdC_down.tapPostEvent(proxy)
+        cmdC_up.tapPostEvent(proxy)
         
         // Wait for clipboard to update
         try? await Task.sleep(nanoseconds: 150_000_000) // 150ms
@@ -590,9 +587,8 @@ final class EventMonitor {
     }
     
     /// Post a keyboard event - uses CGEventTapPostEvent to post "after" our tap (won't be seen by us)
-    private func postKeyEvent(keyCode: CGKeyCode, flags: CGEventFlags) {
-        guard let proxy = currentProxy,
-              let keyDown = CGEvent(keyboardEventSource: syntheticEventSource, virtualKey: keyCode, keyDown: true),
+    private func postKeyEvent(keyCode: CGKeyCode, flags: CGEventFlags, proxy: CGEventTapProxy) {
+        guard let keyDown = CGEvent(keyboardEventSource: syntheticEventSource, virtualKey: keyCode, keyDown: true),
               let keyUp = CGEvent(keyboardEventSource: syntheticEventSource, virtualKey: keyCode, keyDown: false) else {
             return
         }
@@ -604,19 +600,19 @@ final class EventMonitor {
     }
     
     /// Type over selected text
-    private func typeOverSelection(with newText: String) async {
+    private func typeOverSelection(with newText: String, proxy: CGEventTapProxy) async {
         let bundleId = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
         
         // For apps without AX support, use clipboard paste instead of typing
         if appsWithoutAXSelection.contains(bundleId) {
-            await pasteText(newText)
+            await pasteText(newText, proxy: proxy)
         } else {
-            typeUnicodeString(newText)
+            typeUnicodeString(newText, proxy: proxy)
         }
     }
     
     /// Paste text via clipboard (Cmd+V) - for apps that don't accept CGEvent typing
-    private func pasteText(_ text: String) async {
+    private func pasteText(_ text: String, proxy: CGEventTapProxy) async {
         let pasteboard = NSPasteboard.general
         
         // Save current clipboard
@@ -640,13 +636,8 @@ final class EventMonitor {
         cmdV_down.flags = .maskCommand
         cmdV_up.flags = .maskCommand
         
-        if let proxy = currentProxy {
-            cmdV_down.tapPostEvent(proxy)
-            cmdV_up.tapPostEvent(proxy)
-        } else {
-            cmdV_down.post(tap: .cghidEventTap)
-            cmdV_up.post(tap: .cghidEventTap)
-        }
+        cmdV_down.tapPostEvent(proxy)
+        cmdV_up.tapPostEvent(proxy)
         
         // Wait for paste to complete
         try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
@@ -658,21 +649,20 @@ final class EventMonitor {
         }
     }
     
-    private func replaceText(with newText: String, originalLength: Int) async {
+    private func replaceText(with newText: String, originalLength: Int, proxy: CGEventTapProxy) async {
         // Send backspaces to delete original text
         for _ in 0..<originalLength {
-            postKeyEvent(keyCode: 0x33, flags: [])
+            postKeyEvent(keyCode: 0x33, flags: [], proxy: proxy)
         }
         
         // Small delay for system to process deletions
         try? await Task.sleep(nanoseconds: 20_000_000) // 20ms
         
-        typeUnicodeString(newText)
+        typeUnicodeString(newText, proxy: proxy)
     }
     
     /// Type a string using CGEvent - posts "after" our tap so we don't see our own events
-    private func typeUnicodeString(_ string: String) {
-        guard let proxy = currentProxy else { return }
+    private func typeUnicodeString(_ string: String, proxy: CGEventTapProxy) {
         
         let filtered = string.unicodeScalars.filter { scalar in
             let value = scalar.value

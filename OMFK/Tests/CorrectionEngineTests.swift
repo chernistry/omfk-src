@@ -16,14 +16,14 @@ final class CorrectionEngineTests: XCTestCase {
     func testCorrectInvalidRussianToEnglish() async throws {
         // "ghbdtn" is invalid in English, but "привет" is valid in Russian
         let result = await engine.correctText("ghbdtn", expectedLayout: nil)
-        XCTAssertEqual(result, "привет")
+        XCTAssertEqual(result.corrected, "привет")
     }
     
     func testCorrectInvalidEnglishToRussian() async throws {
         // "ghbdtn" typed on English layout is invalid, converts to valid Russian "привет"
         let result = await engine.correctText("ghbdtn", expectedLayout: nil)
-        XCTAssertNotNil(result)
-        if let corrected = result {
+        XCTAssertNotNil(result.corrected)
+        if let corrected = result.corrected {
             XCTAssertEqual(corrected, "привет")
         }
     }
@@ -31,26 +31,26 @@ final class CorrectionEngineTests: XCTestCase {
     func testValidWordNotCorrected() async throws {
         // "hello" is valid in English, should not be corrected
         let result = await engine.correctText("hello", expectedLayout: nil)
-        XCTAssertNil(result)
+        XCTAssertNil(result.corrected)
     }
     
     func testValidRussianWordNotCorrected() async throws {
         // "привет" is valid in Russian, should not be corrected
         let result = await engine.correctText("привет", expectedLayout: nil)
-        XCTAssertNil(result)
+        XCTAssertNil(result.corrected)
     }
     
     func testHebrewToEnglishCorrection() async throws {
         // Invalid Hebrew word that becomes valid English
         let result = await engine.correctText("adk", expectedLayout: nil)
-        if result != nil {
-            XCTAssertNotEqual(result, "adk")
+        if result.corrected != nil {
+            XCTAssertNotEqual(result.corrected, "adk")
         }
     }
     
     func testEmptyTextReturnsNil() async throws {
         let result = await engine.correctText("", expectedLayout: nil)
-        XCTAssertNil(result)
+        XCTAssertNil(result.corrected)
     }
     
     func testHistoryRecordsCorrection() async throws {

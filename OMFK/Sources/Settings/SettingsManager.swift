@@ -40,8 +40,13 @@ final class SettingsManager: ObservableObject {
         didSet { UserDefaults.standard.set(standardPathThreshold, forKey: "standardPathThreshold") }
     }
     
+    @Published var isLearningEnabled: Bool {
+        didSet { UserDefaults.standard.set(isLearningEnabled, forKey: "isLearningEnabled") }
+    }
+    
     private init() {
         self.isEnabled = UserDefaults.standard.object(forKey: "isEnabled") as? Bool ?? true
+        self.isLearningEnabled = UserDefaults.standard.object(forKey: "isLearningEnabled") as? Bool ?? true
         
         let langRaw = UserDefaults.standard.string(forKey: "preferredLanguage") ?? "en"
         self.preferredLanguage = Language(rawValue: langRaw) ?? .english

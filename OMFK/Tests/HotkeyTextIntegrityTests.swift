@@ -28,14 +28,14 @@ final class HotkeyTextIntegrityTests: XCTestCase {
     /// Simulate typing text and triggering word-boundary correction
     private func simulateTypingWithCorrection(_ text: String) async -> (original: String, corrected: String?) {
         buffer.type(text)
-        let corrected = await engine.correctText(text, expectedLayout: nil)
+        let result = await engine.correctText(text, expectedLayout: nil)
         
-        if let corrected = corrected {
+        if let corrected = result.corrected {
             // Simulate the replacement operation
             buffer.replaceLast(text.count, with: corrected)
         }
         
-        return (text, corrected)
+        return (text, result.corrected)
     }
     
     /// Simulate hotkey press for manual correction (word mode)
@@ -129,9 +129,9 @@ final class HotkeyTextIntegrityTests: XCTestCase {
         buffer.type(text)
         
         // Auto-correct
-        let corrected = await engine.correctText(text, expectedLayout: nil)
-        XCTAssertEqual(corrected, "привет")
-        buffer.replaceLast(text.count, with: corrected!)
+        let result = await engine.correctText(text, expectedLayout: nil)
+        XCTAssertEqual(result.corrected, "привет")
+        buffer.replaceLast(text.count, with: result.corrected!)
         XCTAssertEqual(buffer.content, "привет")
         
         // First hotkey press should UNDO (go back to original)
@@ -286,8 +286,8 @@ final class HotkeyTextIntegrityTests: XCTestCase {
         let text = "hello"
         
         // Auto-correct should return nil
-        let corrected = await engine.correctText(text, expectedLayout: nil)
-        XCTAssertNil(corrected, "Valid word should not be corrected")
+        let result = await engine.correctText(text, expectedLayout: nil)
+        XCTAssertNil(result.corrected, "Valid word should not be corrected")
         
         // No target language should be set
         let targetLang = await engine.getLastCorrectionTargetLanguage()
@@ -402,10 +402,10 @@ final class HotkeyTextIntegrityTests: XCTestCase {
         buffer.type(wordWithSpace)
         
         // Correction should handle trailing space correctly
-        let corrected = await engine.correctText(wordWithoutSpace, expectedLayout: nil)
-        XCTAssertNotNil(corrected)
+        let result = await engine.correctText(wordWithoutSpace, expectedLayout: nil)
+        XCTAssertNotNil(result.corrected)
         
-        if let corrected = corrected {
+        if let corrected = result.corrected {
             // When replacing, we need to account for the space
             // The word is 6 chars, space is 1, total 7
             // But correction is for the word only (6 chars)
@@ -467,20 +467,21 @@ extension HotkeyTextIntegrityTests {
             buffer.clear()
             await engine.resetCycling()
             
-            let corrected = await engine.correctText(input, expectedLayout: nil)
+            let result = await engine.correctText(input, expectedLayout: nil)
             
             if let expectedOutput = expectedOutput {
-                XCTAssertEqual(corrected, expectedOutput,
+                XCTAssertEqual(result.corrected, expectedOutput,
                               "Input '\(input)' should correct to '\(expectedOutput)'")
             } else {
-                XCTAssertNil(corrected,
+                XCTAssertNil(result.corrected,
                             "Input '\(input)' should not be corrected (valid \(expectedLang.rawValue))")
             }
             
             // Verify no control characters in any output
-            if let corrected = corrected {
-                let hasControl = corrected.unicodeScalars.contains { 
-                    ($0.value <= 0x1F || $0.value == 0x7F) && $0 != "\n" && $0 != "\r" && $0 != "\t"
+            if let corrected = result.corrected {
+                let hasControl = corrected.unicodeScalars.contains { scalar in 
+                    let v = scalar.value
+                    return (v <= 0x1F || v == 0x7F) && scalar != "\n" && scalar != "\r" && scalar != "\t"
                 }
                 XCTAssertFalse(hasControl, "Control character in correction of '\(input)'")
             }

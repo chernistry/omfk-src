@@ -62,6 +62,42 @@ actor ConfidenceRouter {
     /// - CoreML detects LAYOUT MISMATCH ("this Cyrillic is gibberish Russian, but valid Hebrew from RU layout").
     /// - We ALWAYS invoke CoreML to check for `_from_` hypotheses, even if Fast/Standard is confident.
     func route(token: String, context: DetectorContext, mode: DetectionMode = .automatic) async -> LanguageDecision {
+        // NEW: User Dictionary Lookup
+        if let rule = await UserDictionary.shared.lookup(token) {
+            switch rule.action {
+            case .keepAsIs:
+                if mode == .manual {
+                     // Unlearning Flow A: User forces correction on a "keep as-is" token
+                     await UserDictionary.shared.recordOverride(token: token)
+                     // Proceed with detection (ignore the rule)
+                } else {
+                     // Automatic mode: Respect the rule (do NOT correct)
+                     let dominant = dominantScriptLanguage(token)
+                     let lang = dominant ?? .english
+                     let hyp: LanguageHypothesis = (lang == .russian) ? .ru : ((lang == .hebrew) ? .he : .en)
+                     
+                     let decision = LanguageDecision(language: lang, layoutHypothesis: hyp, confidence: 1.0, scores: [:])
+                     DecisionLogger.shared.logDecision(token: token, path: "USER_DICT_KEEP", result: decision)
+                     return decision
+                }
+            case .preferHypothesis(let hypStr):
+                 // Check if we can map string to hypothesis
+                 if let hyp = LanguageHypothesis(rawValue: hypStr) {
+                      // Validate the preferred hypothesis
+                      let activeLayouts = await settings.activeLayouts
+                      // Use a high confidence to bias the validation
+                      if let validated = validateCorrection(token: token, hypothesis: hyp, confidence: 1.0, activeLayouts: activeLayouts) {
+                           DecisionLogger.shared.logDecision(token: token, path: "USER_DICT_PREFER", result: validated)
+                           return validated
+                      }
+                 }
+            case .none:
+                 break
+            default:
+                 break
+            }
+        }
+
         // Whitelist check - don't convert common words/slang
         if let lang = whitelist.whitelistedLanguage(token) {
             let hyp: LanguageHypothesis = lang == .english ? .en : (lang == .russian ? .ru : .he)

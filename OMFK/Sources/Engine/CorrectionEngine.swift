@@ -534,6 +534,35 @@ actor CorrectionEngine {
     
     /// Reset cycling state (called when new text is typed)
     func resetCycling() {
+        // Commit learning before clearing state
+        if let state = cyclingState, state.isValid {
+             Task {
+                 let finalIndex = state.currentIndex
+                 let finalAlt = state.alternatives[finalIndex]
+                 let token = state.originalText
+                 let bundleId = await MainActor.run { NSWorkspace.shared.frontmostApplication?.bundleIdentifier }
+                 
+                 if state.wasAutomatic {
+                     if finalIndex == 0 {
+                         // 1. Learn from Undo (AutoReject)
+                         await UserDictionary.shared.recordAutoReject(token: token, bundleId: bundleId)
+                     } else if finalIndex != 1 {
+                         // 2. User changed auto-correction to different hypothesis (ManualApply)
+                         if let hyp = finalAlt.hypothesis {
+                             await UserDictionary.shared.recordManualApply(token: token, hypothesis: hyp.rawValue, bundleId: bundleId)
+                         }
+                     }
+                 } else {
+                     // Manual trigger
+                     if finalIndex != 0 {
+                         // 3. Learn from Manual Correction (ManualApply)
+                         if let hyp = finalAlt.hypothesis {
+                             await UserDictionary.shared.recordManualApply(token: token, hypothesis: hyp.rawValue, bundleId: bundleId)
+                         }
+                     }
+                 }
+             }
+        }
         cyclingState = nil
     }
     

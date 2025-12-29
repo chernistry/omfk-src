@@ -43,7 +43,8 @@ struct SettingsView: View {
                     Text("General").tag(0)
                     Text("Hotkey").tag(1)
                     Text("Apps").tag(2)
-                    Text("About").tag(3)
+                    Text("Dictionary").tag(3)
+                    Text("About").tag(4)
                 }
                 .pickerStyle(.segmented)
                 .padding(.horizontal, 30)
@@ -59,6 +60,7 @@ struct SettingsView: View {
                 case 0: GeneralTab(settings: settings)
                 case 1: HotkeyTab(settings: settings)
                 case 2: AppsTab(settings: settings)
+                case 3: UserDictionaryView()
                 default: AboutTab()
                 }
             }

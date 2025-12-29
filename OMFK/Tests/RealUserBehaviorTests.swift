@@ -188,13 +188,13 @@ final class RealUserBehaviorTests: XCTestCase {
         
         // Simulate auto-correction
         let autoResult = await engine.correctText(input, expectedLayout: nil)
-        XCTAssertEqual(autoResult, "привет")
+        XCTAssertEqual(autoResult.corrected, "привет")
         
         // Now user presses hotkey to undo
         let undone = await engine.cycleCorrection()
         
         print("=== Undo auto-correction ===")
-        print("Auto: '\(input)' -> '\(autoResult ?? "nil")'")
+        print("Auto: '\(input)' -> '\(autoResult.corrected ?? "nil")'")
         print("Undo: -> '\(undone ?? "nil")'")
         
         // First cycle after auto should go back to original

@@ -3,6 +3,70 @@
 ## Goal
 Create comprehensive end-to-end tests that simulate **real user typing** (character-by-character via keycodes + space) to verify OMFK auto-correction works correctly across different keyboard layout combinations.
 
+---
+
+## How to Run Tests
+
+### Prerequisites
+```bash
+# Build OMFK first
+cd /Users/sasha/IdeaProjects/personal_projects/omfk
+swift build
+
+# Ensure TextEdit is available (used as test target)
+open -a TextEdit
+```
+
+### Quick Alt Cycling Test (~2 min)
+```bash
+python3 scripts/alt_cycling_test.py
+```
+Tests Alt key behavior: cycling, undo, state persistence. Expected: 19/19 pass.
+
+### Alt Extreme/Timing Tests (~5 min)
+```bash
+python3 scripts/alt_extreme_test.py
+```
+Tests edge cases: rapid typing, double space, immediate typing after Alt. Expected: 22/23 pass.
+
+### Bug Reproduction Tests
+```bash
+python3 scripts/alt_bug_repro_test.py
+```
+Reproduces known bugs for verification. Shows current bug status.
+
+### Full Comprehensive Test (~15-20 min per combo)
+```bash
+# Combo 0: US + Russian Mac + Hebrew Mac (default)
+python3 scripts/comprehensive_test.py --real-typing --combo 0
+
+# Combo 1: US + RussianWin + Hebrew Mac
+python3 scripts/comprehensive_test.py -r -c 1
+
+# Combo 2: US + RussianWin + Hebrew-QWERTY
+python3 scripts/comprehensive_test.py -r -c 2
+```
+
+### Interpreting Results
+- **PASS (✓)**: Output matches expected
+- **FAIL (✗)**: Output differs from expected
+- Results saved to `/tmp/test_results.txt`
+- Debug log at `~/.omfk/debug.log`
+
+### Adding New Test Cases
+Edit `tests/test_cases.json`:
+```json
+{
+  "single_words": {
+    "cases": [
+      {"input": "ghbdtn", "expected": "привет", "desc": "description"}
+    ]
+  }
+}
+```
+
+---
+
 ## Test Results Summary
 
 | Combo | Description | Passed | Failed | Rate |
@@ -577,3 +641,31 @@ Only SPACE triggers auto-correction. Other punctuation does NOT:
 - `test_alt_same_word_5x_undo` shows 5/5 undos detected
 - But OMFK still auto-corrects "ghbdtn" → "привет" every time
 - No learning happens - user must undo every single time
+
+---
+
+## Test Coverage Gaps (TODO)
+
+### Gap 1: No "Realistic Session" Tests
+Current tests use clean, isolated inputs. Real users:
+- Type with variable speed (fast bursts, slow thinking)
+- Make typos and backspace to fix
+- Pause mid-word
+- Switch apps mid-sentence
+- Use mouse/arrows to go back and edit
+
+**→ See Ticket 30: Realistic User Behavior Tests**
+
+### Gap 2: Alt Cycling Shows Only 2 States
+Test `test_alt_full_cycle_verification` reports "2 unique states" but we have 3 languages.
+Hebrew is never shown in cycling unless explicitly configured.
+
+**→ See Ticket 29: Extended Alt Cycling (Third Language on Second Round)**
+
+### Gap 3: No Long-Form Typing Tests
+Current tests are single words or short phrases. No tests for:
+- Typing a full paragraph (100+ words)
+- Typing for 5+ minutes continuously
+- Memory/performance under sustained load
+
+**→ See Ticket 30: Realistic User Behavior Tests (includes sustained typing test)**

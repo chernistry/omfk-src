@@ -64,8 +64,9 @@ struct SettingsView: View {
                 default: AboutTab()
                 }
             }
+            .frame(maxHeight: .infinity)
         }
-        .frame(width: 360, height: 480)
+        .frame(minWidth: 360, maxWidth: 500, minHeight: 480, maxHeight: 700)
         .background(.ultraThinMaterial)
     }
 }

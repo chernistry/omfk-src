@@ -83,12 +83,30 @@ actor ConfidenceRouter {
             case .preferHypothesis(let hypStr):
                  // Check if we can map string to hypothesis
                  if let hyp = LanguageHypothesis(rawValue: hypStr) {
-                      // Validate the preferred hypothesis
+                      // User explicitly wants this conversion - apply it without strict validation
                       let activeLayouts = await settings.activeLayouts
-                      // Use a high confidence to bias the validation
-                      if let validated = validateCorrection(token: token, hypothesis: hyp, confidence: 1.0, activeLayouts: activeLayouts) {
-                           DecisionLogger.shared.logDecision(token: token, path: "USER_DICT_PREFER", result: validated)
-                           return validated
+                      let target = hyp.targetLanguage
+                      
+                      // Determine source language from hypothesis
+                      let source: Language
+                      switch hyp {
+                      case .ruFromEnLayout, .heFromEnLayout: source = .english
+                      case .enFromRuLayout, .heFromRuLayout: source = .russian
+                      case .enFromHeLayout, .ruFromHeLayout: source = .hebrew
+                      default: source = .english // as-is hypotheses don't need conversion
+                      }
+                      
+                      // Try to convert using the preferred hypothesis
+                      if let converted = LayoutMapper.shared.convertBest(token, from: source, to: target, activeLayouts: activeLayouts),
+                         converted != token {
+                           let decision = LanguageDecision(
+                               language: target,
+                               layoutHypothesis: hyp,
+                               confidence: 1.0,
+                               scores: [:]
+                           )
+                           DecisionLogger.shared.logDecision(token: token, path: "USER_DICT_PREFER", result: decision)
+                           return decision
                       }
                  }
             case .none:

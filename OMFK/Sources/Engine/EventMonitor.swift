@@ -21,12 +21,18 @@ final class EventMonitor {
     private let logger = Logger.events
     private let settings: SettingsManager
     
-    // Event source for synthetic events
     private let syntheticEventSource: CGEventSource?
+    private let timeProvider: TimeProvider
+    private let charEncoder: CharacterEncoder
     
-    init(engine: CorrectionEngine) {
+    // Internal flag for testing
+    internal var skipPIDCheck = false
+    
+    init(engine: CorrectionEngine, timeProvider: TimeProvider = RealTimeProvider(), charEncoder: CharacterEncoder = DefaultCharacterEncoder()) {
         self.engine = engine
         self.settings = SettingsManager.shared
+        self.timeProvider = timeProvider
+        self.charEncoder = charEncoder
         self.syntheticEventSource = CGEventSource(stateID: .privateState)
         logger.info("EventMonitor initialized")
         setupAppChangeObserver()
@@ -260,8 +266,8 @@ final class EventMonitor {
     }
 
     private func waitForLayoutId(_ appleId: String, timeout: TimeInterval) async -> Bool {
-        let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline {
+        let deadline = timeProvider.now.addingTimeInterval(timeout)
+        while timeProvider.now < deadline {
             if InputSourceManager.shared.currentLayoutId() == appleId {
                 return true
             }
@@ -271,8 +277,8 @@ final class EventMonitor {
     }
 
     private func waitForLanguage(_ language: Language, timeout: TimeInterval) async -> Bool {
-        let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline {
+        let deadline = timeProvider.now.addingTimeInterval(timeout)
+        while timeProvider.now < deadline {
             if InputSourceManager.shared.currentLanguage() == language {
                 return true
             }
@@ -340,7 +346,9 @@ final class EventMonitor {
     private func shouldExtendLastCorrectedSuffix(with text: String, bufferWasEmpty: Bool) -> Bool {
         guard bufferWasEmpty, lastCorrectedLength > 0 else { return false }
         
-        let timeSinceLastCorrection = Date().timeIntervalSince(lastCorrectionTime)
+        guard bufferWasEmpty, lastCorrectedLength > 0 else { return false }
+        
+        let timeSinceLastCorrection = timeProvider.now.timeIntervalSince(lastCorrectionTime)
         guard timeSinceLastCorrection < 3.0 else { return false }
         
         return text.allSatisfy(isDelimiterLikeCharacter)
@@ -375,7 +383,8 @@ final class EventMonitor {
         return BufferParts(leading: leading, token: token, trailing: trailing)
     }
     
-    private func handleEvent(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
+    // Made internal for testing
+    internal func handleEvent(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
         // Store proxy for use in replacement methods
         currentProxy = proxy
         
@@ -388,10 +397,13 @@ final class EventMonitor {
         }
         
         // Filter by PID - ignore events from our own process (backup)
-        let sourcePID = event.getIntegerValueField(.eventSourceUnixProcessID)
-        let myPID = Int64(getpid())
-        if sourcePID == myPID && sourcePID != 0 {
-            return Unmanaged.passUnretained(event)
+        // In tests, we might want to process our own events
+        if !skipPIDCheck {
+            let sourcePID = event.getIntegerValueField(.eventSourceUnixProcessID)
+            let myPID = Int64(getpid())
+            if sourcePID == myPID && sourcePID != 0 {
+                return Unmanaged.passUnretained(event)
+            }
         }
         
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
@@ -411,7 +423,7 @@ final class EventMonitor {
                     optionKeyWasPressed = false
                     
                     // Debounce: ignore if hotkey was triggered recently
-                    let now = Date()
+                    let now = timeProvider.now
                     if now.timeIntervalSince(lastHotkeyTime) < 0.5 {
                         logger.debug("⏭️ Hotkey debounced (too soon after last)")
                         return Unmanaged.passUnretained(event)
@@ -423,7 +435,7 @@ final class EventMonitor {
                     layoutBeforeCycling = InputSourceManager.shared.currentLayoutId()
                     languageBeforeCycling = InputSourceManager.shared.currentLanguage()
                     cyclingActive = true
-                    cyclingStartTime = Date()  // Track when cycling started
+                    cyclingStartTime = timeProvider.now  // Track when cycling started
                     
                     // Single hotkey - context-aware behavior
                     logger.info("🔥 OPTION TAP - context-aware correction")
@@ -457,7 +469,7 @@ final class EventMonitor {
         // so the characters are correct regardless of what layout is active now.
         // While cycling/replacing, swallow user keystrokes to prevent interleaving with backspaces/typing.
         // Keep cycling active for at least cyclingMinDuration to capture fast typing after Alt.
-        let timeSinceCyclingStart = Date().timeIntervalSince(cyclingStartTime)
+        let timeSinceCyclingStart = timeProvider.now.timeIntervalSince(cyclingStartTime)
         let inCyclingWindow = cyclingActive || (timeSinceCyclingStart < cyclingMinDuration && layoutBeforeCycling != nil)
         
         logger.debug("⏱️ keyCode=\(keyCode) cyclingActive=\(self.cyclingActive) timeSince=\(timeSinceCyclingStart) layoutBefore=\(self.layoutBeforeCycling ?? "nil") inWindow=\(inCyclingWindow)")
@@ -500,7 +512,7 @@ final class EventMonitor {
             return Unmanaged.passUnretained(event)
         }
         
-        let now = Date()
+        let now = timeProvider.now
         let timeSinceLastEvent = now.timeIntervalSince(lastEventTime)
         if timeSinceLastEvent > 2.0 {
             if !buffer.isEmpty {
@@ -511,14 +523,20 @@ final class EventMonitor {
         }
         lastEventTime = now
         
-        if let chars = event.keyboardEventCharacters {
-            // Filter out control characters (keep only printable + space/newline)
-            let filtered = chars.filter { char in
-                char.isLetter || char.isNumber || char.isPunctuation || char.isSymbol || char == " " || char == "\n" || char == "\r" || char == "\t"
-            }
-            guard !filtered.isEmpty else {
-                return Unmanaged.passUnretained(event)
-            }
+        // Filter by PID checked earlier
+        
+        // Debug prints removed
+        
+        let encoded = charEncoder.encode(event: event)
+        
+        if let chars = encoded {
+             // Filter out control characters (keep only printable + space/newline)
+             let filtered = chars.filter { char in
+                 char.isLetter || char.isNumber || char.isPunctuation || char.isSymbol || char == " " || char == "\n" || char == "\r" || char == "\t"
+             }
+             guard !filtered.isEmpty else {
+                 return Unmanaged.passUnretained(event)
+             }
             
             let bufferWasEmpty = buffer.isEmpty
             if shouldExtendLastCorrectedSuffix(with: filtered, bufferWasEmpty: bufferWasEmpty) {
@@ -617,21 +635,21 @@ final class EventMonitor {
             await replaceText(with: replacement, originalLength: totalDeleteLength, proxy: proxy)
             lastCorrectedLength = replacement.count
             lastCorrectedText = replacement
-            lastCorrectionTime = Date()
+            lastCorrectionTime = timeProvider.now
         } else if let corrected = result.corrected {
             logger.info("✅ CORRECTION APPLIED: \(DecisionLogger.tokenSummary(text), privacy: .public) → \(DecisionLogger.tokenSummary(corrected), privacy: .public)")
             let replacement = parts.leading + corrected + parts.trailing
             await replaceText(with: replacement, originalLength: totalTypedLength, proxy: proxy)
             lastCorrectedLength = replacement.count
             lastCorrectedText = replacement
-            lastCorrectionTime = Date()  // Enable cycling after auto-correction
+            lastCorrectionTime = timeProvider.now  // Enable cycling after auto-correction
         } else {
             logger.info("ℹ️ No correction needed for: \(DecisionLogger.tokenSummary(text), privacy: .public)")
             // Still save the text for potential manual cycling
             let replacement = parts.leading + text + parts.trailing
             lastCorrectedLength = replacement.count
             lastCorrectedText = replacement
-            lastCorrectionTime = Date()  // Enable cycling even without auto-correction
+            lastCorrectionTime = timeProvider.now  // Enable cycling even without auto-correction
         }
         
         logger.debug("🧹 Buffer processing complete")
@@ -667,7 +685,7 @@ final class EventMonitor {
         // Check cycling FIRST - if we have valid cycling state and no new typing, continue cycling
         // This is needed because after replaceText, selection is lost
         let hasCycling = await engine.hasCyclingState()
-        let timeSinceLastCorrection = Date().timeIntervalSince(lastCorrectionTime)
+        let timeSinceLastCorrection = timeProvider.now.timeIntervalSince(lastCorrectionTime)
         let noNewTyping = buffer.isEmpty && timeSinceLastCorrection < 3.0
         
         // But first check if there's a fresh selection - it takes priority over cycling
@@ -712,7 +730,7 @@ final class EventMonitor {
                     // Update to new length for next cycle
                     lastCorrectedLength = finalCorrected.count
                     lastCorrectedText = finalCorrected
-                    lastCorrectionTime = Date()
+                    lastCorrectionTime = timeProvider.now
                     buffer = ""
                     
                     if let targetLang = await engine.getLastCorrectionTargetLanguage() {
@@ -773,7 +791,7 @@ final class EventMonitor {
             
             lastCorrectedLength = finalText.count
             lastCorrectedText = finalText
-            lastCorrectionTime = Date()
+            lastCorrectionTime = timeProvider.now
             buffer = ""  // Clear buffer after replacement
             DecisionLogger.shared.log("HOTKEY: Done. lastCorrectedLength=\(lastCorrectedLength)")
             
@@ -794,7 +812,7 @@ final class EventMonitor {
     
     private func getSelectedTextFresh(proxy: CGEventTapProxy) async -> String {
         lastSelectionWasExplicit = false
-        let timeSinceLastKey = Date().timeIntervalSince(lastEventTime)
+        let timeSinceLastKey = timeProvider.now.timeIntervalSince(lastEventTime)
         let bundleId = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
         
         // Fast path: use buffer if fresh (< 0.5s)

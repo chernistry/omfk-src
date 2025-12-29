@@ -10,8 +10,9 @@ public struct UserDictionaryRule: Codable, Identifiable, Sendable, Equatable {
     public var evidence: RuleEvidence           // counts, timestamps
     public let createdAt: Date
     public var updatedAt: Date
+    public var convertedText: String?           // result text for preferHypothesis
     
-    public init(id: UUID = UUID(), token: String, matchMode: MatchMode = .caseInsensitive, scope: RuleScope = .global, action: RuleAction, source: RuleSource, evidence: RuleEvidence = RuleEvidence(), createdAt: Date = Date(), updatedAt: Date = Date()) {
+    public init(id: UUID = UUID(), token: String, matchMode: MatchMode = .caseInsensitive, scope: RuleScope = .global, action: RuleAction, source: RuleSource, evidence: RuleEvidence = RuleEvidence(), createdAt: Date = Date(), updatedAt: Date = Date(), convertedText: String? = nil) {
         self.id = id
         self.token = token
         self.matchMode = matchMode
@@ -21,6 +22,7 @@ public struct UserDictionaryRule: Codable, Identifiable, Sendable, Equatable {
         self.evidence = evidence
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+        self.convertedText = convertedText
     }
     
     public static func == (lhs: UserDictionaryRule, rhs: UserDictionaryRule) -> Bool {

@@ -589,14 +589,18 @@ actor CorrectionEngine {
                  let token = state.originalText
                  let bundleId = await MainActor.run { NSWorkspace.shared.frontmostApplication?.bundleIdentifier }
                  
+                 DecisionLogger.shared.log("LEARNING: token='\(token)' finalIndex=\(finalIndex) wasAutomatic=\(state.wasAutomatic) hypothesis=\(finalAlt.hypothesis?.rawValue ?? "nil")")
+                 
                  if state.wasAutomatic {
                      if finalIndex == 0 {
                          // 1. Learn from Undo (AutoReject)
+                         DecisionLogger.shared.log("LEARNING: recordAutoReject for '\(token)'")
                          await UserDictionary.shared.recordAutoReject(token: token, bundleId: bundleId)
                      } else if finalIndex != 1 {
                          // 2. User changed auto-correction to different hypothesis (ManualApply)
                          if let hyp = finalAlt.hypothesis {
-                             await UserDictionary.shared.recordManualApply(token: token, hypothesis: hyp.rawValue, bundleId: bundleId)
+                             DecisionLogger.shared.log("LEARNING: recordManualApply for '\(token)' -> \(hyp.rawValue)")
+                             await UserDictionary.shared.recordManualApply(token: token, hypothesis: hyp.rawValue, convertedText: finalAlt.text, bundleId: bundleId)
                          }
                      }
                  } else {
@@ -604,8 +608,11 @@ actor CorrectionEngine {
                      if finalIndex != 0 {
                          // 3. Learn from Manual Correction (ManualApply)
                          if let hyp = finalAlt.hypothesis {
-                             await UserDictionary.shared.recordManualApply(token: token, hypothesis: hyp.rawValue, bundleId: bundleId)
+                             DecisionLogger.shared.log("LEARNING: recordManualApply (manual) for '\(token)' -> \(hyp.rawValue)")
+                             await UserDictionary.shared.recordManualApply(token: token, hypothesis: hyp.rawValue, convertedText: finalAlt.text, bundleId: bundleId)
                          }
+                     } else {
+                         DecisionLogger.shared.log("LEARNING: manual trigger but finalIndex=0, no learning")
                      }
                  }
              }

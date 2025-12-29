@@ -155,7 +155,7 @@ public actor UserDictionary {
         save()
     }
     
-    public func recordManualApply(token: String, hypothesis: String, bundleId: String? = nil) {
+    public func recordManualApply(token: String, hypothesis: String, convertedText: String? = nil, bundleId: String? = nil) {
         let normalized = normalize(token)
         var rule = getOrCreateRule(for: normalized)
         
@@ -164,10 +164,10 @@ public actor UserDictionary {
         rule.evidence.timestamps.append(Date())
         rule.updatedAt = Date()
         
-        // Check threshold (1+ apply -> preferHypothesis)
-        // If we don't have a rule yet, or it's a weak learned rule, take this new hypothesis
-        if rule.source == .learned || rule.action == .keepAsIs { 
-             rules[rule.id] = UserDictionaryRule(
+        // Only set preferHypothesis if we don't already have a keepAsIs rule
+        // keepAsIs takes priority (user explicitly said "don't touch this")
+        if rule.action != .keepAsIs {
+            rules[rule.id] = UserDictionaryRule(
                 id: rule.id,
                 token: rule.token,
                 matchMode: rule.matchMode,
@@ -176,10 +176,11 @@ public actor UserDictionary {
                 source: .learned,
                 evidence: rule.evidence,
                 createdAt: rule.createdAt,
-                updatedAt: Date()
+                updatedAt: Date(),
+                convertedText: convertedText
             )
         } else {
-             rules[rule.id] = rule
+            rules[rule.id] = rule
         }
         
         touch(rule.id)

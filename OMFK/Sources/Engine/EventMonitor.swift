@@ -308,7 +308,7 @@ final class EventMonitor {
     }
 
     private static let wordBoundaryPunctuation: Set<Character> = [
-        ".", ",", "!", "?", ":", ";",
+        ".", "!", "?", ":",
         ")", "]", "}",
         "\"", "»", "”", "…"
     ]
@@ -327,12 +327,16 @@ final class EventMonitor {
         ch.isWhitespace || ch.isNewline || Self.wordBoundaryPunctuation.contains(ch) || Self.trailingDelimiters.contains(ch) || ch == "-" || ch == "—" || ch == "–"
     }
     
-    private func isWordBoundaryTrigger(_ text: String, bufferWasEmpty: Bool) -> Bool {
+    private func isWordBoundaryTrigger(_ text: String, bufferWasEmpty: Bool, bufferBeforeAppend: String) -> Bool {
         for ch in text {
             if ch.isWhitespace || ch.isNewline {
                 return true
             }
             if Self.wordBoundaryPunctuation.contains(ch) {
+                // Don't trigger on '.' if buffer ends with a letter (could be 'ю' on RU layout)
+                if ch == "." && !bufferBeforeAppend.isEmpty && bufferBeforeAppend.last?.isLetter == true {
+                    continue
+                }
                 return true
             }
             // Treat standalone separators as boundaries only when not inside a word.
@@ -374,6 +378,10 @@ final class EventMonitor {
         }
         
         while end > start, isDelimiterLikeCharacter(chars[end - 1]) {
+            // Don't strip '.' if preceded by a letter (could be 'ю' on RU layout)
+            if chars[end - 1] == "." && end > 1 && chars[end - 2].isLetter {
+                break
+            }
             end -= 1
         }
         
@@ -544,12 +552,13 @@ final class EventMonitor {
                 lastCorrectedLength += filtered.count
             }
             
+            let bufferBeforeAppend = buffer
             buffer.append(filtered)
             phraseBuffer.append(filtered)
             logger.info("⌨️ Typed: \(DecisionLogger.tokenSummary(filtered), privacy: .public) | Buffer: \(DecisionLogger.tokenSummary(self.buffer), privacy: .public)")
             
             // Process on word boundaries (space/newline/punctuation triggers auto-correction)
-            if isWordBoundaryTrigger(filtered, bufferWasEmpty: bufferWasEmpty) {
+            if isWordBoundaryTrigger(filtered, bufferWasEmpty: bufferWasEmpty, bufferBeforeAppend: bufferBeforeAppend) {
                 logger.info("📍 Word boundary detected - processing buffer")
                 // Capture buffer content AND proxy before clearing to avoid race condition
                 let textToProcess = buffer

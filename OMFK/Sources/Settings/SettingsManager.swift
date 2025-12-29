@@ -54,7 +54,7 @@ final class SettingsManager: ObservableObject {
         let apps = UserDefaults.standard.stringArray(forKey: "excludedApps") ?? []
         self.excludedApps = Set(apps)
         
-        self.autoSwitchLayout = UserDefaults.standard.object(forKey: "autoSwitchLayout") as? Bool ?? false
+        self.autoSwitchLayout = UserDefaults.standard.object(forKey: "autoSwitchLayout") as? Bool ?? true
         self.hotkeyEnabled = UserDefaults.standard.object(forKey: "hotkeyEnabled") as? Bool ?? true
         self.hotkeyKeyCode = UInt16(UserDefaults.standard.integer(forKey: "hotkeyKeyCode") != 0 ? UserDefaults.standard.integer(forKey: "hotkeyKeyCode") : 58) // 58 = left Alt
         

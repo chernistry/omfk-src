@@ -14,7 +14,7 @@ let appVersion: String = {
         }
     }
     // Fallback: embedded at build time by release script
-    return "0.0.7"
+    return "1.2"
 }()
 
 struct SettingsView: View {

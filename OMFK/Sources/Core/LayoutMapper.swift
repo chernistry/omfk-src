@@ -187,11 +187,25 @@ public final class LayoutMapper: @unchecked Sendable {
     }
     
     // Characters that should be preserved during conversion (not layout-dependent)
+    // NOTE: Do NOT include characters that map to letters in other layouts:
+    //   - ';' maps to 'ж' on Russian
+    //   - ''' maps to 'э' on Russian  
+    //   - ',' maps to 'ת' on Hebrew
+    //   - '[' maps to 'х' on Russian, ']' maps to 'ъ'
     private static let preserveChars: Set<Character> = [
+        // Typographic quotes and dashes
         "\u{00AB}", "\u{00BB}", "\u{201E}", "\u{201C}", "\u{201D}", "\u{2018}", "\u{2019}",
         "\u{2014}", "\u{2013}", "\u{2026}", "\u{2116}",
+        // Copyright, trademark, degree
         "\u{00A9}", "\u{00AE}", "\u{2122}", "\u{00B0}",
-        "\u{20AC}", "\u{00A3}", "\u{00A5}", "\u{20BD}", "\u{20B4}", "\u{20AA}"
+        // Currency symbols
+        "\u{20AC}", "\u{00A3}", "\u{00A5}", "\u{20BD}", "\u{20B4}", "\u{20AA}",
+        // ASCII punctuation that is NEVER a letter in any layout
+        // NOTE: '.' maps to 'ю' on Russian, so NOT included here
+        "!", "?", ":", "-", "_",
+        "(", ")", "{", "}",
+        "/", "\\", "@", "#", "$", "%", "^", "&", "*", "+", "=",
+        "<", ">", "|", "~", "`"
     ]
     
     // Punctuation that should be preserved when it appears at word boundaries

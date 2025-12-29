@@ -636,19 +636,21 @@ cmd_release_github() {
     die "Not authenticated. Run: gh auth login"
   fi
   
-  # Get latest tag and suggest next version
-  local latest=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+  # Get latest tag from GitHub releases (more reliable than local tags)
+  local latest=$(gh release list --repo chernistry/omfk --limit 1 --json tagName -q '.[0].tagName' 2>/dev/null || echo "v0.0")
   latest=${latest#v}
   
+  # Handle X.Y format (no patch)
   IFS='.' read -r major minor patch <<< "$latest"
+  patch=${patch:-0}
   
   case "$release_type" in
-    major) major=$((major + 1)); minor=0; patch=0 ;;
-    minor) minor=$((minor + 1)); patch=0 ;;
-    patch) patch=$((patch + 1)) ;;
+    major) major=$((major + 1)); minor=0 ;;
+    minor) minor=$((minor + 1)) ;;
+    patch) ;; # Not used in new X.Y format
   esac
   
-  local suggested="${major}.${minor}.${patch}"
+  local suggested="${major}.${minor}"
   
   if [[ -z "$version" ]]; then
     echo ""

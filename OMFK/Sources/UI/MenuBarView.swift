@@ -2,10 +2,19 @@ import SwiftUI
 
 struct MenuBarView: View {
     @StateObject private var settings = SettingsManager.shared
+    @ObservedObject private var updateState = UpdateState.shared
     @Environment(\.openWindow) private var openWindow
     
     var body: some View {
         VStack(spacing: 16) {
+            // Update available indicator
+            if updateState.isUpdateAvailable, let version = updateState.latestVersion {
+                UpdateAvailableButton(version: version) {
+                    updateState.openDownloadURL()
+                }
+                .padding(.bottom, -8)
+            }
+            
             // Status pill
             statusPill
             

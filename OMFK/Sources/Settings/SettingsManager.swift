@@ -44,9 +44,21 @@ final class SettingsManager: ObservableObject {
         didSet { UserDefaults.standard.set(isLearningEnabled, forKey: "isLearningEnabled") }
     }
     
+    // MARK: - Update Settings
+    
+    @Published var checkForUpdatesAutomatically: Bool {
+        didSet { UserDefaults.standard.set(checkForUpdatesAutomatically, forKey: "checkForUpdatesAutomatically") }
+    }
+    
+    var lastUpdateCheckDate: Date? {
+        get { UserDefaults.standard.object(forKey: "lastUpdateCheckDate") as? Date }
+        set { UserDefaults.standard.set(newValue, forKey: "lastUpdateCheckDate") }
+    }
+    
     private init() {
         self.isEnabled = UserDefaults.standard.object(forKey: "isEnabled") as? Bool ?? true
         self.isLearningEnabled = UserDefaults.standard.object(forKey: "isLearningEnabled") as? Bool ?? true
+        self.checkForUpdatesAutomatically = UserDefaults.standard.object(forKey: "checkForUpdatesAutomatically") as? Bool ?? true
         
         let langRaw = UserDefaults.standard.string(forKey: "preferredLanguage") ?? "en"
         self.preferredLanguage = Language(rawValue: langRaw) ?? .english

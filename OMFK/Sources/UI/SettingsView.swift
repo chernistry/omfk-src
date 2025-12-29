@@ -302,34 +302,101 @@ struct AppPickerSheet: View {
 // MARK: - About Tab
 
 struct AboutTab: View {
+    @ObservedObject var updateState = UpdateState.shared
+    @ObservedObject var settings = SettingsManager.shared
+    
     var body: some View {
-        VStack(spacing: 20) {
-            Spacer(minLength: 20)
-            
-            VStack(spacing: 6) {
-                Text("Oh My F***ing Keyboard")
-                    .font(.system(size: 14))
-                    .foregroundStyle(.secondary)
+        ScrollView {
+            VStack(spacing: 20) {
+                Spacer(minLength: 10)
+                
+                // App info
+                VStack(spacing: 6) {
+                    Text("Oh My F***ing Keyboard")
+                        .font(.system(size: 14))
+                        .foregroundStyle(.secondary)
+                    
+                    Text("Version \(appVersion)")
+                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                }
+                
+                Divider().padding(.horizontal, 20)
+                
+                // Updates section
+                GlassCard {
+                    VStack(alignment: .leading, spacing: 16) {
+                        Label {
+                            Text("Updates").font(.system(size: 13, weight: .semibold))
+                        } icon: {
+                            Image(systemName: "arrow.down.circle").foregroundStyle(.green)
+                        }
+                        
+                        UpdateCheckButton(updateState: updateState)
+                        
+                        Divider()
+                        
+                        // Auto-check toggle
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Check automatically")
+                                    .font(.system(size: 13, weight: .medium))
+                                Text("Check on launch and every 24 hours")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.secondary)
+                            }
+                            
+                            Spacer()
+                            
+                            Toggle("", isOn: $settings.checkForUpdatesAutomatically)
+                                .toggleStyle(.switch)
+                                .labelsHidden()
+                        }
+                        
+                        // Privacy note
+                        HStack(alignment: .top, spacing: 8) {
+                            Image(systemName: "lock.shield")
+                                .foregroundStyle(.blue)
+                                .font(.system(size: 12))
+                            Text("Checks github.com/chernistry/omfk for new releases. No personal data is sent.")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.tertiary)
+                        }
+                        .padding(.top, 4)
+                    }
+                }
+                .padding(.horizontal, 4)
+                
+                Spacer(minLength: 10)
+                
+                // Credits
+                VStack(spacing: 4) {
+                    Text("Created by Alex Chernysh")
+                        .font(.system(size: 12, weight: .medium))
+                    Text("© 2025")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.tertiary)
+                }
+                
+                Spacer(minLength: 10)
             }
-            
-            Text("Version \(appVersion)")
-                .font(.system(size: 12, weight: .medium, design: .monospaced))
-                .foregroundStyle(.tertiary)
-            
-            Spacer(minLength: 20)
-            
-            VStack(spacing: 4) {
-                Text("Created by Alex Chernysh")
-                    .font(.system(size: 12, weight: .medium))
-                Text("© 2025")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.tertiary)
-            }
-            
-            Spacer(minLength: 20)
+            .padding(20)
         }
-        .padding(20)
         .frame(maxHeight: .infinity)
+        .sheet(isPresented: $updateState.showingUpdateAlert) {
+            if let release = updateState.availableRelease {
+                UpdateAvailableView(
+                    release: release,
+                    onDownload: {
+                        updateState.openDownloadURL()
+                        updateState.showingUpdateAlert = false
+                    },
+                    onDismiss: {
+                        updateState.showingUpdateAlert = false
+                    }
+                )
+            }
+        }
     }
 }
 

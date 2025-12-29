@@ -2,17 +2,26 @@
 
 # O.M.F.K
 
-### Automatic keyboard layout correction for macOS
+### AI-powered keyboard layout corrector for macOS
 
 ![OMFK Banner](assets/banner.png)
 
----
+<details>
+<summary>See how it works</summary>
 
 ![How it works](assets/howitworks.gif)
 
-[![macOS](https://img.shields.io/badge/macOS-14.0+-000?style=flat-square&logo=apple&logoColor=white)](https://www.apple.com/macos/)
-[![Download](https://img.shields.io/badge/Download-Latest_Release-6366f1?style=flat-square)](https://github.com/chernistry/omfk/releases/latest)
-[![License](https://img.shields.io/badge/License-Proprietary-374151?style=flat-square)]()
+</details>
+
+**[Website](https://hireex.ai/omfk)** · **[Download](https://github.com/chernistry/omfk/releases/latest)**
+
+[![macOS](https://img.shields.io/badge/macOS-13.0+-000?style=flat-square&logo=apple&logoColor=white)](https://www.apple.com/macos/)
+[![License](https://img.shields.io/badge/License-Source_Available-orange?style=flat-square)](LICENSE)
+
+🇺🇸 English · 🇷🇺 Russian · 🇮🇱 **Hebrew**
+
+> **📦 This is the source code repository.**  
+> For pre-built installers, go to [chernistry/omfk](https://github.com/chernistry/omfk/releases/latest).
 
 </div>
 
@@ -23,8 +32,9 @@
 You're typing, deep in thought... then you look up:
 
 ```
-Ghbdtn? rfr ltkf&   →   Привет, как дела?
-ру|дщ цщкдв          →   hello world
+Ghbdtn, rfr ltkf?   →   Привет, как дела?
+руддщ цщкдв          →   hello world
+akuo                 →   שלום
 ```
 
 Wrong keyboard layout. Again.
@@ -33,66 +43,99 @@ Wrong keyboard layout. Again.
 
 ---
 
-## Features
+## ✨ Key Features
 
 <table>
 <tr>
 <td width="50%">
 
-**Real-time correction**
+**🚀 Type without thinking**
 
-Detects wrong layouts on word boundaries and fixes them instantly. No hotkeys needed.
+Just type. OMFK detects wrong layouts on word boundaries and fixes them instantly. No hotkeys needed.
 
 </td>
 <td width="50%">
 
-**Smart per-word analysis**
+**🧠 Self-learning**
 
-Each word is analyzed separately. Mixed-language sentences stay mixed — only wrong parts get fixed.
+Learns from your corrections. Undo a word twice — OMFK remembers. Use Alt to pick an alternative — OMFK learns your preference.
 
 </td>
 </tr>
 <tr>
 <td>
 
-**Hotkey cycling**
+**🔒 100% on-device**
 
-Press `Option` to cycle through alternatives: original → Russian → English → Hebrew → back.
+Everything runs locally. No network calls. No logging. No telemetry. Your keystrokes never leave your Mac.
 
 </td>
 <td>
 
-**100% private**
+**⚡ Blazing fast**
 
-Everything runs on-device. No network calls. No logging. No telemetry.
+Native CoreML model with CNN+Transformer ensemble trained on Wikipedia and OpenSubtitles dumps. Detection latency <50ms.
+
+</td>
+</tr>
+<tr>
+<td>
+
+**🇮🇱 Hebrew support**
+
+One of the few correctors that properly handles Hebrew — including QWERTY-based layouts with sofit letters (ץ ך ם ן ף).
+
+</td>
+<td>
+
+**🔄 Hotkey cycling**
+
+Press `Option` to cycle through alternatives: original → Russian → English → Hebrew → back.
 
 </td>
 </tr>
 </table>
 
-**Supported languages:** English, Russian, Hebrew
-
 ---
 
-## Installation
+## Building from Source
 
-### 1. Download
+```bash
+# Clone
+git clone https://github.com/chernistry/omfk-src.git
+cd omfk-src
 
-Get the latest `.dmg` from [Releases](https://github.com/chernistry/omfk/releases/latest).
+# Build and run (debug)
+./omfk.sh run
 
-### 2. Install
+# Build release
+./omfk.sh release build --version X.Y
+```
 
-Open the DMG and drag **OMFK** to your Applications folder.
+### Requirements
 
-### 3. Grant Accessibility Access
+- macOS 13.0+
+- Xcode 15+ / Swift 5.9+
+- Python 3.10+ (for training tools)
 
-On first launch, macOS will ask for Accessibility permission.
+### Project Structure
 
-1. Open **System Settings → Privacy & Security → Accessibility**
-2. Enable **OMFK**
-3. OMFK will automatically start working once permission is granted
+```
+OMFK/
+├── Sources/
+│   ├── App/           # Entry point, menu bar
+│   ├── Core/          # Layout detection, correction engine
+│   ├── Engine/        # Event monitoring, key handling
+│   ├── Settings/      # User preferences
+│   ├── UI/            # SwiftUI views
+│   └── Resources/     # Lexicons (model weights not included)
+├── Tools/
+│   ├── CoreMLTrainer/ # CNN+Transformer training
+│   └── NgramTrainer/  # N-gram language models
+└── releases/          # Build scripts
+```
 
-> **Note:** Accessibility access is required to monitor keyboard input. OMFK cannot function without it.
+> **Note:** Pre-trained model weights (`LayoutClassifier.mlmodel`) are not included in this repository.
 
 ---
 
@@ -104,49 +147,37 @@ On first launch, macOS will ask for Accessibility permission.
 | Cycle through alternatives | Press `Option` |
 | Undo last correction | Press `Option` immediately after |
 | Exclude an app | Settings → Per-App Rules |
+| Manage learned words | Settings → Dictionary |
 
 ---
 
-## How It Works
+## Known Limitations
 
-OMFK uses an on-device neural network to detect which language you *intended* to type, then converts the text to the correct layout.
-
-- Detection latency: <50ms
-- Model runs entirely on your Mac via CoreML
-- No internet connection required
+- **Sublime Text:** Alt cycling may insert text instead of replacing (app-specific behavior)
+- **Some terminal emulators:** May require clipboard fallback mode
 
 ---
 
-## Troubleshooting
+## License
 
-**"OMFK is damaged and can't be opened"**
+**Source Available — Non-Commercial**
 
-Run in Terminal:
-```bash
-xattr -c /Applications/OMFK.app
-```
+You may view, study, and modify this code for personal, educational, or research purposes only.
 
-**Corrections not working**
+**You may NOT:**
+- Use this software or derivatives commercially
+- Sell, sublicense, or distribute for profit
+- Offer as a service (SaaS)
+- Include in commercial products
 
-1. Check Accessibility permission is enabled
-2. Quit and reopen OMFK
-3. Check if the app is in your exclusion list
-
-**Wrong corrections**
-
-Press `Option` to cycle through alternatives, or disable auto-correction for that app.
-
----
-
-## Requirements
-
-- macOS Sonoma (14.0) or later
-- Apple Silicon or Intel Mac
+See [LICENSE](LICENSE) for full terms.
 
 ---
 
 <div align="center">
 
-[Download](https://github.com/chernistry/omfk/releases/latest) · [Report Issue](https://github.com/chernistry/omfk/issues)
+[Website](https://hireex.ai/omfk) · [Download](https://github.com/chernistry/omfk/releases/latest) · [Issues](https://github.com/chernistry/omfk-src/issues)
+
+Made by [Alex Chernysh](https://hireex.ai)
 
 </div>

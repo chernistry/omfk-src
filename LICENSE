@@ -1,0 +1,96 @@
+OMFK Source Available License
+Version 1.0, December 2024
+
+Copyright (c) 2024 Alex Chernysh (hireex.ai)
+All Rights Reserved.
+
+TERMS AND CONDITIONS
+
+1. DEFINITIONS
+
+"Software" means the OMFK source code, documentation, and associated files
+in this repository, excluding any pre-trained model weights.
+
+"Commercial Use" means any use intended for or directed toward commercial
+advantage or monetary compensation, including but not limited to:
+- Selling the Software or derivatives
+- Using the Software in a commercial product or service
+- Offering the Software as a service (SaaS)
+- Using the Software in a business context for profit
+
+"Derivative Work" means any work based on the Software, including
+modifications, translations, adaptations, or any work that incorporates
+substantial portions of the Software.
+
+2. GRANT OF RIGHTS
+
+Subject to the terms of this License, you are granted a limited,
+non-exclusive, non-transferable, revocable license to:
+
+a) View and study the source code for personal, educational, or
+   research purposes.
+
+b) Modify the Software for personal, non-commercial use only.
+
+c) Run the Software for personal, non-commercial use only.
+
+3. RESTRICTIONS
+
+You may NOT:
+
+a) Use the Software or any Derivative Work for Commercial Use without
+   prior written permission from the copyright holder.
+
+b) Sell, sublicense, lease, rent, or otherwise transfer the Software
+   or any rights therein.
+
+c) Distribute the Software or Derivative Works, whether for free or
+   for compensation, without prior written permission.
+
+d) Remove or alter any copyright notices, license terms, or
+   attribution from the Software.
+
+e) Use the Software to create a competing product or service.
+
+f) Claim ownership of the Software or Derivative Works.
+
+g) Use the name "OMFK", trademarks, or branding of the copyright
+   holder without permission.
+
+4. MODEL WEIGHTS
+
+Pre-trained model weights (including but not limited to
+LayoutClassifier.mlmodel) are NOT included in this repository and are
+subject to separate terms. The training code is provided for reference
+only.
+
+5. NO WARRANTY
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+
+IN NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES
+OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+OTHER DEALINGS IN THE SOFTWARE.
+
+6. TERMINATION
+
+This License automatically terminates if you violate any of its terms.
+Upon termination, you must destroy all copies of the Software in your
+possession.
+
+7. COMMERCIAL LICENSING
+
+For commercial licensing inquiries, contact: alex@hireex.ai
+
+8. GOVERNING LAW
+
+This License shall be governed by the laws of Israel, without regard
+to its conflict of law provisions.
+
+---
+
+By using, viewing, or modifying this Software, you agree to be bound
+by the terms of this License.

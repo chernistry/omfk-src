@@ -233,15 +233,62 @@ public final class LayoutMapper: @unchecked Sendable {
         guard let sourceMap = charToKeyMap[fromLayout],
               let fullMap = layoutData?.map else { return nil }
         
+        // Punctuation that acts as word separator even if it maps to a letter
+        let wordSeparatorPunct: Set<Character> = [".", ",", ";", ":", "!", "?"]
+        
         var result = ""
         result.reserveCapacity(text.count)
+        
+        let chars = Array(text)
+        var i = 0
+        var lastWasLetter = false
 
-        for char in text {
+        while i < chars.count {
+            let char = chars[i]
             for c in Self.splitIfNeeded(char) {
                 // Preserve special characters that aren't layout-dependent
                 if Self.preserveChars.contains(c) {
                     result.append(c)
+                    lastWasLetter = false
                     continue
+                }
+                
+                // Check if this is word-separator punctuation that should be preserved
+                if wordSeparatorPunct.contains(c) && lastWasLetter {
+                    let nextIdx = i + 1
+                    var shouldPreserve = false
+                    
+                    if nextIdx >= chars.count {
+                        // End of string - preserve punctuation after word
+                        shouldPreserve = true
+                    } else {
+                        let nextChar = chars[nextIdx]
+                        // Preserve if next char is whitespace or another punctuation
+                        if nextChar.isWhitespace || nextChar.isNewline || !nextChar.isLetter {
+                            shouldPreserve = true
+                        } else if let (nextKey, nextMod) = sourceMap[nextChar],
+                           let nextMapping = fullMap[nextKey]?[toLayout] {
+                            // Check if next char would convert to a letter
+                            let nextTarget: String?
+                            switch nextMod {
+                            case "n": nextTarget = nextMapping.n
+                            case "s": nextTarget = nextMapping.s
+                            case "a": nextTarget = nextMapping.a
+                            case "sa": nextTarget = nextMapping.sa
+                            default: nextTarget = nil
+                            }
+                            if let s = nextTarget, s.count == 1, let nc = s.first, nc.isLetter {
+                                // Next char converts to a letter - preserve this punctuation
+                                shouldPreserve = true
+                            }
+                        }
+                    }
+                    
+                    if shouldPreserve {
+                        result.append(c)
+                        lastWasLetter = false
+                        continue
+                    }
                 }
 
                 if let (keyCode, mod) = sourceMap[c],
@@ -254,11 +301,15 @@ public final class LayoutMapper: @unchecked Sendable {
                     case "sa": targetChar = targetMapping.sa
                     default: targetChar = nil
                     }
-                    result.append(targetChar ?? String(c))
+                    let converted = targetChar ?? String(c)
+                    result.append(converted)
+                    lastWasLetter = converted.count == 1 && converted.first?.isLetter == true
                 } else {
                     result.append(c)
+                    lastWasLetter = c.isLetter
                 }
             }
+            i += 1
         }
         return result
     }
@@ -333,8 +384,42 @@ public final class LayoutMapper: @unchecked Sendable {
             return false
         }
 
-        for char in text {
-            for c in Self.splitIfNeeded(char) {
+        // Punctuation that acts as word separator even if it maps to a letter
+        let wordSeparatorPunct: Set<Character> = [".", ",", ";", ":", "!", "?"]
+        
+        let chars = Array(text)
+        var i = 0
+        
+        while i < chars.count {
+            let char = chars[i]
+            let expanded = Self.splitIfNeeded(char)
+            
+            for c in expanded {
+                // Check if this is word-separator punctuation that should be preserved
+                if wordSeparatorPunct.contains(c) && !buffer.isEmpty {
+                    let nextIdx = i + 1
+                    var shouldPreserve = false
+                    
+                    if nextIdx >= chars.count {
+                        // End of string - preserve punctuation after word
+                        shouldPreserve = true
+                    } else {
+                        let nextChar = chars[nextIdx]
+                        // Preserve if next char is whitespace or converts to a letter
+                        if nextChar.isWhitespace || nextChar.isNewline {
+                            shouldPreserve = true
+                        } else if nextChar.isLetter || isConvertibleWordChar(nextChar) {
+                            shouldPreserve = true
+                        }
+                    }
+                    
+                    if shouldPreserve {
+                        flushBuffer()
+                        result.append(c)
+                        continue
+                    }
+                }
+                
                 if isConvertibleWordChar(c) {
                     buffer.append(c)
                     continue
@@ -358,6 +443,7 @@ public final class LayoutMapper: @unchecked Sendable {
                     result.append(c)
                 }
             }
+            i += 1
         }
 
         flushBuffer()

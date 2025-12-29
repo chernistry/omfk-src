@@ -126,7 +126,7 @@ def set_system_layouts(en: str, ru: str, he: str):
             ok = enable_system_layout(lay)
             print(f"  Enable {lay}: {'OK' if ok else 'FAILED'}", flush=True)
     
-    time.sleep(0.3)
+    time.sleep(0.15)
     result = get_enabled_system_layouts()
     print(f"  Final layouts: {result}", flush=True)
     return result
@@ -145,7 +145,7 @@ def write_active_layouts(layouts):
 
 def stop_omfk():
     subprocess.run(["pkill", "-f", ".build/debug/OMFK"], capture_output=True)
-    time.sleep(0.3)
+    time.sleep(0.15)
 
 
 # ============== REAL TYPING FUNCTIONS ==============
@@ -169,7 +169,7 @@ def switch_system_layout(layout_id: str) -> bool:
         timeout=2,
         start_new_session=True
     )
-    time.sleep(0.1)
+    time.sleep(0.15)
     return result.returncode == 0
 
 
@@ -194,7 +194,7 @@ def detect_input_layout(text: str) -> str | None:
     return None
 
 
-def type_char_real(char: str, layout: str, delay: float = 0.025) -> bool:
+def type_char_real(char: str, layout: str, delay: float = 0.012) -> bool:
     """Type a single character via AppleScript key code."""
     if char == ' ':
         subprocess.run(['osascript', '-e', 'tell application "System Events" to key code 49'], capture_output=True)
@@ -214,14 +214,14 @@ def type_char_real(char: str, layout: str, delay: float = 0.025) -> bool:
     return True
 
 
-def type_string_real(text: str, layout: str, char_delay: float = 0.015) -> tuple[bool, list[str]]:
+def type_string_real(text: str, layout: str, char_delay: float = 0.008) -> tuple[bool, list[str]]:
     """Type string via AppleScript System Events char by char."""
     for char in text:
         type_char_real(char, layout, char_delay)
     return True, []
 
 
-def type_word_and_space_real(word: str, layout: str, char_delay: float = 0.015, space_wait: float = 0.8) -> bool:
+def type_word_and_space_real(word: str, layout: str, char_delay: float = 0.008, space_wait: float = 0.4) -> bool:
     """Type word + space via AppleScript key codes, wait for OMFK to process."""
     type_string_real(word, layout, char_delay)
     # Type space via key code
@@ -245,7 +245,7 @@ def press_option():
     ev = CGEventCreateKeyboardEvent(None, KEY_OPTION, True)
     CGEventSetFlags(ev, kCGEventFlagMaskAlternate)
     CGEventPost(kCGHIDEventTap, ev)
-    time.sleep(0.03)
+    time.sleep(0.1)
     ev = CGEventCreateKeyboardEvent(None, KEY_OPTION, False)
     CGEventPost(kCGHIDEventTap, ev)
 
@@ -276,26 +276,26 @@ def get_text():
 
 def clear_field():
     cmd_key(0)  # Cmd+A
-    time.sleep(0.05)
+    time.sleep(0.08)
     press_key(KEY_DELETE)
-    time.sleep(0.05)
+    time.sleep(0.08)
 
 
 def type_and_space(text):
     """Type text via paste, then press space."""
     clipboard_set(text)
     cmd_key(9)  # Cmd+V
-    time.sleep(0.1)
+    time.sleep(0.15)
     press_key(KEY_SPACE)
-    time.sleep(0.8)  # Wait for OMFK
+    time.sleep(0.15)  # Wait for OMFK
 
 
 def select_all_and_correct():
     """Select all and press Option to correct."""
     cmd_key(0)  # Cmd+A
-    time.sleep(0.1)
+    time.sleep(0.15)
     press_option()
-    time.sleep(0.8)
+    time.sleep(0.15)
 
 
 def get_result():
@@ -319,11 +319,11 @@ def run_single_test_real(input_text: str, expected: str) -> tuple[bool, str]:
     
     # Activate TextEdit and verify
     subprocess.run(["osascript", "-e", 'tell application "TextEdit" to activate'], capture_output=True)
-    time.sleep(0.2)
+    time.sleep(0.1)
     check_focus()
     
     clear_field()
-    time.sleep(0.1)
+    time.sleep(0.15)
     
     # Type word(s) with spaces
     words = input_text.split()
@@ -337,9 +337,9 @@ def run_single_test_real(input_text: str, expected: str) -> tuple[bool, str]:
         subprocess.run(['osascript', '-e', 'tell application "System Events" to key code 49'], capture_output=True)
         
         if i == len(words) - 1:
-            time.sleep(0.8)  # Wait for OMFK after last word
+            time.sleep(0.15)  # Wait for OMFK after last word
         else:
-            time.sleep(0.2)
+            time.sleep(0.1)
     
     result = get_result().rstrip()
     return result == expected, result
@@ -356,7 +356,7 @@ def start_omfk():
     subprocess.Popen([str(OMFK_DIR / ".build/debug/OMFK")], env=env,
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                      start_new_session=True)
-    time.sleep(2.0)  # Give OMFK more time to start and read config
+    time.sleep(1.0)  # Give OMFK more time to start and read config
 
 
 def open_textedit():
@@ -368,7 +368,7 @@ def open_textedit():
             if (count of documents) = 0 then make new document
         end tell
     '''], capture_output=True)
-    time.sleep(0.3)
+    time.sleep(0.15)
     
     # Disable macOS autocorrect for this session
     subprocess.run(["defaults", "write", "-g", "NSAutomaticSpellingCorrectionEnabled", "-bool", "false"], capture_output=True)
@@ -414,7 +414,7 @@ def ensure_textedit_focused():
         print("    Switch to TextEdit and press Enter to continue...")
         input()
         subprocess.run(["osascript", "-e", 'tell application "TextEdit" to activate'], capture_output=True)
-        time.sleep(0.3)
+        time.sleep(0.15)
 
 
 # ============== TEST RUNNERS ==============
@@ -422,17 +422,17 @@ def ensure_textedit_focused():
 def run_single_test(input_text, expected):
     """Run single correction test."""
     clear_field()
-    time.sleep(0.15)
+    time.sleep(0.08)
     
     clipboard_set(input_text)
     cmd_key(9)  # Paste
-    time.sleep(0.15)
+    time.sleep(0.08)
     
     cmd_key(0)  # Select all
-    time.sleep(0.1)
+    time.sleep(0.15)
     
     press_option()
-    time.sleep(0.8)
+    time.sleep(0.15)
     
     result = get_result()
     return result == expected, result
@@ -445,19 +445,19 @@ def run_context_boost_test(words, expected_final):
     The key test: first ambiguous word should be corrected when second word confirms language.
     """
     clear_field()
-    time.sleep(0.2)
+    time.sleep(0.1)
     
     # Type all words with spaces
     full_text = " ".join(words)
     clipboard_set(full_text)
     cmd_key(9)  # Paste
-    time.sleep(0.15)
+    time.sleep(0.08)
     
     # Select all and correct
     cmd_key(0)  # Cmd+A
-    time.sleep(0.1)
+    time.sleep(0.15)
     press_option()
-    time.sleep(0.8)
+    time.sleep(0.15)
     
     result = get_result().rstrip()
     return result == expected_final, result
@@ -466,19 +466,19 @@ def run_context_boost_test(words, expected_final):
 def run_cycling_test(input_text, alt_presses, expected_sequence=None):
     """Test Alt cycling through alternatives."""
     clear_field()
-    time.sleep(0.15)
+    time.sleep(0.08)
     
     clipboard_set(input_text)
     cmd_key(9)
-    time.sleep(0.15)
+    time.sleep(0.08)
     cmd_key(0)
-    time.sleep(0.1)
+    time.sleep(0.15)
     
     results = [get_result()]
     
     for i in range(alt_presses):
         press_option()
-        time.sleep(0.3)
+        time.sleep(0.15)
         results.append(get_result())
     
     if expected_sequence:
@@ -492,19 +492,19 @@ def run_cycling_test(input_text, alt_presses, expected_sequence=None):
 def run_stress_cycling(input_text, times, delay_ms=50):
     """Rapid Alt spam test."""
     clear_field()
-    time.sleep(0.15)
+    time.sleep(0.08)
     
     clipboard_set(input_text)
     cmd_key(9)
-    time.sleep(0.15)
+    time.sleep(0.08)
     cmd_key(0)
-    time.sleep(0.1)
+    time.sleep(0.15)
     
     for _ in range(times):
         press_option()
         time.sleep(delay_ms / 1000)
     
-    time.sleep(0.3)
+    time.sleep(0.15)
     result = get_result()
     return len(result) > 0, result
 
@@ -512,13 +512,13 @@ def run_stress_cycling(input_text, times, delay_ms=50):
 def run_performance_test(input_text, expected, max_time_ms):
     """Test correction speed."""
     clear_field()
-    time.sleep(0.15)
+    time.sleep(0.08)
     
     clipboard_set(input_text)
     cmd_key(9)
-    time.sleep(0.15)
+    time.sleep(0.08)
     cmd_key(0)
-    time.sleep(0.1)
+    time.sleep(0.15)
     
     start = time.time()
     press_option()
@@ -613,7 +613,7 @@ def main():
             
             # Restore focus to TextEdit after OMFK restart
             subprocess.run(["osascript", "-e", 'tell application "TextEdit" to activate'], capture_output=True)
-            time.sleep(0.3)
+            time.sleep(0.15)
 
     def run_input_expected_category(key, title):
         nonlocal total_passed, total_failed
@@ -643,7 +643,7 @@ def main():
                 total_failed += 1
             else:
                 total_passed += 1
-            time.sleep(0.2)
+            time.sleep(0.1)
     
     try:
         # Single words
@@ -702,7 +702,7 @@ def main():
                     total_failed += 1
                 else:
                     total_passed += 1
-                time.sleep(0.3)
+                time.sleep(0.15)
         
         # Cycling
         if not categories or "cycling" in categories:
@@ -722,7 +722,7 @@ def main():
                     total_failed += 1
                 else:
                     total_passed += 1
-                time.sleep(0.2)
+                time.sleep(0.1)
         
         # Stress
         if not categories or "stress" in categories:
@@ -751,7 +751,7 @@ def main():
                     total_passed += 1
                 else:
                     total_failed += 1
-                time.sleep(0.2)
+                time.sleep(0.1)
         
         # Performance
         if not categories or "perf" in categories:

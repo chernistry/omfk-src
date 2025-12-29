@@ -10,7 +10,7 @@ actor CorrectionEngine {
     private let logger = Logger.engine
     
     // Cycling state for hotkey corrections
-    private var cyclingState: CyclingState?
+    private var cyclingState: CyclingContext?
     
     // Pending word that was below threshold but might be boosted by context
     private var pendingWord: PendingWord?
@@ -45,7 +45,7 @@ actor CorrectionEngine {
     }
     
     /// State for cycling through alternatives on repeated hotkey presses
-    struct CyclingState {
+    struct CyclingContext {
         let originalText: String
         let alternatives: [Alternative]
         var currentIndex: Int
@@ -54,13 +54,26 @@ actor CorrectionEngine {
         let timestamp: Date
         let hadTrailingSpace: Bool
         
+        // Ticket 29: Round-based cycling
+        var roundNumber: Int = 1
+        var visibleAlternativesCount: Int
+        var cycleCount: Int = 0 // Tracks how many times we wrapped 0->1->0
+        
         struct Alternative {
             let text: String
             let hypothesis: LanguageHypothesis?
         }
         
         mutating func next() -> Alternative {
-            currentIndex = (currentIndex + 1) % alternatives.count
+            let limit = visibleAlternativesCount
+            let nextIndex = (currentIndex + 1)
+            
+            if nextIndex >= limit {
+                currentIndex = 0
+            } else {
+                currentIndex = nextIndex
+            }
+            
             return alternatives[currentIndex]
         }
         
@@ -200,27 +213,29 @@ actor CorrectionEngine {
             
             // Even if no correction needed, create cycling state so user can force-convert
             let activeLayouts = await settings.activeLayouts
-            var alternatives: [CyclingState.Alternative] = [
-                CyclingState.Alternative(text: text, hypothesis: decision.layoutHypothesis)  // [0] Original (current)
+            var alternatives: [CyclingContext.Alternative] = [
+                CyclingContext.Alternative(text: text, hypothesis: decision.layoutHypothesis)  // [0] Original (current)
             ]
             
             // Add conversions to other languages
             for target in Language.allCases where target != decision.language {
                 if let alt = LayoutMapper.shared.convertBest(text, from: decision.language, to: target, activeLayouts: activeLayouts), alt != text {
                     let hyp = hypothesisFor(source: decision.language, target: target)
-                    alternatives.append(CyclingState.Alternative(text: alt, hypothesis: hyp))
+                    alternatives.append(CyclingContext.Alternative(text: alt, hypothesis: hyp))
                 }
             }
             
             if alternatives.count > 1 {
-                cyclingState = CyclingState(
+                cyclingState = CyclingContext(
                     originalText: text,
                     alternatives: alternatives,
                     currentIndex: 0,  // Currently showing original
                     wasAutomatic: false,  // No auto-correction happened
                     autoHypothesis: decision.layoutHypothesis,
                     timestamp: Date(),
-                    hadTrailingSpace: true
+                    hadTrailingSpace: true,
+                    visibleAlternativesCount: min(alternatives.count, 2), // Round 1: Max 2 choices (Original + Primary)
+                    cycleCount: 0
                 )
             }
             
@@ -234,29 +249,31 @@ actor CorrectionEngine {
             
             // Store cycling state for potential undo
             // Order: [0]=original (undo), [1]=corrected (current), [2+]=other alternatives
-            var alternatives: [CyclingState.Alternative] = [
-                CyclingState.Alternative(text: text, hypothesis: nil),  // [0] Original (undo target)
-                CyclingState.Alternative(text: corrected, hypothesis: decision.layoutHypothesis)  // [1] Corrected
+            var alternatives: [CyclingContext.Alternative] = [
+                CyclingContext.Alternative(text: text, hypothesis: nil),  // [0] Original (undo target)
+                CyclingContext.Alternative(text: corrected, hypothesis: decision.layoutHypothesis)  // [1] Corrected
             ]
             
             // Add other possible conversions
             for target in Language.allCases where target != decision.language && target != sourceLayout {
                 if let alt = LayoutMapper.shared.convertBest(text, from: sourceLayout, to: target, activeLayouts: activeLayouts), alt != corrected {
                     let hyp = hypothesisFor(source: sourceLayout, target: target)
-                    alternatives.append(CyclingState.Alternative(text: alt, hypothesis: hyp))
+                    alternatives.append(CyclingContext.Alternative(text: alt, hypothesis: hyp))
                 }
             }
             
             // currentIndex=1 means we're at corrected; next() will go to 2, then 0 (undo)
             // But we want first hotkey press to UNDO, so we need special handling
-            cyclingState = CyclingState(
+            cyclingState = CyclingContext(
                 originalText: text,
                 alternatives: alternatives,
                 currentIndex: 1,  // Currently showing corrected
                 wasAutomatic: true,
                 autoHypothesis: decision.layoutHypothesis,
                 timestamp: Date(),
-                hadTrailingSpace: true
+                hadTrailingSpace: true,
+                visibleAlternativesCount: min(alternatives.count, 2), // Round 1: Max 2 choices
+                cycleCount: 0
             )
             
             let correctedText = await applyCorrection(original: text, corrected: corrected, from: sourceLayout, to: decision.language, hypothesis: decision.layoutHypothesis)
@@ -342,17 +359,17 @@ actor CorrectionEngine {
         // [1] = smart correction (per-segment) if different from original
         // [2+] = whole-text conversions
         
-        var alternatives: [CyclingState.Alternative] = []
+        var alternatives: [CyclingContext.Alternative] = []
         
         // Detect what the text likely is (for whole-text fallback)
         let decision = await router.route(token: text, context: DetectorContext(lastLanguage: nil), mode: .manual)
         
         // [0] Original text (undo target)
-        alternatives.append(CyclingState.Alternative(text: text, hypothesis: nil))
+        alternatives.append(CyclingContext.Alternative(text: text, hypothesis: nil))
         
         // [1] Smart per-segment correction (if different)
         if let smart = smartCorrected, smart != text {
-            alternatives.append(CyclingState.Alternative(text: smart, hypothesis: .ru)) // Best guess
+            alternatives.append(CyclingContext.Alternative(text: smart, hypothesis: .ru)) // Best guess
             logger.info("🧠 Smart correction: \(DecisionLogger.tokenSummary(smart), privacy: .public)")
         }
         
@@ -382,7 +399,7 @@ actor CorrectionEngine {
         otherAlternatives.sort { $0.score > $1.score }
         
         for alt in otherAlternatives {
-            alternatives.append(CyclingState.Alternative(text: alt.text, hypothesis: alt.hyp))
+            alternatives.append(CyclingContext.Alternative(text: alt.text, hypothesis: alt.hyp))
         }
         
         guard alternatives.count > 1 else {
@@ -394,14 +411,16 @@ actor CorrectionEngine {
         DecisionLogger.shared.log("CORRECTION: Built \(alternatives.count) alternatives for '\(text.prefix(30))...'")
         logger.info("🔄 Built \(alternatives.count) alternatives: original → smart → others")
         
-        cyclingState = CyclingState(
+        cyclingState = CyclingContext(
             originalText: text,
             alternatives: alternatives,
             currentIndex: 0,
             wasAutomatic: false,
             autoHypothesis: decision.layoutHypothesis,
             timestamp: Date(),
-            hadTrailingSpace: false
+            hadTrailingSpace: false,
+            visibleAlternativesCount: min(alternatives.count, 2), // Round 1: Max 2 choices
+            cycleCount: 0
         )
         
         return await cycleCorrection(bundleId: bundleId)
@@ -501,18 +520,46 @@ actor CorrectionEngine {
         }
         
         // For auto-correction, first hotkey press should UNDO (go to index 0)
-        let alt: CyclingState.Alternative
+        let alt: CyclingContext.Alternative
+        
         if state.wasAutomatic && state.currentIndex == 1 {
             // First press after auto-correction: go to original (undo)
             state.currentIndex = 0
             alt = state.alternatives[0]
             logger.info("🔄 UNDO auto-correction → original")
         } else {
+            // Check if we need to expand rounds
+            let nextIndex = state.currentIndex + 1
+            
+            if nextIndex >= state.visibleAlternativesCount {
+                // We are about to wrap.
+                if state.roundNumber == 1 {
+                    if state.cycleCount >= 1 {
+                        // We have already wrapped at least once (0 -> 1 -> 0 -> 1 -> [here])
+                        // Time to expand to Round 2
+                        if state.alternatives.count > state.visibleAlternativesCount {
+                            state.roundNumber = 2
+                            state.visibleAlternativesCount = min(state.alternatives.count, 3)
+                            logger.info("🔄 Entering Round 2: Visible alternatives increased to \(state.visibleAlternativesCount)")
+                        }
+                    }
+                    
+                    // Increment cycle count on wrap (or failed expansion)
+                    // Note: If we expanded, nextIndex (2) is < 3, so we might NOT wrap in next().
+                    // But if we expanded, we don't increment cycleCount?
+                    // Let's increment cycleCount only when we actually WRAP (go to 0).
+                    
+                    if nextIndex >= state.visibleAlternativesCount {
+                        state.cycleCount += 1
+                    }
+                }
+            }
+            
             alt = state.next()
         }
         cyclingState = state
         
-        logger.info("🔄 Cycling to: \(DecisionLogger.tokenSummary(alt.text), privacy: .public) (index \(state.currentIndex)/\(state.alternatives.count))")
+        logger.info("🔄 Cycling to: \(DecisionLogger.tokenSummary(alt.text), privacy: .public) (index \(state.currentIndex)/\(state.alternatives.count), round \(state.roundNumber))")
         
         // Log the correction for learning
         CorrectionLogger.shared.log(

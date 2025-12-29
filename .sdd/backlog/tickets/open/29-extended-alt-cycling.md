@@ -14,6 +14,30 @@ test_alt_full_cycle_verification: ✓ 2 unique states
 ```
 Expected: 3 states for trilingual setup (RU, EN, HE).
 
+## Current Alt Behavior (for context)
+
+Alt cycling works for the **last corrected word** within a **3-second window** after correction:
+- After auto-correction OR after typing (even without correction), `lastCorrectedText` is saved
+- User can press Alt within 3 seconds to cycle through alternatives
+- Typing new characters resets the cycling state
+- Works even after space/punctuation (as long as within 3-second window)
+
+**This is good UX** — user can type a word, press space, see the correction, then press Alt to undo if needed.
+
+## Known Bug: Sublime Text Cycling Issue
+
+**BUG:** In Sublime Text, second Alt press sometimes **inserts** the alternative text instead of **replacing** the current word.
+
+**Expected:** `привет` → Alt → `ghbdtn` (replaces)
+**Actual:** `привет` → Alt → `приветghbdtn` (inserts after)
+
+**Hypothesis:** Sublime Text handles text selection/deletion differently. The `replaceText` function may not be selecting the correct range before typing the replacement.
+
+**To investigate:**
+- Check if `lastCorrectedLength` matches actual text length in Sublime
+- Check if Sublime has special handling for programmatic text replacement
+- May need app-specific workaround
+
 ## User Story
 
 As a trilingual user (RU/EN/HE), I want Alt cycling to eventually show all three language options, so that I can quickly access any language without switching system layouts.
@@ -111,12 +135,33 @@ struct CyclingContext {
 - `OMFK/Sources/Core/CorrectionEngine.swift` — Third-language generation
 - `OMFK/Sources/Core/LanguageEnsemble.swift` — Alternative hypothesis
 
+## Known Issues to Fix in This Ticket
+
+### Issue 1: Sublime Text Insert Instead of Replace
+**BUG:** In Sublime Text, second Alt press sometimes **inserts** the alternative text instead of **replacing** the current word.
+
+**Expected:** `привет` → Alt → `ghbdtn` (replaces)
+**Actual:** `привет` → Alt → `приветghbdtn` (inserts after)
+
+**Hypothesis:** Sublime Text handles text selection/deletion differently. The `replaceText` function may not be selecting the correct range before typing the replacement.
+
+**To investigate:**
+- Check if `lastCorrectedLength` matches actual text length in Sublime
+- Check if Sublime has special handling for programmatic text replacement
+- May need app-specific workaround
+
+**Test to add:** `test_sublime_text_cycling`
+
+### Issue 2: Only 2 States in Cycle
+Third language never shown — main focus of this ticket.
+
 ## Tests
 
 1. `test_alt_first_round_two_states` — First round shows only 2 states
 2. `test_alt_second_round_three_states` — Second round adds third language
 3. `test_alt_round_reset_on_typing` — Typing resets to round 1
 4. `test_alt_two_languages_no_expansion` — No expansion if only 2 languages
+5. `test_sublime_text_cycling` — Verify cycling works in Sublime Text (no insert bug)
 
 ## Definition of Done
 

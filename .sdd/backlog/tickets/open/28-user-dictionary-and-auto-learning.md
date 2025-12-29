@@ -2,198 +2,469 @@
 
 ## Objective
 Add a **user-controlled personalization layer** that reduces repeated false positives/false negatives by learning from:
-- repeated **manual corrections** of the same token, and
-- repeated **undo/rejects** of automatic corrections.
+- repeated **undo/rejects** of automatic corrections (2+ times → add "keep as-is" rule)
+- repeated **manual corrections** of the same token (1+ times → add preference rule)
 
-Also provide a small UI to **view / edit / add** dictionary rules manually.
+Also provide:
+- **Auto-unlearning mechanism** to remove erroneously learned rules
+- Small UI to **view / edit / add** dictionary rules manually
 
 Must comply with `.sdd/architect.md`:
-- local-only, privacy-first,
-- deterministic guardrails (still validate conversions),
-- low latency (<50ms), small memory footprint.
+- local-only, privacy-first
+- deterministic guardrails (still validate conversions)
+- low latency (<50ms), small memory footprint
 
 ---
 
 ## User Problems This Solves
 
-1. **Inherently ambiguous collisions** (especially Hebrew-QWERTY): the same visible token can be a valid word in the “wrong” script.
-2. Users repeatedly correcting the same token manually is a strong signal that OMFK should “just do that next time”.
+1. **Inherently ambiguous collisions** (especially Hebrew-QWERTY): the same visible token can be a valid word in the "wrong" script.
+2. Users repeatedly correcting the same token manually is a strong signal that OMFK should "just do that next time".
 3. Users repeatedly undoing auto-corrections is a strong signal that OMFK should stop touching that token in that context.
+4. **Erroneously learned rules** can frustrate users if there's no way to automatically "forget" them.
 
 ---
 
-## Desired UX / Behavior (User Flows)
+## Core Learning Mechanisms
 
-### Flow A — Auto-correction happens, user rejects it (undo)
-1. User types; OMFK auto-corrects a token `T` → `C`.
-2. User presses hotkey once to undo (cycling to “original”).
-3. OMFK treats this as **rejection** of the auto decision for `(T, app?, mode=automatic)`.
-4. If the same token is rejected again (threshold configurable; default `>= 2`):
-   - Add a **user dictionary rule**: “KEEP token `T` as-is in automatic mode” (optionally scoped by app).
-5. Next time OMFK sees `T` in automatic mode, it short-circuits early and **does not convert**.
+### Mechanism 1: Learn from Undo (Auto-Reject)
 
-UX expectations:
-- No prompt/confirmation.
-- A subtle, non-disruptive indicator is allowed (e.g., log-only or optional HUD): “Added to user dictionary: keep ‘T’”.
-- Must be reversible in settings.
+**Trigger:** User undoes an auto-correction 2+ times for the same token within a time window.
 
-### Flow B — User triggers manual correction repeatedly for the same token
-1. User selects text or uses “convert last word”.
-2. User presses hotkey; OMFK produces correction alternatives and applies one (or cycles).
-3. If the user ends up applying the same mapping repeatedly:
-   - Example: `נאה` → `nah` (English intended on Hebrew-QWERTY),
-   - Example: `руддщ` → `hello` (English intended on Russian layout),
-4. After N repeats (default `>= 2`), OMFK learns a **preference rule**:
-   - “When input token is `T` (dominant script = Hebrew), prefer hypothesis `en_from_he`.”
-   - Or “Prefer target language = English” for this token.
-5. Next time OMFK sees `T` (even if it looks like a valid word), it biases strongly toward the learned target, still passing validation gates.
+**Flow:**
+1. OMFK auto-corrects token `T` → `C`
+2. User presses Alt to undo (cycles back to original `T`)
+3. OMFK records: `autoRejectCount[T]++`
+4. If `autoRejectCount[T] >= 2` within last 14 days:
+   - Add rule: `keepAsIs(T)` — never auto-correct this token
+5. Next time OMFK sees `T`, it short-circuits and does NOT convert
 
-UX expectations:
-- Manual mode is recall-first; learning from manual corrections should be enabled by default (but can be toggled).
-- If the learned preference later becomes wrong, user can remove it.
+**Why 2+ undos?**
+- Single undo might be accidental or context-specific
+- 2+ undos is a clear signal: "stop touching this word"
 
-### Flow C — Manual add / edit
-Settings → “User Dictionary”:
-- Add a rule for a token (paste or type).
-- Choose behavior:
-  - **Keep as-is** (never auto-correct it)
-  - **Prefer English / Russian / Hebrew** (bias router/scoring)
-  - **Force conversion** (advanced): always convert using specific hypothesis (`en_from_he`, `ru_from_en`, …) if validation passes
-- Optional scope:
-  - Global (default)
-  - Per-app (bundle id)
-  - Only in automatic mode / only in manual mode / both
-- Controls:
-  - Enable/disable learning globally
-  - Clear all learned rules
-  - Export/import (optional, not required for v1)
+**Data stored:**
+```swift
+struct AutoRejectRecord {
+    let token: String           // normalized (lowercased, trimmed)
+    var count: Int              // number of undos
+    var timestamps: [Date]      // for time-window filtering
+    var lastSeen: Date          // for LRU eviction
+}
+```
 
----
+### Mechanism 2: Learn from Manual Correction (Force-Apply)
 
-## Core Design
+**Trigger:** User manually corrects a token 1+ times using the same target hypothesis.
 
-### Rule types
-`UserDictionaryRule` (conceptual):
-- `id` (UUID)
-- `token` (stored string OR privacy-preserving hash; see below)
-- `matchMode`: `exact` | `caseInsensitive` (v1)
-- `scope`:
-  - `bundleId` optional
-  - `modes`: `[automatic, manual]`
-- `action`:
-  - `keepAsIs`
-  - `preferLanguage(Language)`
-  - `preferHypothesis(LanguageHypothesis)` (advanced)
-- `evidence`:
-  - `manualAppliedCount`
-  - `autoRejectedCount`
-  - timestamps for decay/cleanup (optional)
+**Flow:**
+1. User selects text or uses "convert last word" hotkey
+2. User cycles through alternatives and applies correction `T` → `C` (hypothesis `H`)
+3. OMFK records: `manualApplyCount[(T, H)]++`
+4. If `manualApplyCount[(T, H)] >= 1`:
+   - Add rule: `preferHypothesis(T, H)` — bias toward this conversion
+5. Next time OMFK sees `T`, it strongly prefers hypothesis `H` (but still validates)
 
-### Where it plugs into the pipeline
-1. **Before built-in whitelist**: check user dictionary.
-2. If rule says `keepAsIs`: return language/script as-is and stop correction.
-3. If rule says `preferLanguage`/`preferHypothesis`:
-   - add a strong score boost in `ConfidenceRouter.scoredDecision(...)`
-   - and/or adjust thresholds in `UserLanguageProfile` for that token/context
-   - still require validation gates before applying a correction.
+**Why 1+ manual correction?**
+- Manual correction is explicit user intent
+- User went out of their way to fix it — that's a strong signal
+- Unlike auto-reject, there's no "accidental" manual correction
 
-### Learning signals (what counts as “manual applied” / “auto rejected”)
-- **Auto rejected**:
-  - When a token was auto-corrected and user cycles back to “original” as the first hotkey action (undo).
-  - Must only count rejections where we can confidently link undo to that token (use existing `lastCorrectedText/length` + correction history record).
-- **Manual applied**:
-  - When user triggers hotkey on token `T` and ends up applying a correction whose target hypothesis is not “keep original”.
-  - If user cycles multiple times and lands on a specific alternative, count that final applied mapping.
+**Data stored:**
+```swift
+struct ManualApplyRecord {
+    let token: String           // normalized
+    let hypothesis: String      // e.g., "en_from_ru", "ru_from_he"
+    var count: Int              // number of applications
+    var timestamps: [Date]
+    var lastSeen: Date
+}
+```
 
-### Thresholds
-Default suggestions (v1):
-- Add `keepAsIs` after `autoRejectedCount >= 2` within last 14 days.
-- Add `preferHypothesis` after `manualAppliedCount >= 2` within last 14 days.
-- Cap learned rules (e.g., 500) with LRU eviction to avoid unbounded growth.
+### Mechanism 3: Auto-Unlearning (Forgetting Erroneous Rules)
 
-### Privacy considerations
-User dictionary stores user-provided tokens; this is inherently sensitive.
-Mitigations (v1):
-- Make learning **toggleable** (on by default, but visible).
-- Provide “Clear learned dictionary” and “Clear all dictionary”.
-- Prefer storing only short tokens (e.g., max 48 chars) and never store multi-line content.
-- Do not log stored tokens in plaintext.
+**Problem:** User might accidentally trigger learning, or context changes over time.
 
-Optional stronger privacy (v2):
-- Store a keyed hash (HMAC) of normalized token for matching, and optionally store plaintext only for UI display (encrypted or behind an explicit “show”).
+**Trigger:** User attempts to correct a token that has a `keepAsIs` or `preferHypothesis` rule.
+
+**Flow A — Unlearning `keepAsIs`:**
+1. Token `T` has rule `keepAsIs` (OMFK doesn't auto-correct it)
+2. User manually triggers correction on `T` and applies a conversion
+3. OMFK interprets this as: "user WANTS this corrected after all"
+4. Decrement `autoRejectCount[T]--` or remove rule if count reaches 0
+5. If user does this 2+ times, rule is fully removed
+
+**Flow B — Unlearning `preferHypothesis`:**
+1. Token `T` has rule `preferHypothesis(T, H1)` (OMFK prefers hypothesis H1)
+2. User manually corrects `T` using a DIFFERENT hypothesis `H2`
+3. OMFK interprets this as: "user changed their mind"
+4. Options:
+   - Replace rule: `preferHypothesis(T, H2)` (most recent wins)
+   - Or: decrement H1 count, increment H2 count (weighted preference)
+5. Recommendation: **Replace with most recent** for simplicity in v1
+
+**Flow C — Time-based decay (optional, v2):**
+1. Rules not triggered for 90+ days get lower priority
+2. Rules not triggered for 180+ days are auto-removed
+3. Prevents dictionary bloat from old, irrelevant rules
+
+**Data stored:**
+```swift
+struct UnlearnRecord {
+    let token: String
+    let ruleType: RuleType      // keepAsIs or preferHypothesis
+    var overrideCount: Int      // times user overrode the rule
+    var timestamps: [Date]
+}
+```
 
 ---
 
-## Alternatives + Trade-offs (MCDM-style)
+## Rule Types and Actions
 
-Criteria weights:
-- Safety / no data loss: 5
-- UX improvement: 5
-- Privacy risk: 4
-- Cross-app consistency: 3
-- Complexity: 2
-- Latency: 3
+### `UserDictionaryRule`
+```swift
+struct UserDictionaryRule: Codable, Identifiable {
+    let id: UUID
+    let token: String                    // normalized token
+    let matchMode: MatchMode             // exact, caseInsensitive
+    let scope: RuleScope                 // global, perApp, perMode
+    let action: RuleAction               // keepAsIs, preferLanguage, preferHypothesis
+    let source: RuleSource               // learned, manual
+    var evidence: RuleEvidence           // counts, timestamps
+    let createdAt: Date
+    var updatedAt: Date
+}
 
-### Option A (Recommended): User dictionary overlay + simple learning thresholds
-- Pros: big UX win, simple lookup, deterministic, fits current pipeline.
-- Cons: stores tokens locally (privacy); needs good UX for cleanup.
+enum MatchMode: String, Codable {
+    case exact
+    case caseInsensitive
+}
 
-### Option B: Context-only adaptive thresholds (no token storage)
-- Pros: better privacy (no token list).
-- Cons: weak for collision tokens (needs token identity); less “Punto-like”.
+enum RuleScope: Codable {
+    case global
+    case perApp(bundleId: String)
+    case perMode(modes: [CorrectionMode])  // automatic, manual
+}
 
-### Option C: Full per-user ML fine-tune
-- Pros: can generalize.
-- Cons: heavy, risky, not necessary for v1, harder to debug and validate.
+enum RuleAction: Codable {
+    case keepAsIs                         // never auto-correct
+    case preferLanguage(Language)         // bias toward language
+    case preferHypothesis(String)         // bias toward specific hypothesis
+}
 
-Recommendation: **Option A**, with strict bounds and UI controls.
+enum RuleSource: String, Codable {
+    case learned                          // auto-learned from behavior
+    case manual                           // user added manually
+}
 
----
-
-## Implementation Plan (v1)
-
-1. Add `UserDictionary` component (actor or @MainActor depending on storage access patterns):
-   - load/save JSON in Application Support (local only)
-   - CRUD API: add/remove/list rules
-   - counter update API: recordAutoReject(token,…), recordManualApply(token,…)
-2. Integrate into detection:
-   - consult dictionary at start of `ConfidenceRouter.route(...)`
-   - apply bias actions in `scoredDecision(...)`
-3. Wire learning events:
-   - When auto-correction is undone (cycling to original) → record reject
-   - When manual correction applied → record apply
-4. Add Settings UI:
-   - new tab “User Dictionary”
-   - toggle learning
-   - list rules + delete/disable
-   - add rule dialog (token + action + scope)
-5. Add tests:
-   - unit tests for rule matching (matchMode, scope)
-   - integration tests proving:
-     - repeated auto rejects lead to keepAsIs short-circuit
-     - repeated manual apply leads to preferHypothesis bias
-   - ensure performance: dictionary lookup is O(1) and does not increase hot-path latency materially
+struct RuleEvidence: Codable {
+    var autoRejectCount: Int = 0
+    var manualApplyCount: Int = 0
+    var overrideCount: Int = 0            // for unlearning
+    var timestamps: [Date] = []
+}
+```
 
 ---
 
-## Files Likely Affected
-- `OMFK/Sources/Core/ConfidenceRouter.swift`
-- `OMFK/Sources/Core/UserLanguageProfile.swift` (optional synergy)
-- `OMFK/Sources/Engine/CorrectionEngine.swift` (hook learning events)
-- `OMFK/Sources/UI/SettingsView.swift` (new tab)
-- New:
-  - `OMFK/Sources/Core/UserDictionary.swift`
-  - `OMFK/Sources/Core/UserDictionaryModels.swift` (optional split)
-- Tests:
-  - new `OMFK/Tests/UserDictionaryTests.swift`
-  - extend `OMFK/Tests/RealUserBehaviorTests.swift` or `OMFK/Tests/HotkeyTextIntegrityTests.swift`
+## Pipeline Integration
+
+### Where rules are checked
+
+```
+Input Token
+    │
+    ▼
+┌─────────────────────────────────┐
+│ 1. UserDictionary.lookup(token) │  ◄── NEW: Check user rules FIRST
+└─────────────────────────────────┘
+    │
+    ├── Rule: keepAsIs → RETURN original (skip all processing)
+    │
+    ├── Rule: preferHypothesis(H) → Set bias, continue to validation
+    │
+    ▼
+┌─────────────────────────────────┐
+│ 2. Built-in Whitelist           │
+└─────────────────────────────────┘
+    │
+    ▼
+┌─────────────────────────────────┐
+│ 3. ConfidenceRouter.route()     │  ◄── Apply bias from preferHypothesis
+└─────────────────────────────────┘
+    │
+    ▼
+┌─────────────────────────────────┐
+│ 4. Validation Gates             │  ◄── Still validate even with bias
+└─────────────────────────────────┘
+    │
+    ▼
+Output
+```
+
+### Learning event hooks
+
+**In `EventMonitor.handleHotkeyPress()`:**
+```swift
+// After user cycles to "original" (undo)
+if cycleResult == .original && lastCorrectionWasAutomatic {
+    await userDictionary.recordAutoReject(
+        token: lastCorrectedOriginal,
+        bundleId: currentApp?.bundleIdentifier
+    )
+}
+
+// After user applies a manual correction
+if cycleResult != .original {
+    await userDictionary.recordManualApply(
+        token: originalToken,
+        hypothesis: appliedHypothesis,
+        bundleId: currentApp?.bundleIdentifier
+    )
+}
+```
+
+**In `ConfidenceRouter.route()`:**
+```swift
+// Check for unlearning trigger
+if let rule = userDictionary.lookup(token), rule.action == .keepAsIs {
+    // User is manually correcting a "keepAsIs" token
+    // This is an unlearning signal
+    await userDictionary.recordOverride(token: token)
+}
+```
+
+---
+
+## Thresholds and Limits
+
+### Learning thresholds (configurable in Settings)
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `autoRejectThreshold` | 2 | Undos needed to add `keepAsIs` rule |
+| `manualApplyThreshold` | 1 | Manual corrections needed to add `preferHypothesis` |
+| `unlearningThreshold` | 2 | Overrides needed to remove a learned rule |
+| `timeWindow` | 14 days | Only count events within this window |
+
+### Storage limits
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `maxRules` | 500 | Maximum rules in dictionary (LRU eviction) |
+| `maxTokenLength` | 48 | Maximum token length to store |
+| `maxTimestamps` | 10 | Maximum timestamps per rule (rolling window) |
+
+### Time-based decay (v2, optional)
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `lowPriorityAge` | 90 days | Rules older than this get lower priority |
+| `autoRemoveAge` | 180 days | Rules older than this are auto-removed |
+
+---
+
+## Settings UI
+
+### New tab: "User Dictionary"
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ User Dictionary                                              │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│ ☑ Enable auto-learning                                       │
+│   Learn from your corrections to improve accuracy            │
+│                                                              │
+│ ─────────────────────────────────────────────────────────── │
+│                                                              │
+│ Learned Rules (12)                              [Clear All]  │
+│ ┌─────────────────────────────────────────────────────────┐ │
+│ │ "vs"        Keep as-is       Learned (3 undos)    [×]   │ │
+│ │ "api"       Prefer English   Learned (2 applies)  [×]   │ │
+│ │ "гугл"      Keep as-is       Learned (2 undos)    [×]   │ │
+│ │ "נאה"       Prefer English   Learned (1 apply)    [×]   │ │
+│ └─────────────────────────────────────────────────────────┘ │
+│                                                              │
+│ Manual Rules (3)                                [Add Rule]   │
+│ ┌─────────────────────────────────────────────────────────┐ │
+│ │ "iPhone"    Keep as-is       Manual               [×]   │ │
+│ │ "GitHub"    Keep as-is       Manual               [×]   │ │
+│ │ "TODO"      Keep as-is       Manual               [×]   │ │
+│ └─────────────────────────────────────────────────────────┘ │
+│                                                              │
+│ ─────────────────────────────────────────────────────────── │
+│                                                              │
+│ Advanced                                                     │
+│ ┌─────────────────────────────────────────────────────────┐ │
+│ │ Undos to learn "keep as-is":     [2] ▼                  │ │
+│ │ Manual corrections to learn:      [1] ▼                  │ │
+│ │ Overrides to unlearn:             [2] ▼                  │ │
+│ │ Learning time window:             [14 days] ▼            │ │
+│ └─────────────────────────────────────────────────────────┘ │
+│                                                              │
+│ [Export...]  [Import...]  [Reset to Defaults]                │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Add Rule Dialog
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Add Dictionary Rule                                          │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│ Token:  [________________]                                   │
+│                                                              │
+│ Action: ○ Keep as-is (never auto-correct)                   │
+│         ○ Prefer English                                     │
+│         ○ Prefer Russian                                     │
+│         ○ Prefer Hebrew                                      │
+│                                                              │
+│ Scope:  ○ Global (all apps)                                 │
+│         ○ Current app only (com.brave.Browser)              │
+│                                                              │
+│ Match:  ○ Exact match                                       │
+│         ○ Case-insensitive                                   │
+│                                                              │
+│                              [Cancel]  [Add Rule]            │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Implementation Plan
+
+### Phase 1: Core Infrastructure
+1. Create `UserDictionary.swift` (actor)
+   - JSON storage in `~/.omfk/user_dictionary.json`
+   - CRUD operations: add, remove, update, list
+   - Lookup with O(1) hash map
+   - LRU eviction when limit reached
+
+2. Create `UserDictionaryModels.swift`
+   - `UserDictionaryRule` struct
+   - `RuleAction`, `RuleScope`, `RuleSource` enums
+   - `RuleEvidence` for tracking counts
+
+### Phase 2: Learning Hooks
+3. Add learning event recording
+   - `recordAutoReject(token:bundleId:)` — called on undo
+   - `recordManualApply(token:hypothesis:bundleId:)` — called on manual correction
+   - `recordOverride(token:)` — called when user corrects a "protected" token
+
+4. Integrate into `EventMonitor.handleHotkeyPress()`
+   - Detect undo vs apply
+   - Call appropriate recording method
+   - Check thresholds and create rules
+
+### Phase 3: Pipeline Integration
+5. Add lookup in `ConfidenceRouter.route()`
+   - Check user dictionary before built-in whitelist
+   - Apply `keepAsIs` short-circuit
+   - Apply `preferHypothesis` bias
+
+6. Implement bias application
+   - Boost score for preferred hypothesis
+   - Still require validation gates
+
+### Phase 4: Unlearning
+7. Implement override detection
+   - Detect when user corrects a "keepAsIs" token
+   - Detect when user uses different hypothesis than preferred
+
+8. Implement rule removal
+   - Decrement counts on override
+   - Remove rule when count reaches 0
+
+### Phase 5: Settings UI
+9. Add "User Dictionary" tab to Settings
+   - List learned and manual rules
+   - Delete individual rules
+   - Clear all learned rules
+
+10. Add "Add Rule" dialog
+    - Token input
+    - Action selection
+    - Scope selection
+
+### Phase 6: Testing
+11. Unit tests
+    - Rule matching (exact, case-insensitive)
+    - Threshold logic
+    - LRU eviction
+    - Unlearning logic
+
+12. Integration tests
+    - 2 undos → keepAsIs rule created
+    - 1 manual apply → preferHypothesis rule created
+    - 2 overrides → rule removed
+    - Bias affects routing but validation still applies
+
+---
+
+## Files Affected
+
+### New files
+- `OMFK/Sources/Core/UserDictionary.swift`
+- `OMFK/Sources/Core/UserDictionaryModels.swift`
+- `OMFK/Sources/UI/UserDictionaryView.swift`
+- `OMFK/Sources/UI/AddRuleDialog.swift`
+- `OMFK/Tests/UserDictionaryTests.swift`
+
+### Modified files
+- `OMFK/Sources/Core/ConfidenceRouter.swift` — add lookup and bias
+- `OMFK/Sources/Engine/EventMonitor.swift` — add learning hooks
+- `OMFK/Sources/UI/SettingsView.swift` — add new tab
+- `OMFK/Sources/Settings/SettingsStore.swift` — add dictionary settings
 
 ---
 
 ## Definition of Done
-- User can add/remove rules from settings.
-- After two rejections of the same auto-correction, OMFK stops auto-correcting that token (keepAsIs rule).
-- After two manual applications of the same mapping, OMFK prefers that mapping next time (bias rule) while still passing validation gates.
-- Dictionary is bounded, local-only, and can be fully cleared.
-- `swift test` passes with new coverage for the above behaviors.
 
+### Functional
+- [ ] After 2+ undos of same auto-correction, OMFK stops auto-correcting that token
+- [ ] After 1+ manual corrections with same hypothesis, OMFK prefers that hypothesis
+- [ ] After 2+ overrides of a learned rule, the rule is removed (unlearning)
+- [ ] User can view all rules in Settings
+- [ ] User can delete individual rules
+- [ ] User can add manual rules
+- [ ] User can clear all learned rules
+- [ ] User can toggle learning on/off
+
+### Technical
+- [ ] Dictionary lookup is O(1) and adds <1ms to hot path
+- [ ] Dictionary is bounded (max 500 rules, LRU eviction)
+- [ ] Dictionary is local-only (`~/.omfk/user_dictionary.json`)
+- [ ] Tokens >48 chars are not stored
+- [ ] `swift test` passes with new coverage
+
+### Privacy
+- [ ] Learning can be disabled in Settings
+- [ ] "Clear all" removes all learned data
+- [ ] No tokens logged in plaintext (use hashes in logs)
+
+---
+
+## Risks and Mitigations
+
+| Risk | Impact | Mitigation |
+|------|--------|------------|
+| Learning wrong rules from accidental undos | Medium | Require 2+ undos, time window |
+| Dictionary grows unbounded | Low | LRU eviction, max 500 rules |
+| Unlearning too aggressive | Medium | Require 2+ overrides to remove |
+| Performance impact from lookup | Low | O(1) hash map, <1ms |
+| Privacy concerns about stored tokens | Medium | Local-only, clearable, toggleable |
+
+---
+
+## Dependencies
+
+- None (self-contained feature)
+
+## Blocked By
+
+- None
+
+## Blocks
+
+- Ticket 29: Advanced learning (n-gram context, per-app profiles) — builds on this

@@ -206,4 +206,40 @@ final class InputSourceManager {
         logger.error("❌ No input source found for language: \(langCode, privacy: .public)")
         logger.error("Available sources: \(availableSources.joined(separator: " | "), privacy: .public)")
     }
+    
+    /// Returns the Apple ID of the currently selected input source
+    func currentLayoutId() -> String? {
+        guard let source = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue() else {
+            return nil
+        }
+        guard let idPtr = TISGetInputSourceProperty(source, kTISPropertyInputSourceID) else {
+            return nil
+        }
+        return unsafeBitCast(idPtr, to: CFString.self) as String
+    }
+    
+    /// Switches to a specific input source by its Apple ID
+    func switchToLayoutId(_ appleId: String) {
+        let filter: [CFString: Any] = [
+            kTISPropertyInputSourceType: kTISTypeKeyboardLayout as Any
+        ]
+        
+        guard let list = TISCreateInputSourceList(filter as CFDictionary, false)?.takeRetainedValue() else {
+            return
+        }
+        
+        let count = CFArrayGetCount(list)
+        for index in 0..<count {
+            guard let src = CFArrayGetValueAtIndex(list, index) else { continue }
+            let source = unsafeBitCast(src, to: TISInputSource.self)
+            guard let idPtr = TISGetInputSourceProperty(source, kTISPropertyInputSourceID) else {
+                continue
+            }
+            let sourceId = unsafeBitCast(idPtr, to: CFString.self) as String
+            if sourceId == appleId {
+                TISSelectInputSource(source)
+                return
+            }
+        }
+    }
 }

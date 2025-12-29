@@ -15,6 +15,8 @@ final class EventMonitor {
     private var lastCorrectedText: String = ""
     private var lastCorrectionTime: Date = .distantPast
     private var cyclingActive: Bool = false  // Flag to freeze buffers during cycling
+    private var cyclingStartTime: Date = .distantPast  // When cycling started
+    private let cyclingMinDuration: TimeInterval = 0.5  // Minimum time to keep cycling active
     private var lastActiveApp: String = ""
     private let logger = Logger.events
     private let settings: SettingsManager
@@ -116,7 +118,264 @@ final class EventMonitor {
     private var lastHotkeyTime: Date = .distantPast  // Debounce hotkey
     private var currentProxy: CGEventTapProxy?  // Store proxy for posting events "after" our tap
     
-    private func handleEvent(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent> {
+    private enum DeferredInput {
+        case text(String)
+        case keyEvent(keyCode: CGKeyCode, flags: CGEventFlags)
+        case backspace(Int)
+    }
+    
+    private var deferredInputs: [DeferredInput] = []
+    private var layoutBeforeCycling: String?  // Store layout ID before cycling starts
+    private var languageBeforeCycling: Language?  // Fallback when layout ID is unavailable
+    private var keyboardLayoutDataCache: [String: Data] = [:]
+
+    private func deferText(_ text: String) {
+        guard !text.isEmpty else { return }
+        if case .text(let existing) = deferredInputs.last {
+            deferredInputs[deferredInputs.count - 1] = .text(existing + text)
+        } else {
+            deferredInputs.append(.text(text))
+        }
+    }
+
+    private func deferKeyEvent(keyCode: CGKeyCode, flags: CGEventFlags) {
+        deferredInputs.append(.keyEvent(keyCode: keyCode, flags: flags))
+    }
+    
+    private func deferBackspace(count: Int = 1) {
+        guard count > 0 else { return }
+        if case .backspace(let existing) = deferredInputs.last {
+            deferredInputs[deferredInputs.count - 1] = .backspace(existing + count)
+        } else {
+            deferredInputs.append(.backspace(count))
+        }
+    }
+    
+    private func keyboardLayoutData(forAppleId appleId: String) -> Data? {
+        if let cached = keyboardLayoutDataCache[appleId] {
+            return cached
+        }
+        
+        let filter: [CFString: Any] = [
+            kTISPropertyInputSourceType: kTISTypeKeyboardLayout as Any
+        ]
+        
+        guard let list = TISCreateInputSourceList(filter as CFDictionary, false)?.takeRetainedValue() else {
+            return nil
+        }
+        
+        let count = CFArrayGetCount(list)
+        for index in 0..<count {
+            guard let src = CFArrayGetValueAtIndex(list, index) else { continue }
+            let source = unsafeBitCast(src, to: TISInputSource.self)
+            
+            guard let idPtr = TISGetInputSourceProperty(source, kTISPropertyInputSourceID) else { continue }
+            let sourceId = unsafeBitCast(idPtr, to: CFString.self) as String
+            guard sourceId == appleId else { continue }
+            
+            guard let layoutData = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData) else {
+                return nil
+            }
+            
+            let data = Unmanaged<CFData>.fromOpaque(layoutData).takeUnretainedValue() as Data
+            keyboardLayoutDataCache[appleId] = data
+            return data
+        }
+        
+        return nil
+    }
+    
+    private func translateKeyCode(_ keyCode: CGKeyCode, flags: CGEventFlags, layoutData: Data, deadKeyState: inout UInt32) -> String? {
+        var chars = [UniChar](repeating: 0, count: 4)
+        var length: Int = 0
+        
+        var modifiers: UInt32 = 0
+        if flags.contains(.maskShift) { modifiers |= UInt32(shiftKey >> 8) }
+        if flags.contains(.maskAlternate) { modifiers |= UInt32(optionKey >> 8) }
+        
+        let status = layoutData.withUnsafeBytes { ptr -> OSStatus in
+            guard let layoutPtr = ptr.baseAddress?.assumingMemoryBound(to: UCKeyboardLayout.self) else { return -1 }
+            return UCKeyTranslate(
+                layoutPtr,
+                UInt16(keyCode),
+                UInt16(kUCKeyActionDown),
+                modifiers,
+                UInt32(LMGetKbdType()),
+                UInt32(kUCKeyTranslateNoDeadKeysMask),
+                &deadKeyState,
+                chars.count,
+                &length,
+                &chars
+            )
+        }
+        
+        guard status == noErr, length > 0 else { return nil }
+        return String(utf16CodeUnits: chars, count: length)
+    }
+    
+    private func flushDeferredInputs(proxy: CGEventTapProxy, usingLayoutId layoutId: String?) {
+        guard !deferredInputs.isEmpty else { return }
+        
+        let layoutData = layoutId.flatMap(keyboardLayoutData(forAppleId:))
+        var deadKeyState: UInt32 = 0
+        var bufferedText = ""
+        bufferedText.reserveCapacity(min(64, deferredInputs.count))
+        
+        func flushBufferedText() {
+            guard !bufferedText.isEmpty else { return }
+            typeUnicodeString(bufferedText, proxy: proxy)
+            bufferedText.removeAll(keepingCapacity: true)
+        }
+        
+        for item in deferredInputs {
+            switch item {
+            case .text(let text):
+                // Already translated text - just append
+                bufferedText.append(text)
+            case .keyEvent(let keyCode, let flags):
+                // Never turn command/control chords into Unicode typing.
+                if flags.contains(.maskCommand) || flags.contains(.maskControl) {
+                    flushBufferedText()
+                    postKeyEvent(keyCode: keyCode, flags: flags, proxy: proxy)
+                    continue
+                }
+                
+                if let layoutData,
+                   let translated = translateKeyCode(keyCode, flags: flags, layoutData: layoutData, deadKeyState: &deadKeyState) {
+                    bufferedText.append(translated)
+                } else {
+                    flushBufferedText()
+                    postKeyEvent(keyCode: keyCode, flags: flags, proxy: proxy)
+                }
+            case .backspace(let count):
+                flushBufferedText()
+                for _ in 0..<count {
+                    postKeyEvent(keyCode: 0x33, flags: [], proxy: proxy)
+                }
+            }
+        }
+        
+        flushBufferedText()
+        deferredInputs.removeAll(keepingCapacity: true)
+    }
+
+    private func waitForLayoutId(_ appleId: String, timeout: TimeInterval) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if InputSourceManager.shared.currentLayoutId() == appleId {
+                return true
+            }
+            try? await Task.sleep(nanoseconds: 5_000_000) // 5ms
+        }
+        return InputSourceManager.shared.currentLayoutId() == appleId
+    }
+
+    private func waitForLanguage(_ language: Language, timeout: TimeInterval) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if InputSourceManager.shared.currentLanguage() == language {
+                return true
+            }
+            try? await Task.sleep(nanoseconds: 5_000_000) // 5ms
+        }
+        return InputSourceManager.shared.currentLanguage() == language
+    }
+
+    private func flushDeferredInputsAfterRestoringLayout(proxy: CGEventTapProxy, savedLayoutId: String?, savedLanguage: Language?) async {
+        if !deferredInputs.isEmpty {
+            if let savedLayoutId {
+                InputSourceManager.shared.switchToLayoutId(savedLayoutId)
+                let ok = await waitForLayoutId(savedLayoutId, timeout: 0.3)
+                if !ok {
+                    logger.warning("⚠️ Layout restore timeout (expected: \(savedLayoutId, privacy: .public), actual: \(InputSourceManager.shared.currentLayoutId() ?? "nil", privacy: .public))")
+                }
+            } else if let savedLanguage {
+                InputSourceManager.shared.switchTo(language: savedLanguage)
+                _ = await waitForLanguage(savedLanguage, timeout: 0.3)
+            }
+        }
+        let layoutIdForTranslation = savedLayoutId ?? InputSourceManager.shared.currentLayoutId()
+        flushDeferredInputs(proxy: proxy, usingLayoutId: layoutIdForTranslation)
+        cyclingActive = false
+        // Don't reset layoutBeforeCycling here - let the time-based window handle it
+        // so fast typing after Alt can still be captured
+    }
+
+    private static let wordBoundaryPunctuation: Set<Character> = [
+        ".", ",", "!", "?", ":", ";",
+        ")", "]", "}",
+        "\"", "»", "”", "…"
+    ]
+    
+    private static let leadingDelimiters: Set<Character> = [
+        "(", "[", "{",
+        "\"", "«", "“"
+    ]
+    
+    private static let trailingDelimiters: Set<Character> = [
+        ")", "]", "}",
+        "\"", "»", "”"
+    ]
+    
+    private func isDelimiterLikeCharacter(_ ch: Character) -> Bool {
+        ch.isWhitespace || ch.isNewline || Self.wordBoundaryPunctuation.contains(ch) || Self.trailingDelimiters.contains(ch) || ch == "-" || ch == "—" || ch == "–"
+    }
+    
+    private func isWordBoundaryTrigger(_ text: String, bufferWasEmpty: Bool) -> Bool {
+        for ch in text {
+            if ch.isWhitespace || ch.isNewline {
+                return true
+            }
+            if Self.wordBoundaryPunctuation.contains(ch) {
+                return true
+            }
+            // Treat standalone separators as boundaries only when not inside a word.
+            if bufferWasEmpty, ch == "-" || ch == "—" || ch == "–" {
+                return true
+            }
+        }
+        return false
+    }
+    
+    private func shouldExtendLastCorrectedSuffix(with text: String, bufferWasEmpty: Bool) -> Bool {
+        guard bufferWasEmpty, lastCorrectedLength > 0 else { return false }
+        
+        let timeSinceLastCorrection = Date().timeIntervalSince(lastCorrectionTime)
+        guard timeSinceLastCorrection < 3.0 else { return false }
+        
+        return text.allSatisfy(isDelimiterLikeCharacter)
+    }
+    
+    private struct BufferParts {
+        let leading: String
+        let token: String
+        let trailing: String
+    }
+    
+    private func splitBufferContent(_ bufferContent: String) -> BufferParts {
+        guard !bufferContent.isEmpty else {
+            return BufferParts(leading: "", token: "", trailing: "")
+        }
+        
+        let chars = Array(bufferContent)
+        var start = 0
+        var end = chars.count
+        
+        while start < end, Self.leadingDelimiters.contains(chars[start]) {
+            start += 1
+        }
+        
+        while end > start, isDelimiterLikeCharacter(chars[end - 1]) {
+            end -= 1
+        }
+        
+        let leading = String(chars[0..<start])
+        let token = String(chars[start..<end])
+        let trailing = String(chars[end..<chars.count])
+        return BufferParts(leading: leading, token: token, trailing: trailing)
+    }
+    
+    private func handleEvent(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
         // Store proxy for use in replacement methods
         currentProxy = proxy
         
@@ -160,7 +419,11 @@ final class EventMonitor {
                     lastHotkeyTime = now
                     
                     // Freeze buffers BEFORE starting async task
+                    deferredInputs.removeAll(keepingCapacity: true)
+                    layoutBeforeCycling = InputSourceManager.shared.currentLayoutId()
+                    languageBeforeCycling = InputSourceManager.shared.currentLanguage()
                     cyclingActive = true
+                    cyclingStartTime = Date()  // Track when cycling started
                     
                     // Single hotkey - context-aware behavior
                     logger.info("🔥 OPTION TAP - context-aware correction")
@@ -186,8 +449,56 @@ final class EventMonitor {
         if flags.contains(.maskCommand) || flags.contains(.maskControl) {
             return Unmanaged.passUnretained(event)
         }
-        
+
         logger.debug("🔵 KEY EVENT: keyCode=\(keyCode), flags=\(flags.rawValue)")
+
+        // While cycling/replacing, swallow user keystrokes to prevent interleaving with backspaces/typing.
+        // We translate keycodes to characters using the layout that was active BEFORE cycling started,
+        // so the characters are correct regardless of what layout is active now.
+        // While cycling/replacing, swallow user keystrokes to prevent interleaving with backspaces/typing.
+        // Keep cycling active for at least cyclingMinDuration to capture fast typing after Alt.
+        let timeSinceCyclingStart = Date().timeIntervalSince(cyclingStartTime)
+        let inCyclingWindow = cyclingActive || (timeSinceCyclingStart < cyclingMinDuration && layoutBeforeCycling != nil)
+        
+        logger.debug("⏱️ keyCode=\(keyCode) cyclingActive=\(self.cyclingActive) timeSince=\(timeSinceCyclingStart) layoutBefore=\(self.layoutBeforeCycling ?? "nil") inWindow=\(inCyclingWindow)")
+        
+        // If cycling window just ended, flush any accumulated deferred inputs
+        if !inCyclingWindow && !deferredInputs.isEmpty && layoutBeforeCycling != nil {
+            if let proxy = currentProxy {
+                flushDeferredInputs(proxy: proxy, usingLayoutId: layoutBeforeCycling)
+            }
+            layoutBeforeCycling = nil
+            languageBeforeCycling = nil
+        }
+        
+        if inCyclingWindow {
+            logger.debug("🔄 inCyclingWindow: keyCode=\(keyCode), layoutBeforeCycling=\(self.layoutBeforeCycling ?? "nil")")
+            if keyCode == 51 {
+                deferBackspace()
+                return nil
+            }
+            // Translate keycode using layoutBeforeCycling - the layout user was typing in
+            if let savedLayoutId = layoutBeforeCycling,
+               let layoutData = keyboardLayoutData(forAppleId: savedLayoutId) {
+                var deadKeyState: UInt32 = 0
+                if let char = translateKeyCode(CGKeyCode(keyCode), flags: flags, layoutData: layoutData, deadKeyState: &deadKeyState) {
+                    logger.debug("🔄 Translated keyCode \(keyCode) -> '\(char)' using \(savedLayoutId)")
+                    deferText(char)
+                    return nil
+                }
+            }
+            // Fallback: store keycode if translation failed
+            logger.debug("🔄 Translation failed, deferring keyEvent")
+            deferKeyEvent(keyCode: CGKeyCode(keyCode), flags: flags)
+            return nil
+        }
+
+        // Handle backspace/delete so internal buffers match the real text
+        if keyCode == 51 {
+            if !buffer.isEmpty { buffer.removeLast() }
+            if !phraseBuffer.isEmpty { phraseBuffer.removeLast() }
+            return Unmanaged.passUnretained(event)
+        }
         
         let now = Date()
         let timeSinceLastEvent = now.timeIntervalSince(lastEventTime)
@@ -203,24 +514,25 @@ final class EventMonitor {
         if let chars = event.keyboardEventCharacters {
             // Filter out control characters (keep only printable + space/newline)
             let filtered = chars.filter { char in
-                char.isLetter || char.isNumber || char.isPunctuation || char.isSymbol || char == " " || char == "\n" || char == "\t"
+                char.isLetter || char.isNumber || char.isPunctuation || char.isSymbol || char == " " || char == "\n" || char == "\r" || char == "\t"
             }
             guard !filtered.isEmpty else {
                 return Unmanaged.passUnretained(event)
             }
             
-            // If cycling is active, ignore all typing (it's our synthetic events)
-            if cyclingActive {
-                return Unmanaged.passUnretained(event)
+            let bufferWasEmpty = buffer.isEmpty
+            if shouldExtendLastCorrectedSuffix(with: filtered, bufferWasEmpty: bufferWasEmpty) {
+                lastCorrectedText.append(filtered)
+                lastCorrectedLength += filtered.count
             }
             
             buffer.append(filtered)
             phraseBuffer.append(filtered)
             logger.info("⌨️ Typed: \(DecisionLogger.tokenSummary(filtered), privacy: .public) | Buffer: \(DecisionLogger.tokenSummary(self.buffer), privacy: .public)")
             
-            // Process on word boundaries (space/newline triggers auto-correction)
-            if chars.rangeOfCharacter(from: .whitespacesAndNewlines) != nil {
-                logger.info("📍 Word boundary detected (space/newline) - processing buffer")
+            // Process on word boundaries (space/newline/punctuation triggers auto-correction)
+            if isWordBoundaryTrigger(filtered, bufferWasEmpty: bufferWasEmpty) {
+                logger.info("📍 Word boundary detected - processing buffer")
                 // Capture buffer content AND proxy before clearing to avoid race condition
                 let textToProcess = buffer
                 let capturedProxy = proxy
@@ -244,8 +556,10 @@ final class EventMonitor {
     }
     
     private func processBufferContent(_ bufferContent: String, proxy: CGEventTapProxy) async {
-        let text = bufferContent.trimmingCharacters(in: .whitespacesAndNewlines)
+        let parts = splitBufferContent(bufferContent)
+        let text = parts.token
         let letterCount = text.filter { $0.isLetter }.count
+        let totalTypedLength = bufferContent.count
         
         // Special case: single Latin letters that are likely Russian prepositions/conjunctions
         // d→в, c→с, r→к, j→о, e→у, b→и, z→я (typed on EN keyboard instead of RU)
@@ -260,9 +574,10 @@ final class EventMonitor {
             if settings.preferredLanguage == .russian {
                 let corrected = char.isUppercase ? String(ruPreposition).uppercased() : String(ruPreposition)
                 logger.info("✅ Single letter preposition: '\(text)' → '\(corrected)'")
-                await replaceText(with: corrected + " ", originalLength: 2, proxy: proxy) // +1 for space
-                lastCorrectedLength = corrected.count + 1
-                lastCorrectedText = corrected
+                let replacement = parts.leading + corrected + parts.trailing
+                await replaceText(with: replacement, originalLength: totalTypedLength, proxy: proxy)
+                lastCorrectedLength = replacement.count
+                lastCorrectedText = replacement
                 return
             }
         }
@@ -272,11 +587,7 @@ final class EventMonitor {
             return
         }
         
-        // Count only the word length (without trailing whitespace)
-        // The space that triggered processing is AFTER the cursor, we only delete the word
-        let wordLength = text.count
-        
-        logger.info("🔍 Processing buffer: \(DecisionLogger.tokenSummary(text), privacy: .public) (word len: \(wordLength))")
+        logger.info("🔍 Processing buffer: \(DecisionLogger.tokenSummary(text), privacy: .public) (segment len: \(totalTypedLength), word len: \(text.count))")
         
         let bundleId = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
         logger.info("📱 Frontmost app: \(bundleId ?? "unknown", privacy: .public)")
@@ -301,26 +612,25 @@ final class EventMonitor {
             // Need to go back and fix the previous word
             // Previous word is: pendingOriginal + " " + current word
             // We need to delete: pendingOriginal.count + 1 (space) + wordLength + 1 (current space)
-            let totalDeleteLength = pendingOriginal.count + 1 + wordLength + 1
-            let replacement = pendingCorrected + " " + (result.corrected ?? text) + " "
+            let totalDeleteLength = pendingOriginal.count + 1 + text.count + parts.trailing.count
+            let replacement = pendingCorrected + " " + (result.corrected ?? text) + parts.trailing
             await replaceText(with: replacement, originalLength: totalDeleteLength, proxy: proxy)
             lastCorrectedLength = replacement.count
             lastCorrectedText = replacement
             lastCorrectionTime = Date()
         } else if let corrected = result.corrected {
             logger.info("✅ CORRECTION APPLIED: \(DecisionLogger.tokenSummary(text), privacy: .public) → \(DecisionLogger.tokenSummary(corrected), privacy: .public)")
-            // Delete word + the space that triggered (cursor is after space)
-            let textWithSpace = corrected + " "
-            await replaceText(with: textWithSpace, originalLength: wordLength + 1, proxy: proxy)
-            lastCorrectedLength = textWithSpace.count
-            lastCorrectedText = textWithSpace  // Include space for accurate cycling
+            let replacement = parts.leading + corrected + parts.trailing
+            await replaceText(with: replacement, originalLength: totalTypedLength, proxy: proxy)
+            lastCorrectedLength = replacement.count
+            lastCorrectedText = replacement
             lastCorrectionTime = Date()  // Enable cycling after auto-correction
         } else {
             logger.info("ℹ️ No correction needed for: \(DecisionLogger.tokenSummary(text), privacy: .public)")
             // Still save the text for potential manual cycling
-            let textWithSpace = text + " "
-            lastCorrectedLength = textWithSpace.count
-            lastCorrectedText = textWithSpace
+            let replacement = parts.leading + text + parts.trailing
+            lastCorrectedLength = replacement.count
+            lastCorrectedText = replacement
             lastCorrectionTime = Date()  // Enable cycling even without auto-correction
         }
         
@@ -328,9 +638,19 @@ final class EventMonitor {
     }
     
     private func handleHotkeyPress(proxy: CGEventTapProxy) async {
-        // Freeze buffers for the entire duration of hotkey handling
-        cyclingActive = true
-        defer { cyclingActive = false }
+        // Save current layout before cycling (for restoring before flush).
+        // Prefer the value captured at the Option tap moment; fall back to the current layout.
+        let savedLayoutId = layoutBeforeCycling ?? InputSourceManager.shared.currentLayoutId()
+        
+        // cyclingActive is already true (set before Task was created)
+        // Characters typed during cycling are translated immediately using savedLayoutId
+        
+        defer {
+            // Flush deferred inputs (already translated to correct characters)
+            flushDeferredInputs(proxy: proxy, usingLayoutId: savedLayoutId)
+            cyclingActive = false
+            // Don't reset layoutBeforeCycling here - let the time-based window handle it
+        }
         
         logger.info("🔥 === HOTKEY PRESSED ===")
         DecisionLogger.shared.log("HOTKEY: pressed")
@@ -360,10 +680,19 @@ final class EventMonitor {
             
             // Get the expected length from cycling state to verify consistency
             let expectedLength = await engine.getCurrentCyclingTextLength()
+            let savedTextLength = lastCorrectedText.count
+            let suffixLength = max(0, savedTextLength - expectedLength)
+            let suffix = suffixLength > 0 ? String(lastCorrectedText.suffix(suffixLength)) : ""
             
             // Safety check: if lengths don't match, something went wrong - reset cycling
-            if expectedLength > 0 && abs(savedLength - expectedLength) > 2 {
-                logger.warning("⚠️ Length mismatch: saved=\(savedLength), expected=\(expectedLength) - resetting cycling")
+            let lengthMismatch =
+                expectedLength <= 0 ||
+                savedLength != savedTextLength ||
+                savedLength < expectedLength ||
+                (suffixLength > 0 && !suffix.allSatisfy(isDelimiterLikeCharacter))
+            
+            if lengthMismatch {
+                logger.warning("⚠️ Length mismatch: saved=\(savedLength), expected=\(expectedLength), savedText=\(savedTextLength), suffixLen=\(suffixLength) - resetting cycling")
                 await engine.resetCycling()
                 lastCorrectedLength = 0
                 lastCorrectedText = ""
@@ -373,11 +702,10 @@ final class EventMonitor {
                 DecisionLogger.shared.log("HOTKEY: CYCLING - savedLen=\(savedLength)")
                 
                 if let corrected = await engine.cycleCorrection(bundleId: bundleId) {
-                    let hadSpace = await engine.cyclingHadTrailingSpace()
-                    let finalCorrected = hadSpace ? corrected + " " : corrected
+                    let finalCorrected = corrected + suffix
                     
-                    logger.info("✅ CYCLING: → '\(corrected)' (deleting \(savedLength) chars, hadSpace=\(hadSpace))")
-                    DecisionLogger.shared.log("HOTKEY: CYCLE RESULT: '\(corrected)' (delete \(savedLength))")
+                    logger.info("✅ CYCLING: → '\(corrected)' (deleting \(savedLength) chars, suffixLen=\(suffixLength))")
+                    DecisionLogger.shared.log("HOTKEY: CYCLE RESULT: '\(corrected)' (delete \(savedLength), suffixLen=\(suffixLength))")
                     
                     await replaceText(with: finalCorrected, originalLength: savedLength, proxy: proxy)
                     

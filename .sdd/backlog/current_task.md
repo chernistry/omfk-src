@@ -7,9 +7,67 @@ Create comprehensive end-to-end tests that simulate **real user typing** (charac
 
 | Combo | Description | Passed | Failed | Rate |
 |-------|-------------|--------|--------|------|
-| 0 | Mac defaults (US + Russian Mac + Hebrew Mac) | 99 | 54 | 65% |
+| 0 | Mac defaults (US + Russian Mac + Hebrew Mac) | 102 | 51 | 67% |
 | 1 | US + RussianWin + Hebrew Mac | 98 | 55 | 64% |
 | 2 | US + RussianWin + Hebrew-QWERTY | 85 | 68 | 56% |
+
+## Recent Fixes
+
+### Alt Cycling Bug - FIXED (2024-12-28)
+**Problem:** After pressing Alt to cycle layouts, typing immediately produced garbage characters (e.g., Hebrew `מבה` instead of Russian `мир`).
+
+**Root Cause:** `layoutBeforeCycling` was being reset to `nil` in the `defer` block of `handleHotkeyPress` before the time-based cycling window expired. This caused subsequent keystrokes to be processed normally instead of being translated using the saved layout.
+
+**Fix:** Don't reset `layoutBeforeCycling` in the `defer` block - let the time-based window (0.5s) handle cleanup. The window now correctly captures fast typing after Alt and translates keycodes using the layout that was active before cycling.
+
+---
+
+## Bugs Found in Debug Log (2024-12-29)
+
+### Bug A: "гугл" → Hebrew (False Positive)
+**Severity: MEDIUM**
+```
+[09:12:25] Input: len=4 | Path: BASELINE_CORRECTION | Result: he (Conf: 1.00)
+[09:12:26] HOTKEY: CYCLE RESULT: 'гугл' (delete 5, suffixLen=1)
+```
+Russian word "гугл" (Google) incorrectly converted to Hebrew with high confidence. User had to press Alt to restore.
+
+**Hypothesis:** BASELINE_CORRECTION path doesn't check if source is a valid Russian word before converting.
+
+### Bug B: "шзрщтуiphone" → "iphoneiphone" (Duplication)
+**Severity: MEDIUM**
+```
+[08:46:25] VALIDATED_PRIMARY: шзрщтуiphone → iphoneiphone
+```
+Mixed input (Russian + Latin) produces duplicated output. "шзрщту" is "iphone" on Russian layout, but result contains "iphone" twice.
+
+**Hypothesis:** Both the Russian part AND the Latin part are being converted/kept, resulting in duplication.
+
+### Bug C: "грит" ↔ "grit" (False Correction of Slang)
+**Severity: LOW**
+```
+[08:46] грит → grit (DEEP_CORRECTION)
+[08:50] grit → грит (DEEP_CORRECTION)
+```
+Russian slang "грит" (short for "говорит" = "says") incorrectly converted to English "grit". User had to manually convert back.
+
+**Hypothesis:** DEEP_CORRECTION finds valid English word "grit" and converts, not recognizing "грит" as valid Russian slang.
+
+### Bug D: "ращрешит" instead of "разрешит" (Mapping Error)
+**Severity: LOW**
+```
+[09:12:30] HOTKEY: CYCLE RESULT: 'ращрешит' (delete 9, suffixLen=1)
+```
+Hebrew→Russian conversion produces "ращрешит" instead of correct "разрешит" (typo: щ instead of з).
+
+**Hypothesis:** Key mapping error in Hebrew→Russian table, or intermediate conversion through English loses information.
+
+### Observation: Short Words Correctly Rejected
+```
+[09:07:20] VARIANT[russian]: ну → ye | tgtN=0.00
+[09:07:20] REJECTED_VALIDATION: en_from_ru | no valid conversion found
+```
+Short Russian word "ну" correctly NOT converted to English "ye" (tgtN=0.00 means target is invalid).
 
 ---
 
@@ -381,3 +439,141 @@ Create comprehensive end-to-end tests that simulate **real user typing** (charac
 6. **LOW: Multiline/whitespace** (Bug Groups 8, 9) - Edge cases
 7. **LOW: Typo correction** (Bug Group 10) - May be intentional
 8. **INFRA: Special characters** (Bug Group 11) - Test limitation, not OMFK bug
+
+---
+
+## Alt Cycling Tests (NEW)
+
+Created `scripts/alt_cycling_test.py` - hardcore Alt key behavior tests.
+
+### Test Results: 19/19 PASSED ✓
+
+| Test | Description | Result |
+|------|-------------|--------|
+| `test_alt_full_cycle_verification` | Verify Alt cycles through states (RU→original→HE) | ✓ 2 unique states |
+| `test_alt_mid_phrase_affects_only_last` | Type 5 words, Alt only affects last | ✓ First 4 preserved |
+| `test_alt_after_partial_word` | Alt on incomplete word (no space) | ✓ Handled gracefully |
+| `test_alt_spam_during_typing` | Alt spam while typing chars | ✓ Content preserved |
+| `test_alt_layout_switch_mid_phrase` | Switch layout mid-phrase, then Alt | ✓ Mixed layout handled |
+| `test_alt_undo_chain_10_words` | Type 10 words, Alt 10 times | ✓ 5 state changes |
+| `test_alt_with_punctuation` | Word with punctuation + Alt | ✓ Punctuation preserved |
+| `test_alt_rapid_100x` | Spam Alt 100 times | ✓ Survived in 4.74s |
+| `test_alt_context_boost_then_undo` | Context boost correction, then undo | ✓ Works |
+| `test_alt_backspace_then_alt` | Backspace chars, then Alt | ✓ Handled |
+| `test_alt_newline_boundary` | Alt across newline | ✓ Works |
+| `test_alt_empty_then_type` | Alt on empty field | ✓ No crash |
+| `test_alt_same_word_5x_undo` | Repeated undo (learning signal) | ✓ 5/5 undos detected |
+| `test_alt_hebrew_russian_english_cycle` | Trilingual cycle HE→RU→EN | ✓ 4 unique states |
+| `test_alt_timing_edge_case` | Alt immediately after space | ✓ Works |
+| `test_alt_long_word` | Alt on 17-char word | ✓ 16 chars handled |
+| `test_alt_multiple_words_same_line` | Multiple Alt presses in phrase | ✓ Independence verified |
+| `test_alt_with_numbers` | Word with numbers + Alt | ✓ Numbers preserved |
+| `test_alt_state_persistence` | Alt state persists after typing more | ✓ State persisted |
+
+### Key Findings
+
+1. **Alt cycling works correctly** - cycles through RU→original→HE states
+2. **Only last word affected** - previous words preserved
+3. **100x rapid spam survived** - no crashes
+4. **Trilingual cycle works** - 4 unique states (дела, ltkf, לתכפ, לתכי)
+5. **Learning signal detected** - 5/5 undos registered (but UserDictionary not implemented yet)
+
+---
+
+## CRITICAL BUGS FOUND (Alt Extreme Tests)
+
+### BUG 1: Double Space Leaves Partial Character (100% repro)
+**Severity: HIGH**
+
+When user types word, double space, then Alt:
+- Expected: `'привет'` → `'ghbdtn'` (full undo)
+- Actual: `'привет'` → `'пghbdtn'` (first Cyrillic char remains!)
+
+Reproduces at ANY interval between spaces (10ms-200ms tested).
+
+**Root cause hypothesis:** OMFK processes first space, starts correction, second space interrupts, Alt undoes partial state.
+
+---
+
+### BUG 2: Alt + Immediate Typing Produces Garbage (PARTIALLY FIXED)
+**Severity: MEDIUM** (was HIGH)
+**Status: Improved but not fully fixed**
+
+When user presses Alt and immediately starts typing next word:
+- Delay < 100ms: `'ghbdtn мבה'` - Hebrew chars appear instead of Cyrillic!
+- Delay >= 100ms: `'ghbdtn мир'` - correct
+
+**MINIMUM SAFE DELAY: 100ms after Alt before typing**
+
+**Root cause analysis:**
+The fix added `cyclingActive` flag and `deferredInputs` queue to capture keystrokes during cycling.
+However, `event.keyboardEventCharacters` captures characters according to the CURRENT system layout.
+If user types immediately after Alt while system layout is still Hebrew (from cycling), 
+the deferred characters are Hebrew instead of the intended Cyrillic.
+
+**Race condition:**
+1. Alt pressed → `cyclingActive = true`, cycling shows Hebrew alternative
+2. User types `v`, `b`, `h` intending Russian `м`, `и`, `р`
+3. System layout is still Hebrew → chars captured as `מ`, `ב`, `ה`
+4. `flushDeferredInputs` types Hebrew chars
+
+**Possible fix:** Store keycodes instead of characters in `deferredInputs`, 
+then convert to characters using the layout that was active BEFORE cycling started.
+
+---
+
+### BUG 3: Backspace + Alt Shows Deleted Character (100% repro)
+**Severity: MEDIUM**
+
+When user types with typo, backspaces to fix, then Alt:
+- Type: `ghbdtx` (typo)
+- Backspace, type `n`
+- Result after correction: `'привет'`
+- After Alt: `'ghbdtxn'` - deleted `x` appears!
+
+**Root cause hypothesis:** OMFK buffer stores all typed chars including deleted ones. Alt cycles through buffer history, not current text.
+
+---
+
+### BUG 4: Word Boundary Detection Broken
+**Severity: MEDIUM**
+
+Only SPACE triggers auto-correction. Other punctuation does NOT:
+- `'ghbdtn '` → `'привет '` ✓
+- `'ghbdtn.'` → `'ghbdtn.'` ✗ (no correction)
+- `'ghbdtn,'` → `'ghbdtn,'` ✗
+- `'ghbdtn!'` → `'ghbdtn!'` ✗
+- `'ghbdtn?'` → `'ghbdtn?'` ✗
+- `'ghbdtn\n'` → `'ghbdtn'` ✗
+
+**Root cause hypothesis:** EventMonitor only checks for whitespace, not punctuation as word boundary.
+
+---
+
+## Test Files Created
+
+- `scripts/alt_cycling_test.py` - Basic Alt cycling tests (19/19 passed)
+- `scripts/alt_extreme_test.py` - Extreme timing tests (22/23 passed)
+- `scripts/alt_bug_repro_test.py` - Bug reproduction tests (5 bugs found)
+
+---
+
+## Ticket 28 Status: NOT IMPLEMENTED
+
+**User Dictionary + Auto-Learning** (Punto-style) is NOT implemented.
+
+### What exists:
+- `CorrectionLogger` - logs corrections to `~/.omfk/corrections.jsonl` (disabled by default)
+- Logging infrastructure for learning signals
+
+### What's missing:
+- `UserDictionary` component
+- Auto-learning from repeated undos (after 2+ undos → add "keep as-is" rule)
+- Auto-learning from repeated manual corrections
+- Settings UI for dictionary management
+- Rule storage and lookup
+
+### Evidence from tests:
+- `test_alt_same_word_5x_undo` shows 5/5 undos detected
+- But OMFK still auto-corrects "ghbdtn" → "привет" every time
+- No learning happens - user must undo every single time

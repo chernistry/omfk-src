@@ -295,11 +295,8 @@ actor ConfidenceRouter {
                             )
                         }
 
-                        if let primary = LayoutMapper.shared.convertBest(token, from: src, to: tgt, activeLayouts: activeLayouts),
-                           let cand = consider(primary) {
-                            return cand
-                        }
-
+                        // Always check ALL layout variants and pick the best one
+                        // This handles cases like Hebrew QWERTY user typing Mac Hebrew patterns
                         let variants = LayoutMapper.shared.convertAllVariants(token, from: src, to: tgt, activeLayouts: activeLayouts)
                         var best: ValidatedCandidate? = nil
                         for (_, converted) in variants {
@@ -721,19 +718,22 @@ actor ConfidenceRouter {
             // This prevents false positives for already-correct text with punctuation (e.g. "how,what").
             if let dominant, dominant != source { continue }
 
-            guard let converted = LayoutMapper.shared.convertBest(token, from: source, to: target, activeLayouts: activeLayouts),
-                  converted != token else { continue }
-            let targetWord = wordValidator.confidence(for: converted, language: target)
-            let targetFreq = frequencyScore(converted, language: target)
-            let q = qualityScore(converted, lang: target) - 0.05 + correctionPriorBonus(for: hyp) // small bias against corrections
-            let whitelisted = whitelist.isWhitelisted(converted, language: target)
-            let sourceBuiltin = builtinValidator.confidence(for: token, language: source)
-            let targetBuiltin = builtinValidator.confidence(for: converted, language: target)
-            if targetBuiltin >= 0.99 && sourceBuiltin <= 0.01 {
-                return LanguageDecision(language: target, layoutHypothesis: hyp, confidence: 0.95, scores: [:])
+            // Try ALL target layout variants to handle cases like Hebrew QWERTY user typing Mac Hebrew patterns
+            let variants = LayoutMapper.shared.convertAllVariants(token, from: source, to: target, activeLayouts: activeLayouts)
+            for (_, converted) in variants {
+                guard converted != token else { continue }
+                let targetWord = wordValidator.confidence(for: converted, language: target)
+                let targetFreq = frequencyScore(converted, language: target)
+                let q = qualityScore(converted, lang: target) - 0.05 + correctionPriorBonus(for: hyp) // small bias against corrections
+                let whitelisted = whitelist.isWhitelisted(converted, language: target)
+                let sourceBuiltin = builtinValidator.confidence(for: token, language: source)
+                let targetBuiltin = builtinValidator.confidence(for: converted, language: target)
+                if targetBuiltin >= 0.99 && sourceBuiltin <= 0.01 {
+                    return LanguageDecision(language: target, layoutHypothesis: hyp, confidence: 0.95, scores: [:])
+                }
+                let cand = Candidate(hypothesis: hyp, target: target, converted: converted, targetWord: targetWord, targetFreq: targetFreq, q: q, isWhitelisted: whitelisted)
+                if best == nil || cand.q > best!.q { best = cand }
             }
-            let cand = Candidate(hypothesis: hyp, target: target, converted: converted, targetWord: targetWord, targetFreq: targetFreq, q: q, isWhitelisted: whitelisted)
-            if best == nil || cand.q > best!.q { best = cand }
         }
 
         guard let best else { return nil }

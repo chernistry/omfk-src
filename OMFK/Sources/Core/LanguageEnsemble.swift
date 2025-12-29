@@ -123,7 +123,7 @@ actor LanguageEnsemble {
         // If input is primarily HEBREW
         if hasHebrew {
             // Try ALL Hebrew layout variants -> Russian
-            let ruVariants = LayoutMapper.shared.convertAllVariants(token, from: .hebrew, to: .russian, activeLayouts: activeLayouts)
+            let ruVariants = LayoutMapper.shared.convertAllSourceVariants(token, from: .hebrew, to: .russian, activeLayouts: activeLayouts)
             for (_, converted) in ruVariants {
                 let score = evaluate(text: converted, target: .russian, context: context, isMapped: true)
                 if hypothesisScores[.ruFromHeLayout] == nil || score > hypothesisScores[.ruFromHeLayout]! {
@@ -132,7 +132,7 @@ actor LanguageEnsemble {
             }
             
             // Try ALL Hebrew layout variants -> English
-            let enVariants = LayoutMapper.shared.convertAllVariants(token, from: .hebrew, to: .english, activeLayouts: activeLayouts)
+            let enVariants = LayoutMapper.shared.convertAllSourceVariants(token, from: .hebrew, to: .english, activeLayouts: activeLayouts)
             for (_, converted) in enVariants {
                 let score = evaluate(text: converted, target: .english, context: context, isMapped: true)
                 if hypothesisScores[.enFromHeLayout] == nil || score > hypothesisScores[.enFromHeLayout]! {

@@ -242,9 +242,23 @@ actor CorrectionEngine {
             return CorrectionResult(corrected: nil, pendingCorrection: pendingCorrectionResult, pendingOriginal: pendingOriginalText)
         }
         
-        // Attempt conversion
+        // Attempt conversion - try ALL target layout variants
         let activeLayouts = await settings.activeLayouts
-        if let corrected = LayoutMapper.shared.convertBest(text, from: sourceLayout, to: decision.language, activeLayouts: activeLayouts) {
+        let variants = LayoutMapper.shared.convertAllVariants(text, from: sourceLayout, to: decision.language, activeLayouts: activeLayouts)
+        
+        // Pick the variant that's in the builtin lexicon, or first one if none match
+        var corrected: String? = nil
+        for (_, converted) in variants {
+            if BuiltinLexicon.contains(converted, language: decision.language) {
+                corrected = converted
+                break
+            }
+            if corrected == nil {
+                corrected = converted
+            }
+        }
+        
+        if let corrected = corrected {
             logger.info("✅ VALID CONVERSION FOUND! (Ensemble)")
             
             // Store cycling state for potential undo

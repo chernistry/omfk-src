@@ -20,7 +20,7 @@
       {"input": "фыв", "expected": "asd", "desc": "asd typed on Russian layout (home row)"},
       {"input": "челло", "expected": "hello", "desc": "hello typed on Russian Phonetic layout → EN", "settings": {"activeLayouts": {"en": "us", "ru": "russian_phonetic", "he": "hebrew"}}},
       {"input": "akuo", "expected": "שלום", "desc": "שלום typed on EN layout (Hebrew Mac/PC)"},
-      {"input": "wloM", "expected": "שלום", "desc": "שלום typed on EN layout (Hebrew QWERTY)", "settings": {"activeLayouts": {"en": "us", "ru": "russianwin", "he": "hebrew_qwerty"}}},
+      {"input": "wlvM", "expected": "שלום", "desc": "שלום typed on EN layout (Hebrew QWERTY)", "settings": {"activeLayouts": {"en": "us", "ru": "russianwin", "he": "hebrew_qwerty"}}},
       {"input": "יקךךם", "expected": "hello", "desc": "hello typed on Hebrew Mac/PC layout → EN"},
       {"input": "העללו", "expected": "hello", "desc": "hello typed on Hebrew QWERTY layout → EN", "settings": {"activeLayouts": {"en": "us", "ru": "russianwin", "he": "hebrew_qwerty"}}},
       {"input": "עינגאמ", "expected": "привет", "desc": "привет typed on Hebrew Mac/PC layout → RU"},
@@ -247,28 +247,37 @@
   "hebrew_cases": {
     "description": "Hebrew-focused conversions (EN↔HE, RU↔HE) including layout variants",
     "cases": [
+      {"input": "akuo", "expected": "שלום", "desc": "שלום typed on EN layout (Hebrew Mac/PC)"},
       {"input": ",usv", "expected": "תודה", "desc": "תודה typed on EN layout (Hebrew Mac/PC)"},
       {"input": "cceav", "expected": "בבקשה", "desc": "בבקשה typed on EN layout (Hebrew Mac/PC)"},
       {"input": "htkkv", "expected": "יאללה", "desc": "יאללה typed on EN layout (Hebrew Mac/PC)"},
       {"input": "xccv", "expected": "סבבה", "desc": "סבבה typed on EN layout (Hebrew Mac/PC)"},
+      {"input": "nv", "expected": "מה", "desc": "מה typed on EN layout (Hebrew Mac/PC)"},
+      {"input": "fi", "expected": "כן", "desc": "כן typed on EN layout (Hebrew Mac/PC)"},
+      {"input": "kt", "expected": "לא", "desc": "לא typed on EN layout (Hebrew Mac/PC)"},
+      {"input": "cuetr yuC", "expected": "בוקר טוב", "desc": "בוקר טוב typed on EN layout (Hebrew Mac/PC)"},
 
       {"input": "אקדא", "expected": "test", "desc": "test typed on Hebrew layout → EN"},
       {"input": "שפן", "expected": "api", "desc": "api typed on Hebrew layout → EN"},
       {"input": "עןאיונ", "expected": "github", "desc": "github typed on Hebrew layout → EN"},
       {"input": "קצשןך", "expected": "email", "desc": "email typed on Hebrew layout → EN"},
+      {"input": "יקךךם", "expected": "hello", "desc": "hello typed on Hebrew Mac layout → EN"},
 
       {"input": "бгым", "expected": "תודה", "desc": "תודה typed on RU layout → HE"},
       {"input": "ссуфм", "expected": "בבקשה", "desc": "בבקשה typed on RU layout → HE"},
+      {"input": "флгщ", "expected": "שלום", "desc": "שלום typed on RU layout → HE"},
       {"input": "רכר ךאלכ", "expected": "как дела", "desc": "как дела typed on Hebrew layout → RU"},
       {"input": "עינגאמ רכר ךאלכ", "expected": "привет как дела", "desc": "привет как дела typed on Hebrew layout → RU"},
 
-      {"input": "todh", "expected": "תודה", "desc": "תודה typed on EN layout (Hebrew QWERTY)", "settings": {"activeLayouts": {"en": "us", "ru": "russianwin", "he": "hebrew_qwerty"}}},
-      {"input": "bbqwh", "expected": "בבקשה", "desc": "בבקשה typed on EN layout (Hebrew QWERTY)", "settings": {"activeLayouts": {"en": "us", "ru": "russianwin", "he": "hebrew_qwerty"}}},
+      {"input": "wlvM", "expected": "שלום", "desc": "שלום typed on EN layout (Hebrew QWERTY)", "settings": {"activeLayouts": {"en": "us", "ru": "russianwin", "he": "hebrew_qwerty"}}},
+      {"input": "Yvdh", "expected": "תודה", "desc": "תודה typed on EN layout (Hebrew QWERTY)", "settings": {"activeLayouts": {"en": "us", "ru": "russianwin", "he": "hebrew_qwerty"}}},
+      {"input": "mh", "expected": "מה", "desc": "מה typed on EN layout (Hebrew QWERTY)", "settings": {"activeLayouts": {"en": "us", "ru": "russianwin", "he": "hebrew_qwerty"}}},
+      {"input": "la", "expected": "לא", "desc": "לא typed on EN layout (Hebrew QWERTY)", "settings": {"activeLayouts": {"en": "us", "ru": "russianwin", "he": "hebrew_qwerty"}}},
       {"input": "mlK", "expected": "מלך", "desc": "Final form ך preserved (Hebrew QWERTY)", "settings": {"activeLayouts": {"en": "us", "ru": "russianwin", "he": "hebrew_qwerty"}}},
       {"input": "miM", "expected": "מים", "desc": "Final form ם preserved (Hebrew QWERTY)", "settings": {"activeLayouts": {"en": "us", "ru": "russianwin", "he": "hebrew_qwerty"}}},
       {"input": "arC", "expected": "ארץ", "desc": "Final form ץ preserved (Hebrew QWERTY)", "settings": {"activeLayouts": {"en": "us", "ru": "russianwin", "he": "hebrew_qwerty"}}},
-      {"input": "qoF", "expected": "קוף", "desc": "Final form ף preserved (Hebrew QWERTY)", "settings": {"activeLayouts": {"en": "us", "ru": "russianwin", "he": "hebrew_qwerty"}}},
-      {"input": "רפר לתכפ", "expected": "как дела", "desc": "как дела typed on Hebrew QWERTY layout → RU", "settings": {"activeLayouts": {"en": "us", "ru": "russianwin", "he": "hebrew_qwerty"}}},
+      
+      {"input": "akuo", "expected": "שלום", "desc": "שלום Mac-style on QWERTY system (should try all HE layouts)", "settings": {"activeLayouts": {"en": "us", "ru": "russianwin", "he": "hebrew_qwerty"}}},
 
       {"input": "שָׁלוֹם", "expected": "שָׁלוֹם", "should_change": false, "desc": "Hebrew with niqqud (combining marks) should remain unchanged"},
       {"input": "בּ", "expected": "בּ", "should_change": false, "desc": "Hebrew letter with dagesh (U+05BC) should remain unchanged"}

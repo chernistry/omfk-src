@@ -371,9 +371,26 @@ public final class LayoutMapper: @unchecked Sendable {
         return convert(text, fromLayout: fromID, toLayout: toID)
     }
     
-    /// Try ALL source layouts for a language and return all possible conversions
+    /// Try ALL target layouts for a language and return all possible conversions
     /// This handles cases where user might have different layout variant than detected
+    /// e.g., user has Hebrew QWERTY but typed as if on Hebrew Mac
     public func convertAllVariants(_ text: String, from: Language, to: Language, activeLayouts: [String: String]? = nil) -> [(layout: String, result: String)] {
+        guard let targetLayouts = allLayoutsPerLanguage[to] else { return [] }
+        let fromID = activeLayouts?[from.rawValue] ?? self.activeLayouts[from] ?? "us"
+        
+        var results: [(String, String)] = []
+        for tgtLayout in targetLayouts {
+            if let converted = convertBest(text, fromLayout: fromID, toLayout: tgtLayout),
+               converted != text {  // Only include if actually changed
+                results.append((tgtLayout, converted))
+            }
+        }
+        return results
+    }
+    
+    /// Try ALL source layouts for a language and return all possible conversions
+    /// This handles reverse conversion (e.g., Hebrew text -> English/Russian)
+    public func convertAllSourceVariants(_ text: String, from: Language, to: Language, activeLayouts: [String: String]? = nil) -> [(layout: String, result: String)] {
         guard let sourceLayouts = allLayoutsPerLanguage[from] else { return [] }
         let toID = activeLayouts?[to.rawValue] ?? self.activeLayouts[to] ?? "us"
         

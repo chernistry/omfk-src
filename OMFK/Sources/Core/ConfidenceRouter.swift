@@ -8,6 +8,9 @@ enum DetectionMode: Sendable {
     case manual
 }
 
+/// Known single-letter Russian prepositions/conjunctions that should always be valid conversions
+private let knownRussianPrepositions: Set<String> = ["а", "в", "и", "к", "о", "с", "у", "я"]
+
 /// Orchestrates language detection by routing requests through Fast (N-gram) and Standard (Ensemble) paths
 /// based on confidence thresholds.
 actor ConfidenceRouter {
@@ -235,6 +238,11 @@ actor ConfidenceRouter {
                     let sourceFreq = frequencyScore(token, language: sourceLayout)
 
                     func isValidConversion(_ converted: String, targetLanguage: Language) -> Bool {
+                        // Known Russian prepositions are always valid
+                        if targetLanguage == .russian && knownRussianPrepositions.contains(converted.lowercased()) {
+                            return true
+                        }
+                        
                         let targetWordConfidence = wordValidator.confidence(for: converted, language: targetLanguage)
                         let targetFreq = frequencyScore(converted, language: targetLanguage)
                         let shortLetters = converted.filter { $0.isLetter }.count <= 3
@@ -576,6 +584,11 @@ actor ConfidenceRouter {
 
         guard let converted = LayoutMapper.shared.convertBest(token, from: sourceLayout, to: targetLanguage, activeLayouts: activeLayouts),
               converted != token else { return nil }
+
+        // Known Russian prepositions are always valid
+        if targetLanguage == .russian && knownRussianPrepositions.contains(converted.lowercased()) {
+            return LanguageDecision(language: targetLanguage, layoutHypothesis: hypothesis, confidence: max(confidence, 0.90), scores: [:])
+        }
 
         let sourceWord = wordValidator.confidence(for: token, language: sourceLayout)
         let targetWord = wordValidator.confidence(for: converted, language: targetLanguage)

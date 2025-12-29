@@ -444,21 +444,18 @@ def run_context_boost_test(words, expected_final):
     Simulates typing words one by one, with OMFK correcting after each.
     The key test: first ambiguous word should be corrected when second word confirms language.
     """
+    # Ensure US layout before typing
+    switch_system_layout("us")
+    time.sleep(0.5)  # Give more time for layout switch
+    
     clear_field()
-    time.sleep(0.1)
-    
-    # Type all words with spaces
-    full_text = " ".join(words)
-    clipboard_set(full_text)
-    cmd_key(9)  # Paste
-    time.sleep(0.08)
-    
-    # Select all and correct
-    cmd_key(0)  # Cmd+A
-    time.sleep(0.15)
-    press_option()
     time.sleep(0.15)
     
+    # Type words one by one with spaces (real typing, not paste)
+    for word in words:
+        type_word_and_space_real(word, "us", char_delay=0.012, space_wait=0.5)
+    
+    time.sleep(0.2)
     result = get_result().rstrip()
     return result == expected_final, result
 

@@ -70,6 +70,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Logger.app.info("OMFK application did finish launching")
         NSApp.setActivationPolicy(.accessory)
         
+        // Check for system autocorrection conflict
+        AutocorrectionChecker.showWarningIfNeeded()
+        
         let settings = SettingsManager.shared
         let engine = CorrectionEngine(settings: settings)
         self.correctionEngine = engine

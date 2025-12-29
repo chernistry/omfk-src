@@ -313,6 +313,9 @@ final class EventMonitor {
         "\"", "»", "”", "…"
     ]
     
+    
+    private static let sentenceEndingPunctuation: Set<Character> = [".", "!", "?"]
+    
     private static let leadingDelimiters: Set<Character> = [
         "(", "[", "{",
         "\"", "«", "“"
@@ -590,29 +593,15 @@ final class EventMonitor {
         
         // Special case: single Latin letters that are likely Russian prepositions/conjunctions
         // d→в, c→с, r→к, j→о, e→у, b→и, z→я (typed on EN keyboard instead of RU)
-        let singleLetterRuPrepositions: [Character: Character] = [
-            "d": "в", "c": "с", "r": "к", "j": "о", "e": "у", "b": "и", "z": "я"
-        ]
+        // These are handled by CorrectionEngine's pending word mechanism now
         
-        if letterCount == 1, text.count == 1,
-           let char = text.first,
-           let ruPreposition = singleLetterRuPrepositions[Character(char.lowercased())] {
-            // Check if preferred language is Russian
-            if settings.preferredLanguage == .russian {
-                let corrected = char.isUppercase ? String(ruPreposition).uppercased() : String(ruPreposition)
-                logger.info("✅ Single letter preposition: '\(text)' → '\(corrected)'")
-                let replacement = parts.leading + corrected + parts.trailing
-                await replaceText(with: replacement, originalLength: totalTypedLength, proxy: proxy)
-                lastCorrectedLength = replacement.count
-                lastCorrectedText = replacement
-                return
-            }
-        }
-        
-        guard letterCount >= 2 else {
-            logger.debug("⏭️ Buffer too short (\(text.count) chars / \(letterCount) letters), skipping: \(DecisionLogger.tokenSummary(text), privacy: .public)")
+        guard letterCount >= 1 else {
+            logger.debug("⏭️ Buffer has no letters, skipping: \(DecisionLogger.tokenSummary(text), privacy: .public)")
             return
         }
+        
+        // For single-letter tokens, still send to CorrectionEngine so they can be stored as pending
+        // The engine will decide whether to correct immediately or wait for context
         
         logger.info("🔍 Processing buffer: \(DecisionLogger.tokenSummary(text), privacy: .public) (segment len: \(totalTypedLength), word len: \(text.count))")
         
@@ -636,11 +625,13 @@ final class EventMonitor {
         // Handle pending word correction first (previous word that was boosted by context)
         if let pendingCorrected = result.pendingCorrection, let pendingOriginal = result.pendingOriginal {
             logger.info("🔗 PENDING CORRECTION: '\(pendingOriginal)' → '\(pendingCorrected)'")
+            logger.info("🔗 Current word: '\(text)' → '\(result.corrected ?? text)'")
             // Need to go back and fix the previous word
             // Previous word is: pendingOriginal + " " + current word
             // We need to delete: pendingOriginal.count + 1 (space) + wordLength + 1 (current space)
             let totalDeleteLength = pendingOriginal.count + 1 + text.count + parts.trailing.count
             let replacement = pendingCorrected + " " + (result.corrected ?? text) + parts.trailing
+            logger.info("🔗 Delete \(totalDeleteLength) chars, replace with '\(replacement)' (\(replacement.count) chars)")
             await replaceText(with: replacement, originalLength: totalDeleteLength, proxy: proxy)
             lastCorrectedLength = replacement.count
             lastCorrectedText = replacement
@@ -659,6 +650,11 @@ final class EventMonitor {
             lastCorrectedLength = replacement.count
             lastCorrectedText = replacement
             lastCorrectionTime = timeProvider.now  // Enable cycling even without auto-correction
+        }
+        
+        // Reset sentence state on sentence-ending punctuation
+        if parts.trailing.contains(where: { Self.sentenceEndingPunctuation.contains($0) }) {
+            await engine.resetSentence()
         }
         
         logger.debug("🧹 Buffer processing complete")

@@ -15,15 +15,25 @@ actor CorrectionEngine {
     // Pending word that was below threshold but might be boosted by context
     private var pendingWord: PendingWord?
     
+    // Sentence-level language tracking for context-aware decisions
+    private var sentenceDominantLanguage: Language?
+    private var sentenceWordCount: Int = 0
+    
     /// Word that didn't meet threshold but could be corrected if next word confirms language
     struct PendingWord {
         let text: String
         let decision: LanguageDecision
         let adjustedConfidence: Double
         let timestamp: Date
+        let isFirstWord: Bool  // True if this was the first word in sentence
         
         var isValid: Bool { Date().timeIntervalSince(timestamp) < 5.0 }
     }
+    
+    /// Single-letter tokens that map to common Russian prepositions (а в к о у и я)
+    private let russianPrepositionMappings: [String: String] = [
+        "f": "а", "d": "в", "r": "к", "j": "о", "e": "у", "b": "и", "z": "я"
+    ]
     
     /// Result of correction attempt, may include pending word correction
     struct CorrectionResult {
@@ -142,9 +152,31 @@ actor CorrectionEngine {
         var pendingOriginalText: String? = nil
         let threshold = await settings.standardPathThreshold
         
+        // Determine the target language of current word (what it should become after correction)
+        let currentTargetLang = decision.layoutHypothesis.targetLanguage
+        
+        print("🔍 DEBUG: text='\(text)' pending=\(pendingWord?.text ?? "nil") currentTargetLang=\(currentTargetLang.rawValue)")
+        fflush(stdout)
+        
         if let pending = pendingWord, pending.isValid {
-            // If current word is high confidence and same language as pending word's decision
-            if adjustedConfidence > threshold && decision.language == pending.decision.language {
+            print("📌 DEBUG: Checking pending word: '\(pending.text)' isFirst=\(pending.isFirstWord) conf=\(pending.adjustedConfidence)")
+            print("📌 DEBUG: Current word decision: lang=\(decision.language.rawValue) hyp=\(decision.layoutHypothesis.rawValue) conf=\(adjustedConfidence) targetLang=\(currentTargetLang.rawValue)")
+            
+            // Special handling for first-word Russian prepositions - check this FIRST
+            if pending.isFirstWord,
+               pending.text.count == 1,
+               let expectedRu = russianPrepositionMappings[pending.text.lowercased()],
+               (currentTargetLang == .russian || adjustedConfidence > threshold && decision.layoutHypothesis.rawValue.contains("ru")) {
+                // First word is single letter that maps to Russian preposition, and current word is Russian
+                // Use our direct mapping instead of LayoutMapper (more reliable for single chars)
+                let corrected = pending.text.first?.isUppercase == true ? expectedRu.uppercased() : expectedRu
+                _ = await applyCorrection(original: pending.text, corrected: corrected, from: .english, to: .russian, hypothesis: .ruFromEnLayout)
+                pendingCorrectionResult = corrected
+                pendingOriginalText = pending.text
+                print("✅ DEBUG: First-word preposition corrected: '\(pending.text)' → '\(corrected)'")
+            }
+            // Standard context boost: if current word is high confidence and same language as pending word's decision
+            else if adjustedConfidence > threshold && currentTargetLang == pending.decision.layoutHypothesis.targetLanguage {
                 let boostedConfidence = pending.adjustedConfidence + contextBoostAmount
                 logger.info("🔗 Context boost: pending '\(pending.text)' \(pending.adjustedConfidence) → \(boostedConfidence)")
                 
@@ -160,20 +192,37 @@ actor CorrectionEngine {
             pendingWord = nil  // Clear pending regardless
         }
         
+        // Update sentence dominant language when we have high confidence
+        if adjustedConfidence > threshold {
+            let targetLang = decision.layoutHypothesis.targetLanguage
+            if sentenceDominantLanguage == nil {
+                sentenceDominantLanguage = targetLang
+                sentenceWordCount = 1
+            } else if targetLang == sentenceDominantLanguage {
+                sentenceWordCount += 1
+            }
+        }
+        
         // Only apply correction if adjusted confidence is high enough
         guard adjustedConfidence > threshold else {
             logger.info("⏭️ Skipping correction (confidence too low after adjustment)")
             
             // Store as pending if confidence is in "uncertain" range (e.g., 0.4-0.7)
             let minPendingConfidence = 0.40
-            if adjustedConfidence >= minPendingConfidence {
+            // For single-letter tokens that could be Russian prepositions, lower the threshold
+            let isPrepositionCandidate = text.count == 1 && russianPrepositionMappings[text.lowercased()] != nil
+            let effectiveMinConfidence = isPrepositionCandidate ? 0.10 : minPendingConfidence
+            
+            if adjustedConfidence >= effectiveMinConfidence || isPrepositionCandidate {
+                let isFirst = sentenceWordCount == 0 && pendingWord == nil
                 pendingWord = PendingWord(
                     text: text,
                     decision: decision,
                     adjustedConfidence: adjustedConfidence,
-                    timestamp: Date()
+                    timestamp: Date(),
+                    isFirstWord: isFirst
                 )
-                logger.info("📌 Stored as pending word (conf: \(adjustedConfidence))")
+                print("📌 DEBUG: Stored as pending word: '\(text)' conf=\(adjustedConfidence) isFirst=\(isFirst) prepositionCandidate=\(isPrepositionCandidate)")
             }
             
             return CorrectionResult(corrected: nil, pendingCorrection: pendingCorrectionResult, pendingOriginal: pendingOriginalText)
@@ -632,6 +681,13 @@ actor CorrectionEngine {
              }
         }
         cyclingState = nil
+    }
+    
+    /// Reset sentence-level state (called on sentence boundary like . ! ? or long pause)
+    func resetSentence() {
+        sentenceDominantLanguage = nil
+        sentenceWordCount = 0
+        pendingWord = nil
     }
     
     /// Check if there's an active and valid cycling state

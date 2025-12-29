@@ -25,8 +25,8 @@ echo "================================"
 # Update VERSION file
 echo "$VERSION" > "$PROJECT_DIR/VERSION"
 
-# Update fallback version in SettingsView.swift
-perl -i -pe "s/return \"\\d+\\.\\d+\\.\\d+\"/return \"$VERSION\"/" "$PROJECT_DIR/OMFK/Sources/UI/SettingsView.swift"
+# Update fallback version in SettingsView.swift (supports X.Y and X.Y.Z formats)
+perl -i -pe "s/return \"\\d+\\.\\d+(\\.\\d+)?\"/return \"$VERSION\"/" "$PROJECT_DIR/OMFK/Sources/UI/SettingsView.swift"
 
 # Clean
 rm -rf "$BUILD_DIR"

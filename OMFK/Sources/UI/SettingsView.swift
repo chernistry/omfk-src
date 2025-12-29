@@ -1,20 +1,23 @@
 import SwiftUI
 
-// Version is read from VERSION file at build time via build script
-// For debug builds, fallback to reading file directly
+// Version: prefer Info.plist (release), fallback to VERSION file (debug)
 let appVersion: String = {
-    // Try reading from VERSION file (works in debug)
+    // 1. Try Info.plist (works in release .app bundle)
+    if let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String, v != "1.0" {
+        return v
+    }
+    // 2. Try VERSION file (works in debug builds)
     let possiblePaths = [
         Bundle.main.bundlePath + "/../../../VERSION",  // .build/debug/OMFK -> project root
-        Bundle.main.bundlePath + "/../../VERSION",     // OMFK.app/Contents/MacOS -> project root (dev)
+        Bundle.main.bundlePath + "/../../VERSION",
     ]
     for path in possiblePaths {
         if let version = try? String(contentsOfFile: path, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines) {
             return version
         }
     }
-    // Fallback: embedded at build time by release script
-    return "1.2"
+    // 3. Fallback (updated by build script)
+    return "1.3"
 }()
 
 struct SettingsView: View {

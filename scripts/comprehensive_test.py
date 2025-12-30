@@ -19,13 +19,22 @@ from datetime import datetime
 from Quartz import (
     CGEventCreateKeyboardEvent, CGEventPost, CGEventSetFlags,
     kCGHIDEventTap, kCGEventFlagMaskAlternate, kCGEventFlagMaskCommand, kCGEventFlagMaskShift,
-    CGEventSourceCreate, kCGEventSourceStateHIDSystemState
+    CGEventSourceCreate, kCGEventSourceStateHIDSystemState,
+    CGEventTapCreate, CGEventMaskBit, kCGEventKeyDown, kCGHeadInsertEventTap,
+    kCGEventTapOptionDefault, CGEventGetIntegerValueField, kCGKeyboardEventKeycode,
+    CFMachPortCreateRunLoopSource, CFRunLoopGetCurrent, CFRunLoopAddSource, kCFRunLoopCommonModes,
+    CGEventTapEnable
 )
 from ApplicationServices import (
     AXUIElementCreateSystemWide, AXUIElementCopyAttributeValue,
     kAXFocusedUIElementAttribute, kAXValueAttribute
 )
 from AppKit import NSPasteboard, NSStringPboardType
+import threading
+
+# Global flag for F10 abort
+_abort_requested = False
+_event_tap = None
 
 OMFK_DIR = Path(__file__).parent.parent
 TESTS_FILE = OMFK_DIR / "tests/test_cases.json"
@@ -33,8 +42,44 @@ LOG_FILE = Path.home() / ".omfk" / "debug.log"
 KEYCODES_FILE = Path(__file__).parent / "keycodes.json"
 SWITCH_LAYOUT = OMFK_DIR / "scripts/switch_layout"
 
-KEY_OPTION, KEY_DELETE, KEY_SPACE = 58, 51, 49
+KEY_OPTION, KEY_DELETE, KEY_SPACE, KEY_F10 = 58, 51, 49, 109
 BUNDLE_ID = "com.chernistry.omfk"
+
+
+def keyboard_callback(proxy, event_type, event, refcon):
+    """Callback for keyboard event tap - detect F10 to abort."""
+    global _abort_requested
+    keycode = CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode)
+    if keycode == KEY_F10:
+        _abort_requested = True
+        print("\n\n🛑 F10 pressed - aborting test...\n")
+    return event
+
+
+def start_keyboard_listener():
+    """Start listening for F10 key to abort test."""
+    global _event_tap
+    
+    mask = CGEventMaskBit(kCGEventKeyDown)
+    _event_tap = CGEventTapCreate(
+        kCGHeadInsertEventTap,
+        kCGHeadInsertEventTap,
+        kCGEventTapOptionDefault,
+        mask,
+        keyboard_callback,
+        None
+    )
+    
+    if _event_tap:
+        source = CFMachPortCreateRunLoopSource(None, _event_tap, 0)
+        CFRunLoopAddSource(CFRunLoopGetCurrent(), source, kCFRunLoopCommonModes)
+        CGEventTapEnable(_event_tap, True)
+
+
+def check_abort():
+    """Check if abort was requested. Raises KeyboardInterrupt if so."""
+    if _abort_requested:
+        raise KeyboardInterrupt("F10 abort requested")
 
 # Load keycodes for real typing
 _keycodes = {}
@@ -144,8 +189,22 @@ def write_active_layouts(layouts):
 
 
 def stop_omfk():
-    subprocess.run(["pkill", "-f", ".build/debug/OMFK"], capture_output=True)
-    time.sleep(0.15)
+    """Kill all OMFK instances."""
+    # Kill by process name
+    subprocess.run(["pkill", "-9", "-f", ".build/debug/OMFK"], capture_output=True)
+    subprocess.run(["pkill", "-9", "-f", "OMFK.app"], capture_output=True)
+    # Also kill by bundle ID if running as app
+    subprocess.run(["pkill", "-9", "-f", "com.chernistry.omfk"], capture_output=True)
+    time.sleep(0.2)
+    
+    # Verify no instances remain
+    r = subprocess.run(["pgrep", "-f", "OMFK"], capture_output=True, text=True)
+    if r.stdout.strip():
+        pids = r.stdout.strip().split('\n')
+        print(f"⚠️  Found {len(pids)} lingering OMFK process(es), force killing...")
+        for pid in pids:
+            subprocess.run(["kill", "-9", pid], capture_output=True)
+        time.sleep(0.2)
 
 
 # ============== REAL TYPING FUNCTIONS ==============
@@ -308,6 +367,8 @@ def get_result():
 
 def run_single_test_real(input_text: str, expected: str) -> tuple[bool, str]:
     """Run test with REAL typing simulation."""
+    check_abort()  # Check for F10 abort
+    
     # Detect layout for input
     layout = detect_input_layout(input_text)
     if not layout:
@@ -328,6 +389,7 @@ def run_single_test_real(input_text: str, expected: str) -> tuple[bool, str]:
     # Type word(s) with spaces
     words = input_text.split()
     for i, word in enumerate(words):
+        check_abort()  # Check for F10 abort between words
         for char in word:
             type_char_real(char, layout)
         
@@ -421,6 +483,8 @@ def ensure_textedit_focused():
 
 def run_single_test(input_text, expected):
     """Run single correction test."""
+    check_abort()  # Check for F10 abort
+    
     clear_field()
     time.sleep(0.08)
     
@@ -444,6 +508,8 @@ def run_context_boost_test(words, expected_final):
     Simulates typing words one by one, with OMFK correcting after each.
     The key test: first ambiguous word should be corrected when second word confirms language.
     """
+    check_abort()  # Check for F10 abort
+    
     # Ensure US layout before typing
     switch_system_layout("us")
     time.sleep(0.5)  # Give more time for layout switch
@@ -453,6 +519,7 @@ def run_context_boost_test(words, expected_final):
     
     # Type words one by one with spaces (real typing, not paste)
     for word in words:
+        check_abort()  # Check for F10 abort between words
         type_word_and_space_real(word, "us", char_delay=0.012, space_wait=0.5)
     
     time.sleep(0.2)
@@ -550,6 +617,15 @@ def main():
     mode_str = "REAL TYPING" if real_typing_mode else "SELECT+OPTION"
     print(f"OMFK Comprehensive Test Runner [{mode_str}]")
     print("=" * 70)
+    print("💡 Press F10 at any time to abort the test")
+    print("=" * 70)
+    
+    # Start F10 listener
+    start_keyboard_listener()
+    
+    # Kill any existing OMFK instances FIRST
+    print("Checking for existing OMFK instances...")
+    stop_omfk()
     
     # Load test cases
     with open(TESTS_FILE) as f:
@@ -770,6 +846,9 @@ def main():
                     total_failed += 1
                 else:
                     total_passed += 1
+    
+    except KeyboardInterrupt:
+        print("\n\n🛑 Test aborted by user (F10 or Ctrl+C)")
         
     finally:
         close_textedit()
@@ -789,7 +868,10 @@ def main():
     
     # Summary
     print("\n" + "=" * 70)
-    print(f"TOTAL: {total_passed} passed, {total_failed} failed")
+    if _abort_requested:
+        print(f"ABORTED: {total_passed} passed, {total_failed} failed (incomplete)")
+    else:
+        print(f"TOTAL: {total_passed} passed, {total_failed} failed")
     print("=" * 70)
     
     return 0 if total_failed == 0 else 1

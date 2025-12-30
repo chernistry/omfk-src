@@ -8,30 +8,14 @@ protocol WordValidator {
 }
 
 enum BuiltinLexicon {
-    private static let data: [String: Set<String>] = {
-        guard let url = Bundle.module.url(forResource: "builtin_lexicon", withExtension: "json"),
-              let data = try? Data(contentsOf: url),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: [String]] else {
-            return [:]
-        }
-        var result: [String: Set<String>] = [:]
-        for (lang, words) in json {
-            result[lang] = Set(words.map { $0.lowercased() })
-        }
-        return result
-    }()
+    private static let config = LanguageDataConfig.shared
     
-    static let english: Set<String> = data["english"] ?? []
-    static let russian: Set<String> = data["russian"] ?? []
-    static let hebrew: Set<String> = data["hebrew"] ?? []
+    static var english: Set<String> { config.lexiconEnglish }
+    static var russian: Set<String> { config.lexiconRussian }
+    static var hebrew: Set<String> { config.lexiconHebrew }
 
     static func contains(_ word: String, language: Language) -> Bool {
-        let w = word.lowercased()
-        switch language {
-        case .english: return english.contains(w)
-        case .russian: return russian.contains(w)
-        case .hebrew: return hebrew.contains(w)
-        }
+        config.lexiconContains(word, language: language)
     }
 }
 
@@ -145,22 +129,22 @@ struct HybridWordValidator: WordValidator {
     private let system: SystemWordValidator
     private let bundled: BundledWordValidator
     private let builtin: BuiltinWordValidator
-    private let whitelist: WhitelistConfig
+    private let languageData: LanguageDataConfig
 
     init(
         system: SystemWordValidator = SystemWordValidator(),
         bundled: BundledWordValidator = BundledWordValidator(),
         builtin: BuiltinWordValidator = BuiltinWordValidator(),
-        whitelist: WhitelistConfig = .shared
+        languageData: LanguageDataConfig = .shared
     ) {
         self.system = system
         self.bundled = bundled
         self.builtin = builtin
-        self.whitelist = whitelist
+        self.languageData = languageData
     }
 
     func confidence(for text: String, language: Language) -> Double {
-        let whitelistHit = whitelist.isWhitelisted(text, language: language) ? 1.0 : 0.0
+        let whitelistHit = languageData.isWhitelisted(text, language: language) ? 1.0 : 0.0
 
         return max(
             system.confidence(for: text, language: language),

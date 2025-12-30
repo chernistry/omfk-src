@@ -36,7 +36,7 @@ public final class LayoutMapper: @unchecked Sendable {
         if let he = try? WordFrequencyModel.loadLanguage("he") { out[.hebrew] = he }
         return out
     }()
-    private let whitelist = WhitelistConfig.shared
+    private let languageData = LanguageDataConfig.shared
     
     public static let shared = LayoutMapper()
     
@@ -575,7 +575,7 @@ public final class LayoutMapper: @unchecked Sendable {
         func fullScore(_ candidate: String) -> Double {
             let lang = targetLanguage
             let unigramHit = targetUnigram?.contains(candidate) ?? false
-            let whitelistHit = lang.map { whitelist.isWhitelisted(candidate, language: $0) } ?? false
+            let whitelistHit = lang.map { languageData.isWhitelisted(candidate, language: $0) } ?? false
             let wconf: Double = (unigramHit || whitelistHit) ? 1.0 : 0.0
             let freq = targetUnigram?.score(candidate) ?? 0.0
             let ngram = targetNgram.normalizedScore(candidate)

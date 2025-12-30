@@ -55,7 +55,7 @@ actor ConfidenceRouter {
         self.coreML = CoreMLLayoutClassifier()
     }
     
-    private let whitelist = WhitelistConfig.shared
+    private let languageData = LanguageDataConfig.shared
     private let thresholds = ThresholdsConfig.shared
     
     /// Main entry point for detection
@@ -120,7 +120,7 @@ actor ConfidenceRouter {
         }
 
         // Whitelist check - don't convert common words/slang
-        if let lang = whitelist.whitelistedLanguage(token) {
+        if let lang = languageData.whitelistedLanguage(token) {
             let hyp: LanguageHypothesis = lang == .english ? .en : (lang == .russian ? .ru : .he)
             let decision = LanguageDecision(language: lang, layoutHypothesis: hyp, confidence: 1.0, scores: [:])
             DecisionLogger.shared.logDecision(token: token, path: "WHITELIST", result: decision)
@@ -738,7 +738,7 @@ actor ConfidenceRouter {
                 let targetWord = wordValidator.confidence(for: converted, language: target)
                 let targetFreq = frequencyScore(converted, language: target)
                 let q = qualityScore(converted, lang: target) - 0.05 + correctionPriorBonus(for: hyp) // small bias against corrections
-                let whitelisted = whitelist.isWhitelisted(converted, language: target)
+                let whitelisted = languageData.isWhitelisted(converted, language: target)
                 let sourceBuiltin = builtinValidator.confidence(for: token, language: source)
                 let targetBuiltin = builtinValidator.confidence(for: converted, language: target)
                 if targetBuiltin >= 0.99 && sourceBuiltin <= 0.01 {

@@ -26,6 +26,66 @@ public struct ThresholdsConfig: Sendable {
     public let sourceWordConfMax: Double
     public let baseConfMin: Double
     
+    // Timing thresholds
+    public let timing: TimingConfig
+    
+    // Correction parameters
+    public let correction: CorrectionConfig
+    
+    public struct TimingConfig: Sendable {
+        public let pendingWordTimeout: Double
+        public let pendingWordMinConfidence: Double
+        public let prepositionMinConfidence: Double
+        public let cyclingStateTimeout: Double
+        public let cyclingMinDuration: Double
+        public let bufferTimeout: Double
+        public let lastCorrectionTimeout: Double
+        public let layoutSwitchTimeout: Double
+        public let clipboardDelayNs: UInt64
+        public let pasteDelayNs: UInt64
+        public let typingChunkSize: Int
+        public let deletionDelayNs: UInt64
+        public let accessibilityPollIntervalNs: UInt64
+        
+        init(json: [String: Any]?) {
+            let t = json ?? [:]
+            pendingWordTimeout = t["pendingWordTimeout"] as? Double ?? 5.0
+            pendingWordMinConfidence = t["pendingWordMinConfidence"] as? Double ?? 0.40
+            prepositionMinConfidence = t["prepositionMinConfidence"] as? Double ?? 0.10
+            cyclingStateTimeout = t["cyclingStateTimeout"] as? Double ?? 60.0
+            cyclingMinDuration = t["cyclingMinDuration"] as? Double ?? 0.5
+            bufferTimeout = t["bufferTimeout"] as? Double ?? 2.0
+            lastCorrectionTimeout = t["lastCorrectionTimeout"] as? Double ?? 3.0
+            layoutSwitchTimeout = t["layoutSwitchTimeout"] as? Double ?? 0.3
+            let clipboardMs = t["clipboardDelayMs"] as? Int ?? 150
+            clipboardDelayNs = UInt64(clipboardMs) * 1_000_000
+            let pasteMs = t["pasteDelayMs"] as? Int ?? 100
+            pasteDelayNs = UInt64(pasteMs) * 1_000_000
+            typingChunkSize = t["typingChunkSize"] as? Int ?? 20
+            let deletionMs = t["deletionDelayMs"] as? Int ?? 20
+            deletionDelayNs = UInt64(deletionMs) * 1_000_000
+            let pollSec = t["accessibilityPollInterval"] as? Double ?? 2.0
+            accessibilityPollIntervalNs = UInt64(pollSec * 1_000_000_000)
+        }
+    }
+    
+    public struct CorrectionConfig: Sendable {
+        public let contextBoostAmount: Double
+        public let historyMaxSize: Int
+        public let bufferReserveCapacity: Int
+        public let visibleAlternativesRound1: Int
+        public let visibleAlternativesRound2: Int
+        
+        init(json: [String: Any]?) {
+            let c = json ?? [:]
+            contextBoostAmount = c["contextBoostAmount"] as? Double ?? 0.20
+            historyMaxSize = c["historyMaxSize"] as? Int ?? 50
+            bufferReserveCapacity = c["bufferReserveCapacity"] as? Int ?? 64
+            visibleAlternativesRound1 = c["visibleAlternativesRound1"] as? Int ?? 2
+            visibleAlternativesRound2 = c["visibleAlternativesRound2"] as? Int ?? 3
+        }
+    }
+    
     private init() {
         guard let url = Bundle.module.url(forResource: "thresholds", withExtension: "json"),
               let data = try? Data(contentsOf: url),
@@ -45,6 +105,8 @@ public struct ThresholdsConfig: Sendable {
             wordConfidenceMin = 0.80
             sourceWordConfMax = 0.80
             baseConfMin = 0.75
+            timing = TimingConfig(json: nil)
+            correction = CorrectionConfig(json: nil)
             return
         }
         
@@ -70,5 +132,8 @@ public struct ThresholdsConfig: Sendable {
         
         sourceWordConfMax = heuristic["sourceWordConfMax"] as? Double ?? 0.80
         baseConfMin = heuristic["baseConfMin"] as? Double ?? 0.75
+        
+        timing = TimingConfig(json: json["timing"] as? [String: Any])
+        correction = CorrectionConfig(json: json["correction"] as? [String: Any])
     }
 }

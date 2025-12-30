@@ -27,13 +27,11 @@ actor CorrectionEngine {
         let timestamp: Date
         let isFirstWord: Bool  // True if this was the first word in sentence
         
-        var isValid: Bool { Date().timeIntervalSince(timestamp) < 5.0 }
+        var isValid: Bool { Date().timeIntervalSince(timestamp) < ThresholdsConfig.shared.timing.pendingWordTimeout }
     }
     
     /// Single-letter tokens that map to common Russian prepositions (а в к о у и я)
-    private let russianPrepositionMappings: [String: String] = [
-        "f": "а", "d": "в", "r": "к", "j": "о", "e": "у", "b": "и", "z": "я"
-    ]
+    private let russianPrepositionMappings: [String: String] = LanguageMappingsConfig.shared.russianPrepositions
     
     /// Result of correction attempt, may include pending word correction
     struct CorrectionResult {
@@ -43,7 +41,7 @@ actor CorrectionEngine {
     }
     
     // How much to boost pending word confidence when next word confirms language
-    private let contextBoostAmount: Double = 0.20
+    private var contextBoostAmount: Double { ThresholdsConfig.shared.correction.contextBoostAmount }
     
     struct CorrectionRecord: Identifiable {
         let id = UUID()
@@ -91,9 +89,9 @@ actor CorrectionEngine {
             alternatives[currentIndex]
         }
         
-        /// Check if cycling state is still valid (60 seconds timeout)
+        /// Check if cycling state is still valid (configurable timeout)
         var isValid: Bool {
-            Date().timeIntervalSince(timestamp) < 60.0
+            Date().timeIntervalSince(timestamp) < ThresholdsConfig.shared.timing.cyclingStateTimeout
         }
     }
     
@@ -208,10 +206,10 @@ actor CorrectionEngine {
             logger.info("⏭️ Skipping correction (confidence too low after adjustment)")
             
             // Store as pending if confidence is in "uncertain" range (e.g., 0.4-0.7)
-            let minPendingConfidence = 0.40
+            let minPendingConfidence = ThresholdsConfig.shared.timing.pendingWordMinConfidence
             // For single-letter tokens that could be Russian prepositions, lower the threshold
             let isPrepositionCandidate = text.count == 1 && russianPrepositionMappings[text.lowercased()] != nil
-            let effectiveMinConfidence = isPrepositionCandidate ? 0.10 : minPendingConfidence
+            let effectiveMinConfidence = isPrepositionCandidate ? ThresholdsConfig.shared.timing.prepositionMinConfidence : minPendingConfidence
             
             if adjustedConfidence >= effectiveMinConfidence || isPrepositionCandidate {
                 let isFirst = sentenceWordCount == 0 && pendingWord == nil
@@ -283,7 +281,7 @@ actor CorrectionEngine {
                     autoHypothesis: decision.layoutHypothesis,
                     timestamp: Date(),
                     hadTrailingSpace: true,
-                    visibleAlternativesCount: min(alternatives.count, 2), // Round 1: Max 2 choices (Original + Primary)
+                    visibleAlternativesCount: min(alternatives.count, ThresholdsConfig.shared.correction.visibleAlternativesRound1),
                     cycleCount: 0
                 )
             }
@@ -335,7 +333,7 @@ actor CorrectionEngine {
                 autoHypothesis: decision.layoutHypothesis,
                 timestamp: Date(),
                 hadTrailingSpace: true,
-                visibleAlternativesCount: min(alternatives.count, 2), // Round 1: Max 2 choices
+                visibleAlternativesCount: min(alternatives.count, ThresholdsConfig.shared.correction.visibleAlternativesRound1),
                 cycleCount: 0
             )
             
@@ -437,14 +435,7 @@ actor CorrectionEngine {
         }
         
         // Generate whole-text conversions as fallback alternatives
-        let conversions: [(from: Language, to: Language)] = [
-            (.english, .russian),
-            (.english, .hebrew),
-            (.russian, .english),
-            (.russian, .hebrew),
-            (.hebrew, .english),
-            (.hebrew, .russian),
-        ]
+        let conversions = LanguageMappingsConfig.shared.languageConversions
         
         var otherAlternatives: [(text: String, hyp: LanguageHypothesis, score: Double)] = []
         
@@ -482,7 +473,7 @@ actor CorrectionEngine {
             autoHypothesis: decision.layoutHypothesis,
             timestamp: Date(),
             hadTrailingSpace: false,
-            visibleAlternativesCount: min(alternatives.count, 2), // Round 1: Max 2 choices
+            visibleAlternativesCount: min(alternatives.count, ThresholdsConfig.shared.correction.visibleAlternativesRound1),
             cycleCount: 0
         )
         
@@ -602,7 +593,7 @@ actor CorrectionEngine {
                         // Time to expand to Round 2
                         if state.alternatives.count > state.visibleAlternativesCount {
                             state.roundNumber = 2
-                            state.visibleAlternativesCount = min(state.alternatives.count, 3)
+                            state.visibleAlternativesCount = min(state.alternatives.count, ThresholdsConfig.shared.correction.visibleAlternativesRound2)
                             logger.info("🔄 Entering Round 2: Visible alternatives increased to \(state.visibleAlternativesCount)")
                         }
                     }
@@ -737,7 +728,7 @@ actor CorrectionEngine {
             timestamp: Date()
         )
         history.insert(record, at: 0)
-        if history.count > 50 {
+        if history.count > ThresholdsConfig.shared.correction.historyMaxSize {
             history.removeLast()
         }
         

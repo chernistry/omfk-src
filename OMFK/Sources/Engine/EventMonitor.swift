@@ -16,7 +16,7 @@ final class EventMonitor {
     private var lastCorrectionTime: Date = .distantPast
     private var cyclingActive: Bool = false  // Flag to freeze buffers during cycling
     private var cyclingStartTime: Date = .distantPast  // When cycling started
-    private let cyclingMinDuration: TimeInterval = 0.5  // Minimum time to keep cycling active
+    private var cyclingMinDuration: TimeInterval { ThresholdsConfig.shared.timing.cyclingMinDuration }
     private var lastActiveApp: String = ""
     private let logger = Logger.events
     private let settings: SettingsManager
@@ -225,7 +225,7 @@ final class EventMonitor {
         let layoutData = layoutId.flatMap(keyboardLayoutData(forAppleId:))
         var deadKeyState: UInt32 = 0
         var bufferedText = ""
-        bufferedText.reserveCapacity(min(64, deferredInputs.count))
+        bufferedText.reserveCapacity(min(ThresholdsConfig.shared.correction.bufferReserveCapacity, deferredInputs.count))
         
         func flushBufferedText() {
             guard !bufferedText.isEmpty else { return }
@@ -291,13 +291,13 @@ final class EventMonitor {
         if !deferredInputs.isEmpty {
             if let savedLayoutId {
                 InputSourceManager.shared.switchToLayoutId(savedLayoutId)
-                let ok = await waitForLayoutId(savedLayoutId, timeout: 0.3)
+                let ok = await waitForLayoutId(savedLayoutId, timeout: ThresholdsConfig.shared.timing.layoutSwitchTimeout)
                 if !ok {
                     logger.warning("⚠️ Layout restore timeout (expected: \(savedLayoutId, privacy: .public), actual: \(InputSourceManager.shared.currentLayoutId() ?? "nil", privacy: .public))")
                 }
             } else if let savedLanguage {
                 InputSourceManager.shared.switchTo(language: savedLanguage)
-                _ = await waitForLanguage(savedLanguage, timeout: 0.3)
+                _ = await waitForLanguage(savedLanguage, timeout: ThresholdsConfig.shared.timing.layoutSwitchTimeout)
             }
         }
         let layoutIdForTranslation = savedLayoutId ?? InputSourceManager.shared.currentLayoutId()
@@ -307,24 +307,13 @@ final class EventMonitor {
         // so fast typing after Alt can still be captured
     }
 
-    private static let wordBoundaryPunctuation: Set<Character> = [
-        ".", "!", "?", ":",
-        ")", "]", "}",
-        "\"", "»", "”", "…"
-    ]
+    private static var wordBoundaryPunctuation: Set<Character> { PunctuationConfig.shared.wordBoundary }
     
+    private static var sentenceEndingPunctuation: Set<Character> { PunctuationConfig.shared.sentenceEnding }
     
-    private static let sentenceEndingPunctuation: Set<Character> = [".", "!", "?"]
+    private static var leadingDelimiters: Set<Character> { PunctuationConfig.shared.leadingDelimiters }
     
-    private static let leadingDelimiters: Set<Character> = [
-        "(", "[", "{",
-        "\"", "«", "“"
-    ]
-    
-    private static let trailingDelimiters: Set<Character> = [
-        ")", "]", "}",
-        "\"", "»", "”"
-    ]
+    private static var trailingDelimiters: Set<Character> { PunctuationConfig.shared.trailingDelimiters }
     
     private func isDelimiterLikeCharacter(_ ch: Character) -> Bool {
         ch.isWhitespace || ch.isNewline || Self.wordBoundaryPunctuation.contains(ch) || Self.trailingDelimiters.contains(ch) || ch == "-" || ch == "—" || ch == "–"
@@ -356,7 +345,7 @@ final class EventMonitor {
         guard bufferWasEmpty, lastCorrectedLength > 0 else { return false }
         
         let timeSinceLastCorrection = timeProvider.now.timeIntervalSince(lastCorrectionTime)
-        guard timeSinceLastCorrection < 3.0 else { return false }
+        guard timeSinceLastCorrection < ThresholdsConfig.shared.timing.lastCorrectionTimeout else { return false }
         
         return text.allSatisfy(isDelimiterLikeCharacter)
     }
@@ -525,7 +514,7 @@ final class EventMonitor {
         
         let now = timeProvider.now
         let timeSinceLastEvent = now.timeIntervalSince(lastEventTime)
-        if timeSinceLastEvent > 2.0 {
+        if timeSinceLastEvent > ThresholdsConfig.shared.timing.bufferTimeout {
             if !buffer.isEmpty {
                 logger.info("⏱️ Buffer timeout (\(String(format: "%.1f", timeSinceLastEvent))s) - clearing buffer: \(DecisionLogger.tokenSummary(self.buffer), privacy: .public)")
             }
@@ -691,7 +680,7 @@ final class EventMonitor {
         // This is needed because after replaceText, selection is lost
         let hasCycling = await engine.hasCyclingState()
         let timeSinceLastCorrection = timeProvider.now.timeIntervalSince(lastCorrectionTime)
-        let noNewTyping = buffer.isEmpty && timeSinceLastCorrection < 3.0
+        let noNewTyping = buffer.isEmpty && timeSinceLastCorrection < ThresholdsConfig.shared.timing.lastCorrectionTimeout
         
         // But first check if there's a fresh selection - it takes priority over cycling
         let freshSelection = await getSelectedTextFresh(proxy: proxy)
@@ -888,7 +877,7 @@ final class EventMonitor {
         cmdC_up.tapPostEvent(proxy)
         
         // Wait for clipboard to update
-        try? await Task.sleep(nanoseconds: 150_000_000) // 150ms
+        try? await Task.sleep(nanoseconds: ThresholdsConfig.shared.timing.clipboardDelayNs)
         
         // Check if clipboard changed
         let newContent = pasteboard.string(forType: .string)
@@ -991,7 +980,7 @@ final class EventMonitor {
         cmdV_up.tapPostEvent(proxy)
         
         // Wait for paste to complete
-        try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
+        try? await Task.sleep(nanoseconds: ThresholdsConfig.shared.timing.pasteDelayNs)
         
         // Restore original clipboard
         if let saved = savedContent {
@@ -1007,7 +996,7 @@ final class EventMonitor {
         }
         
         // Small delay for system to process deletions
-        try? await Task.sleep(nanoseconds: 20_000_000) // 20ms
+        try? await Task.sleep(nanoseconds: ThresholdsConfig.shared.timing.deletionDelayNs)
         
         typeUnicodeString(newText, proxy: proxy)
     }
@@ -1028,7 +1017,7 @@ final class EventMonitor {
         let chars = Array(safeString.utf16)
         guard !chars.isEmpty else { return }
         
-        let chunkSize = 20
+        let chunkSize = ThresholdsConfig.shared.timing.typingChunkSize
         for i in stride(from: 0, to: chars.count, by: chunkSize) {
             let end = min(i + chunkSize, chars.count)
             var chunk = Array(chars[i..<end])
@@ -1063,11 +1052,11 @@ final class EventMonitor {
     private var accessibilityPollTimer: Timer?
     
     private func startAccessibilityPolling() async {
-        // Poll every 2 seconds to check if permission was granted
+        // Poll to check if permission was granted
         accessibilityPollTimer?.invalidate()
         
         while !AXIsProcessTrusted() {
-            try? await Task.sleep(nanoseconds: 2_000_000_000) // 2 seconds
+            try? await Task.sleep(nanoseconds: ThresholdsConfig.shared.timing.accessibilityPollIntervalNs)
         }
         
         logger.info("✅ Accessibility permission granted - restarting event monitor")

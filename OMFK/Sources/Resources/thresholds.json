@@ -24,5 +24,29 @@
     "description": "Thresholds for heuristic correction",
     "sourceWordConfMax": 0.80,
     "baseConfMin": 0.75
+  },
+  "timing": {
+    "description": "Timing thresholds for correction engine and event monitor",
+    "pendingWordTimeout": 5.0,
+    "pendingWordMinConfidence": 0.40,
+    "prepositionMinConfidence": 0.10,
+    "cyclingStateTimeout": 60.0,
+    "cyclingMinDuration": 0.5,
+    "bufferTimeout": 2.0,
+    "lastCorrectionTimeout": 3.0,
+    "layoutSwitchTimeout": 0.3,
+    "clipboardDelayMs": 150,
+    "pasteDelayMs": 100,
+    "typingChunkSize": 20,
+    "deletionDelayMs": 20,
+    "accessibilityPollInterval": 2.0
+  },
+  "correction": {
+    "description": "Correction engine parameters",
+    "contextBoostAmount": 0.20,
+    "historyMaxSize": 50,
+    "bufferReserveCapacity": 64,
+    "visibleAlternativesRound1": 2,
+    "visibleAlternativesRound2": 3
   }
 }

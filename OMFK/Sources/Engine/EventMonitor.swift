@@ -325,9 +325,19 @@ final class EventMonitor {
                 return true
             }
             if Self.wordBoundaryPunctuation.contains(ch) {
-                // Don't trigger on '.' if buffer ends with a letter (could be 'ю' on RU layout)
-                if ch == "." && !bufferBeforeAppend.isEmpty && bufferBeforeAppend.last?.isLetter == true {
-                    continue
+                // Special handling for '.' and ',' - they might be part of a word on RU/HE layouts
+                // (. = ю on RU, , = б on RU)
+                // Only trigger if buffer is empty OR buffer doesn't end with a letter/comma/period
+                // This allows words like "k.,k." to accumulate before triggering
+                if (ch == "." || ch == ",") {
+                    if bufferBeforeAppend.isEmpty {
+                        return true  // Standalone punctuation
+                    }
+                    let lastChar = bufferBeforeAppend.last!
+                    if lastChar.isLetter || lastChar == "." || lastChar == "," {
+                        continue  // Part of a word, don't trigger yet
+                    }
+                    return true
                 }
                 return true
             }

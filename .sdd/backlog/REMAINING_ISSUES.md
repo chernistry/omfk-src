@@ -1,136 +1,183 @@
-# OMFK Bug Fix - Critical Issue with "darling"
+# OMFK Bug Fix - Status Update (2025-12-30)
 
-## 🎯 Previous Success
+## ✅ ChatGPT's Fixes - VERIFIED
 
-Your fixes worked great! Major improvements:
-- ✅ `SCRIPT_LOCK_RU/HE` now working - pure Cyrillic/Hebrew correctly detected
-- ✅ Punctuation triggers: 11/16 pass (was 3/16)
-- ✅ Context boost improvements
-- ✅ First-word prepositions: `r cj;fktyb.` → `к сожалению` ✅
+ChatGPT fixed the script-lock issues! Results:
+- ✅ Pure Cyrillic text no longer detected as English
+- ✅ Pure Hebrew text no longer detected as English
+- ✅ `SCRIPT_LOCK_RU/HE` working correctly
+- ✅ Context contamination fixed
 
-## 🐛 New Critical Bug: "darling" Converts to Hebrew
+**E2E Test: 114/161 passed (70.8%)**
 
-### The Problem
+## 🎯 Current State Analysis
 
-When typing `darling` (English word) in a Russian sentence context, OMFK converts it to Hebrew `דארלינג`.
+### What's Working Great (90%+)
+1. **Single word conversion RU↔EN**: 100% ✅
+2. **Typos and errors**: 100% ✅
+3. **Ambiguous words (negative tests)**: 92% ✅
+4. **Context boost**: 90% ✅
+5. **Punctuation triggers**: 88% ✅
 
-**Example from logs:**
+### What Needs Work
+
+#### 🔴 P0: Critical Bugs (Break Core UX)
+
+**1. Alt Cycling Broken for Single Words**
 ```
-🔍 DEBUG: text='вфкдштп' pending=nil currentTargetLang=he
-🔍 DEBUG: text='דארלינג' pending=nil currentTargetLang=he
+Test: Type 'ghbdtn', press Alt
+Expected: 'привет'
+Actual: 'ghbdtn' (no change!)
 ```
+- Multi-word cycling works ✅
+- Single word cycling broken ❌
+- This is a **major UX regression** - users can't manually trigger conversion!
 
-User typed: `darling` (English)  
-OMFK converted to: `דארלינג` (Hebrew)  
-Expected: `darling` (no conversion - it's a valid English word)
-
-### Why This Happens
-
-From validation logs:
+**2. Layout Variant Detection Missing**
 ```
-VALID_CHECK: darling wordConf=1.00 srcWordConf=1.00 tgtNorm=0.91 srcNorm=0.87
-VARIANT[us]: דארלינג → darling | src=-8.81 tgt=-7.19 tgtN=0.91
-REJECTED_VALIDATION: en_from_he | no valid conversion found from 16 variants
-Input: len=7 latin=0 cyr=0 heb=7 dig=0 ws=0 other=0 | Path: STANDARD | Result: he (Conf: 1.00)
-```
-
-**The flow:**
-1. User types `darling` (English, on English keyboard)
-2. Previous context was Russian (`вфкдштп` = some Russian word)
-3. System sees `currentTargetLang=he` (why Hebrew??)
-4. Converts `darling` → `דארלינג` (EN→HE)
-5. User sees Hebrew instead of English ❌
-
-### Root Cause
-
-**Context contamination:** `currentTargetLang` is set to `he` from previous word, and this affects detection of the next word.
-
-Look at the sequence:
-```
-text='дела' currentTargetLang=ru     ← Russian context
-text='вфкдштп' currentTargetLang=he  ← Suddenly Hebrew?
-text='דארלינג' currentTargetLang=he  ← Stays Hebrew
+❌ hello on Russian Phonetic → челло (not converted)
+❌ hello on Hebrew Mac → יקךךם (not converted)
+❌ hello on Hebrew QWERTY → העללו (not converted)
+❌ привет on Hebrew Mac → עינגאמ (not converted)
+❌ привет on Hebrew QWERTY → גהבדתנ (not converted)
 ```
 
-**Question:** Why does `вфкдштп` (Cyrillic text) set `currentTargetLang=he`?
+System only recognizes standard layouts:
+- ✅ US, Russian, Hebrew (standard)
+- ❌ Russian Phonetic, Hebrew-QWERTY, Hebrew Mac variants
 
-From earlier log:
+#### 🟡 P1: High Priority (Major UX Issues)
+
+**3. Special Characters Cause Errors**
 ```
-Input: len=7 latin=0 cyr=7 heb=0 dig=0 ws=0 other=0 | Path: BASELINE_CORRECTION | Result: he (Conf: 0.85)
-LEARNING: token='вфкдштп' finalIndex=1 wasAutomatic=true hypothesis=he_from_ru
+❌ 🙂 ghbdtn → [no layout for: 🙂 ghbdtn]
+❌ «ghbdtn» → [no layout for: «ghbdtn»]
+❌ ghbdtn—vbh → [no layout for: ghbdtn—vbh]
 ```
+Pattern: Any emoji, guillemets, em-dash, currency symbol → error
 
-**Aha!** System thinks `вфкдштп` (pure Cyrillic) should be converted to Hebrew with 0.85 confidence. This is wrong!
-
-### The Real Bug
-
-**Pure Cyrillic text (`cyr=7, latin=0, heb=0`) is being classified as `Result: he`**
-
-This violates the script-lock you added! Check your `SCRIPT_LOCK_RU` logic:
-- It works for some words: `я`, `тебя`, `дела` → `Path: SCRIPT_LOCK_RU`
-- But NOT for `вфкдштп` → `Path: BASELINE_CORRECTION | Result: he`
-
-### What You Need to Fix
-
-**In ConfidenceRouter.swift, strengthen the script-lock:**
-
-```swift
-// BEFORE any other logic (including BASELINE_CORRECTION):
-let stats = analyzeCharacters(token)
-
-// Hard constraint: pure script = that language, NO EXCEPTIONS
-if stats.cyrillic > 0 && stats.latin == 0 && stats.hebrew == 0 {
-    return LanguageDecision(language: .russian, hypothesis: .ru, confidence: 1.0, ...)
-}
-if stats.hebrew > 0 && stats.latin == 0 && stats.cyrillic == 0 {
-    return LanguageDecision(language: .hebrew, hypothesis: .he, confidence: 1.0, ...)
-}
-if stats.latin > 0 && stats.cyrillic == 0 && stats.hebrew == 0 {
-    // Pure Latin - continue with normal detection (could be EN/RU/HE typed wrong)
-}
+**4. Punctuation in Numbers Gets Converted**
 ```
+❌ 15:00 → 15Ж00 (colon → Ж)
+❌ 25.12.2024 → 25ю12ю2024 (dots → ю)
+❌ 20% → 20: (% → :)
+❌ v1.2.3 → м1.2ю3
+```
+Need: numeric context detection
 
-**The issue:** Your `SCRIPT_LOCK` is conditional or comes AFTER `BASELINE_CORRECTION`. It needs to be FIRST and ABSOLUTE.
+**5. File Paths Corrupted**
+```
+❌ /Users/.../omfk/OMFK → /Users/.../щьал/ЩЬАЛ
+❌ C:\Users\... → С:\Users\... (C→С)
+❌ README.md → README.צג
+❌ UUID: ...41d4... → ...41в4... (d→в)
+```
+Need: technical text detection (paths, UUIDs, filenames)
 
-### Why This Matters
+#### 🟢 P2: Medium Priority (Polish)
 
-1. **UX disaster:** English words randomly become Hebrew in Russian context
-2. **Context pollution:** Wrong detection cascades to next words
-3. **Learning corruption:** System learns wrong patterns
+**6. Paragraph Punctuation Issues**
+- Commas/periods wrong in multi-sentence text
+- Some words not converted in long paragraphs
+- Example: `lfyyj yt dbltk ntyz?` → `данно не видел ntyz?` (should be `давно не видел тебя.`)
 
-### Test Case
-
-```bash
-OMFK_DEBUG_LOG=1 swift run
-# Type in Notes:
-# "как дела вфкдштп"  (Russian sentence)
-# Check log: ALL words should be Path: SCRIPT_LOCK_RU
-# None should be Result: he
-
-# Then type:
-# "how are you darling"  (English sentence)
-# Check log: ALL words should be Result: en
-# None should convert to Hebrew
+**7. Whitespace Not Preserved**
+```
+❌ '   ' → '' (spaces deleted)
+❌ '\n\n\n' → '' (newlines deleted)
+❌ 'ghbdtn\t\tvbh' → 'привет мир' (tabs lost)
 ```
 
-### Expected Log After Fix
+## 🔍 Root Cause Analysis
 
-```
-Input: len=7 latin=0 cyr=7 heb=0 dig=0 ws=0 other=0 | Path: SCRIPT_LOCK_RU | Result: ru (Conf: 1.00)
-```
+### Alt Cycling Issue
+Likely causes:
+1. Hotkey handler not detecting single-word selection
+2. Buffer state incorrect when Alt pressed
+3. Saved word length calculation wrong
 
-NOT:
-```
-Input: len=7 latin=0 cyr=7 heb=0 dig=0 ws=0 other=0 | Path: BASELINE_CORRECTION | Result: he (Conf: 0.85)
-```
+**Debug needed:** Check EventMonitor.swift hotkey logic
 
-## 🎯 Action Items
+### Layout Variants Issue
+Current implementation hardcoded for specific layouts. Need:
+1. Dynamic layout detection from system
+2. Support for all installed keyboard layouts
+3. Fallback to "try all variants" approach
 
-1. Find where `BASELINE_CORRECTION` runs in ConfidenceRouter.swift
-2. Move `SCRIPT_LOCK` check to run BEFORE it
-3. Make script-lock absolute: pure Cyrillic = Russian, pure Hebrew = Hebrew, no exceptions
-4. Test with the sequences above
-5. Verify `darling` stays English in all contexts
+### Special Characters Issue
+Error message `[no layout for: ...]` suggests:
+1. Character classification fails for non-ASCII
+2. LayoutMapper doesn't handle Unicode properly
+3. Need: passthrough for unmappable characters
 
-This should be a 10-minute fix - just reorder the checks!
+### Numeric Context Issue
+Punctuation converter doesn't check surrounding context:
+1. `:` in `15:00` should stay `:`
+2. `.` in `1.2.3` should stay `.`
+3. Need: digit-aware punctuation logic
+
+### File Path Issue
+No technical text detection:
+1. Paths: `/...` or `C:\...` patterns
+2. UUIDs: `[0-9a-f-]{36}` pattern
+3. Filenames: `*.ext` pattern
+4. Need: regex-based protection
+
+## 📊 Test Coverage Summary
+
+| Category | Tests | Pass | Fail | Rate |
+|----------|-------|------|------|------|
+| Single words | 19 | 19 | 0 | 100% |
+| Paragraphs | 5 | 0 | 5 | 0% |
+| Multiline | 2 | 0 | 2 | 0% |
+| Mixed language | 10 | 6 | 4 | 60% |
+| Special symbols | 3 | 1 | 2 | 33% |
+| Hebrew cases | 19 | 15 | 4 | 79% |
+| Punctuation triggers | 16 | 14 | 2 | 88% |
+| Typos | 8 | 8 | 0 | 100% |
+| Numbers | 7 | 2 | 5 | 29% |
+| Ambiguous words | 24 | 22 | 2 | 92% |
+| Negative (no change) | 10 | 7 | 3 | 70% |
+| Edge cases | 7 | 4 | 3 | 57% |
+| Context boost | 10 | 9 | 1 | 90% |
+| Alt cycling | 4 | 1 | 3 | 25% |
+| Stress tests | 4 | 4 | 0 | 100% |
+| Performance | 2 | 0 | 2 | 0% |
+| **TOTAL** | **161** | **114** | **47** | **70.8%** |
+
+## 🎯 Recommended Next Steps
+
+### Immediate (1-2 hours)
+1. **Fix Alt cycling** - debug EventMonitor.swift hotkey handler
+2. **Add special char passthrough** - don't error on unmappable chars
+
+### Short-term (1 day)
+3. **Add layout variant support** - detect all system layouts
+4. **Implement numeric context** - protect punctuation in numbers
+5. **Add technical text detection** - protect paths/UUIDs/filenames
+
+### Medium-term (2-3 days)
+6. **Improve paragraph handling** - better multi-sentence logic
+7. **Preserve whitespace** - don't delete tabs/spaces/newlines
+
+## 💡 Key Insights
+
+1. **Core detection is solid** - 100% on single words, 90% on context boost
+2. **Edge cases need work** - special chars, numbers, technical text
+3. **Alt cycling regression** - critical UX issue, needs immediate fix
+4. **Layout support incomplete** - only works for standard layouts
+
+## 📁 Files to Check
+
+- `OMFK/Sources/Engine/EventMonitor.swift` - Alt cycling logic
+- `OMFK/Sources/Core/LayoutMapper.swift` - Character mapping
+- `OMFK/Sources/Core/ConfidenceRouter.swift` - Detection logic
+- `OMFK/Sources/Resources/language_data.json` - Layout definitions
+
+## 🚀 Success Metrics
+
+- **Current:** 70.8% pass rate
+- **Target (P0 fixed):** 80% pass rate
+- **Target (P0+P1 fixed):** 90% pass rate
+- **Target (all fixed):** 95%+ pass rate
 

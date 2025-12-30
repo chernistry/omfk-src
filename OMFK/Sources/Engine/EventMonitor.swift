@@ -325,15 +325,18 @@ final class EventMonitor {
             if ch.isWhitespace || ch.isNewline {
                 return true
             }
-            // Punctuation inside tokens is handled by CorrectionEngine's smart segmentation.
-            // Triggering immediately on punctuation causes races (punctuation often appears between
-            // words without spaces: "ghbdtn;rfr", "ghbdtn!rfr", etc.), and can delete/interleave
-            // subsequent typing.
-            //
-            // We only treat punctuation as a boundary when it is typed as a standalone separator
-            // (i.e. when buffer was empty), otherwise we wait for whitespace/newline.
-            if Self.wordBoundaryPunctuation.contains(ch) || Self.trailingDelimiters.contains(ch) || ch == "-" || ch == "—" || ch == "–" {
+            // Punctuation triggers boundary if:
+            // 1. Buffer was empty (standalone punctuation)
+            // 2. OR buffer ends with letter (punctuation after word)
+            if Self.wordBoundaryPunctuation.contains(ch) || Self.trailingDelimiters.contains(ch) || ch == "-" || ch == "—" || ch == "–" || ch == ";" {
                 if bufferWasEmpty {
+                    return true
+                }
+                // Check if this is punctuation after a word
+                if !bufferBeforeAppend.isEmpty,
+                   let lastChar = bufferBeforeAppend.last,
+                   lastChar.isLetter {
+                    // Punctuation after letter - trigger to let smart segmentation handle it
                     return true
                 }
                 continue

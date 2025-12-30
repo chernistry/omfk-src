@@ -17,7 +17,7 @@ from comprehensive_test import (
     stop_omfk, write_active_layouts, BASE_ACTIVE_LAYOUTS,
     set_system_layouts, get_enabled_system_layouts,
     disable_system_layout, enable_system_layout,
-    open_textedit, close_textedit, ensure_textedit_focused_auto,
+    open_textedit, close_textedit, ensure_textedit_focused_auto, FocusLostError,
     run_test_category, OMFK_DIR, BUNDLE_ID
 )
 import json
@@ -115,7 +115,13 @@ def main():
 
         # Open TextEdit (ensures a document exists + disables system autocorrect)
         open_textedit()
-        ensure_textedit_focused_auto()
+        try:
+            ensure_textedit_focused_auto()
+        except FocusLostError as e:
+            print(f"\n❌ {e}")
+            print("   TextEdit must be frontmost in the current Space for real-typing tests.")
+            print("   Bring TextEdit to the foreground and re-run this script.")
+            return 2
 
         # Run tests
         for category_name, category_data in test_cases.items():

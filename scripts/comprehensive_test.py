@@ -553,11 +553,20 @@ def check_focus():
     if app != "TextEdit":
         raise FocusLostError(f"Focus lost to: {app}")
 
-def ensure_textedit_focused_auto(retries: int = 10) -> None:
+def ensure_textedit_focused_auto(retries: int = 30) -> None:
     """Ensure TextEdit is frontmost (non-interactive)."""
+    script = r'''
+        tell application "TextEdit" to activate
+        tell application "System Events"
+            if exists process "TextEdit" then
+                set frontmost of process "TextEdit" to true
+            end if
+        end tell
+    '''
     for _ in range(max(1, retries)):
-        subprocess.run(["osascript", "-e", 'tell application "TextEdit" to activate'], capture_output=True)
-        time.sleep(0.08)
+        subprocess.run(["open", "-a", "TextEdit"], capture_output=True)
+        subprocess.run(["osascript", "-e", script], capture_output=True)
+        time.sleep(0.20)
         if get_frontmost_app() == "TextEdit":
             return
     check_focus()

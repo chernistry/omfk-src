@@ -1,6 +1,6 @@
 # OMFK — Status / Bugs / Test Notes (Single Source of Truth)
 
-**Last updated:** 2025-12-30
+**Last updated:** 2025-12-30 17:20
 
 This file replaces and supersedes:
 - `.sdd/backlog/SESSION_NOTES.md` (obsolete)
@@ -16,6 +16,7 @@ If you’re starting a new agent session, **use this file only**. Older docs con
 - Core conversions RU/EN/HE work; most of the previous “P0 broken” signal was caused by the E2E harness reading the target app too early.
 - The E2E harness (`scripts/comprehensive_test.py`) was hardened to **wait for UI to settle** (polling/stabilization, focus checks, paste verification + retry).
 - A real root cause for “manual hotkey alternatives missing” was fixed: `language_data.json` uses `english/russian/hebrew` while code expected `en/ru/he`, which made `languageConversions` parse empty.
+- Unit tests are green; UI-driven E2E runs are currently **blocked in this environment** because TextEdit cannot be made frontmost (focus stays on Tabby).
 
 ---
 
@@ -23,16 +24,11 @@ If you’re starting a new agent session, **use this file only**. Older docs con
 
 These are the most recent runs that should be treated as reliable:
 
-- `swift test -c debug --filter LayoutVariantFallbackTests` → ✅ pass  
-  (Validates layout-variant fallback logic in unit tests.)
-
-- `.venv/bin/python scripts/comprehensive_test.py single_words` → ✅ `21/21` pass
-- `.venv/bin/python scripts/comprehensive_test.py --real-typing single_words` → ✅ `21/21` pass
-- `.venv/bin/python scripts/comprehensive_test.py cycling` → ✅ `4/4` pass
+- `swift test -c debug --skip-build` → ✅ `235` tests, `1` skipped, `0` failures (2025-12-30)
 
 Notes:
 - Prefer the `.venv` Python environment if you use macOS UI automation dependencies (pyobjc).
-- If you see intermittent failures, **don’t trust single-shot reads**; re-run after ensuring TextEdit is frontmost and the test waits for stabilization.
+- UI-driven E2E requires TextEdit to be frontmost in the current Space; currently `open/activate` does not take focus away from Tabby, so runners crash with `FocusLostError`.
 
 ---
 
@@ -57,6 +53,26 @@ Notes:
 - verifies paste actually happened and retries once
 - polls for “changed text” and “expected result stabilized” instead of fixed sleeps
 - applies the same strategy to cycling tests (don’t read too early)
+
+### 4) Mixed-script correction guard
+
+**Symptom:** mixed tokens like `hello мир` could get “corrected” into partially mapped gibberish.  
+**Fix:** `OMFK/Sources/Core/ConfidenceRouter.swift` now returns `Path: MIXED_SCRIPT_KEEP` for tokens containing multiple scripts (Latin/Cyrillic/Hebrew), preventing any layout correction attempts.
+
+### 5) Technical-token guard no longer blocks punctuation-as-letter conversions
+
+**Symptom:** tokens like `epyf.n` were treated as filename-like and skipped, breaking `epyf.n` → `узнают`.  
+**Fix:** `isTechnicalToken` only treats filename-like tokens as technical when the extension is in a curated allowlist (e.g. `md`, `swift`, `json`, `zip`), while still protecting paths/UUIDs/semver.
+
+### 6) Manual hotkey: smart segmentation can be the primary result
+
+**Symptom:** selection hotkey on `ghbdtn.rfr ltkf` preferred whole-text conversion and produced `приветюкак дела` instead of `привет.как дела`.  
+**Fix:** `OMFK/Sources/Engine/CorrectionEngine.swift` now prefers smart per-segment correction as the primary alternative when it scores better (small bias towards preserving punctuation semantics).
+
+### 7) Unit-test isolation: don’t read/write real user dictionary
+
+**Symptom:** unit tests were polluted by rules in `~/.omfk/user_dictionary.json` (e.g. `USER_DICT_PREFER` forcing `hello` → RU).  
+**Fix:** `OMFK/Sources/Core/UserDictionary.swift` auto-routes the default storage to a temp file when running under XCTest, without touching real user data.
 
 ---
 
@@ -107,52 +123,35 @@ This file exists to prevent that loop: if you fix something, **record the exact 
 
 ## Re-Validation Results (2025-12-30)
 
-**Full E2E test run:** 100/161 passed (62.1%)
+### ✅ Unit tests
 
-### ✅ FIXED Issues (Closed on GitHub)
-- **Issue #1:** Comma/period inside words (k.,k. → люблю) ✅
-- **Issue #4:** Alt/Option hotkey for single words ✅ (4/4 cycling tests pass)
-- **Issue #5:** Layout variants (Russian Phonetic, Hebrew Mac/QWERTY) ✅ (21/21 single_words tests pass)
-
-### ❌ CONFIRMED Bugs (Open on GitHub)
-
-#### Issue #2: Word ending detection (9/10 context boost pass)
-```
-Test: у меня есть идея
-Got: 'у меня есть идей'
-Expected: 'у меня есть идея'
-```
-- `e → у` works ✅
-- `bltq → идей` instead of `идея` ❌
-
-#### Issue #3: Punctuation triggers (0/15 pass)
-None of these trigger word boundary: `.` `,` `!` `?` `()` `[]` `{}` `""` `:` `;` `...` `«»` `—` `/`
-
-#### Issue #6: File paths corrupted (0/5 pass)
-- `/Users/.../omfk` → `/Users/.../щьал`
-- `C:\Users\...` → `С:\Users\...`
-- `README.md` → `README.צג`
-- `v1.2.3` → `м1.2ю3`
-- UUIDs: `d` → `в`
-
-#### Issue #7: Punctuation in numbers (0/6 pass)
-- `15:00` → `15Ж00`
-- `25.12.2024` → `25ю12ю2024`
-- `20%` → `20:`
-- `v1.2.3` → `м1.2ю3`
-
-#### Issue #8: Emoji and special chars (0/3 pass)
-- `🙂 ghbdtn` → `[no layout for: 🙂 ghbdtn]`
-- `😄` → `[no layout for: 😄]`
-- `«ghbdtn»` → not converted
-
-### Test Command for Failed Cases Only
+Command:
 ```bash
-.venv/bin/python scripts/test_failed_cases.py
+swift test -c debug --skip-build
 ```
 
-This runs only the ~40 tests that failed in the full E2E run, saving time during development.
+Result: ✅ `235` tests, `1` skipped, `0` failures
 
-Files:
-- `tests/failed_cases_2025_12_30.json` (curated failing subset)
-- `scripts/test_failed_cases.py` (runner for the subset)
+### ⚠️ UI E2E (real typing)
+
+Current status: **blocked** — TextEdit cannot be made frontmost from this terminal session (focus remains on Tabby), so runners abort with:
+`FocusLostError: Focus lost to: Tabby`
+
+Workaround to re-enable E2E runs:
+- Ensure TextEdit has a visible window in the current Space and is frontmost before starting the runner, or enable the Mission Control setting that allows app switching to move Spaces.
+- Then run:
+  - `.venv/bin/python scripts/test_failed_cases.py`
+  - `.venv/bin/python scripts/comprehensive_test.py --real-typing`
+
+### GitHub issues (omfk-releases)
+
+Repo: `chernistry/omfk`
+
+Open issues (as of 2025-12-30):
+- `#2` Single-letter prepositions in context
+- `#3` Punctuation word boundaries
+- `#6` Technical text / paths / UUIDs
+- `#7` Punctuation in numeric contexts
+- `#8` Emoji / special Unicode passthrough
+
+No issue is ready to close without a fresh UI E2E run in the releases repo context, but #6/#7 likely improved due to `TECHNICAL_KEEP` + semver/UUID/path guarding and should be re-verified first.

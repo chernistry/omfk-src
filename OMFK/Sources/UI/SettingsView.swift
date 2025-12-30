@@ -48,6 +48,7 @@ struct SettingsView: View {
                 Label(pane.title, systemImage: pane.systemImage)
                     .tag(pane)
             }
+            .listStyle(.sidebar)
             .navigationTitle("OMFK")
         } detail: {
             Group {

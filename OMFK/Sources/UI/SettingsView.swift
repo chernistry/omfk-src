@@ -66,7 +66,7 @@ struct SettingsView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .searchable(text: $searchText, placement: .toolbar, prompt: "Search settings")
-        .frame(minWidth: 860, minHeight: 560)
+        .frame(minWidth: 720, minHeight: 480)
     }
 }
 

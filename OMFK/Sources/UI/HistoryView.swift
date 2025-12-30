@@ -11,7 +11,7 @@ struct HistoryView: View {
             Divider()
             content
         }
-        .frame(minWidth: 860, minHeight: 420)
+        .frame(minWidth: 720, minHeight: 400)
         .searchable(text: $searchText, placement: .toolbar, prompt: "Search history")
         .toolbar {
             ToolbarItemGroup {

@@ -119,6 +119,14 @@ actor ConfidenceRouter {
             }
         }
 
+        // Technical token guard (automatic mode):
+        // Prevent accidental conversion of file paths, UUIDs, semver, etc.
+        if mode == .automatic, isTechnicalToken(token) {
+            let decision = LanguageDecision(language: .english, layoutHypothesis: .en, confidence: 1.0, scores: [:])
+            DecisionLogger.shared.logDecision(token: token, path: "TECHNICAL_KEEP", result: decision)
+            return decision
+        }
+
         // Whitelist check - don't convert common words/slang
         if let lang = languageData.whitelistedLanguage(token) {
             let hyp: LanguageHypothesis = lang == .english ? .en : (lang == .russian ? .ru : .he)
@@ -820,6 +828,71 @@ actor ConfidenceRouter {
         guard best.targetWord >= thresholds.wordConfidenceMin else { return nil }
 
         return LanguageDecision(language: best.target, layoutHypothesis: best.hypothesis, confidence: 0.95, scores: [:])
+    }
+
+    private func isTechnicalToken(_ token: String) -> Bool {
+        guard !token.isEmpty else { return false }
+
+        // Unix-like paths
+        if token.hasPrefix("/"), token.contains("/") {
+            return true
+        }
+
+        // Windows paths: C:\... or C:/...
+        if token.count >= 3 {
+            let chars = Array(token)
+            if chars[1] == ":", (chars[2] == "\\" || chars[2] == "/"), chars[0].isLetter {
+                return true
+            }
+        }
+
+        // UUID (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)
+        if isUUID(token) { return true }
+
+        // Semver-like tokens: v1.2.3, 1.2.3, 1.2
+        if isSemver(token) { return true }
+
+        // Simple filename.ext (no path separators)
+        if !token.contains("/") && !token.contains("\\"),
+           let dot = token.lastIndex(of: "."),
+           dot != token.startIndex,
+           dot != token.index(before: token.endIndex) {
+            let ext = token[token.index(after: dot)...]
+            if ext.count <= 8, ext.allSatisfy({ $0.isLetter || $0.isNumber }) {
+                let base = token[..<dot]
+                if base.contains(where: { $0.isLetter }) {
+                    return true
+                }
+            }
+        }
+
+        return false
+    }
+
+    private func isUUID(_ token: String) -> Bool {
+        let chars = Array(token.lowercased())
+        guard chars.count == 36 else { return false }
+        let dashIdx: Set<Int> = [8, 13, 18, 23]
+        for (i, ch) in chars.enumerated() {
+            if dashIdx.contains(i) {
+                if ch != "-" { return false }
+                continue
+            }
+            let isHex = (ch >= "0" && ch <= "9") || (ch >= "a" && ch <= "f")
+            if !isHex { return false }
+        }
+        return true
+    }
+
+    private func isSemver(_ token: String) -> Bool {
+        var s = token
+        if s.hasPrefix("v") || s.hasPrefix("V") {
+            s.removeFirst()
+        }
+        let parts = s.split(separator: ".")
+        guard parts.count >= 2, parts.count <= 4 else { return false }
+        guard parts.allSatisfy({ !$0.isEmpty && $0.allSatisfy(\.isNumber) }) else { return false }
+        return true
     }
 }
 

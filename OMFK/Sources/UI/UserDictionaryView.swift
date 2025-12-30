@@ -1,126 +1,92 @@
 import SwiftUI
 
 struct UserDictionaryView: View {
-    @ObservedObject var settings = SettingsManager.shared
     @State private var rules: [UserDictionaryRule] = []
     @State private var searchText = ""
     @State private var showAddRule = false
-    @State private var selectedRuleId: UUID?
-    
+    @State private var selected: Set<UserDictionaryRule.ID> = []
+
     var body: some View {
         VStack(spacing: 0) {
-            // Header / Toggle
-            GlassCard {
-                SettingRow(
-                    icon: "brain.head.profile",
-                    iconColor: .indigo,
-                    title: "Learn from usage",
-                    subtitle: "Auto-learn from undos and corrections",
-                    toggle: $settings.isLearningEnabled
-                )
-            }
-            .padding(.horizontal, 16)
-            .padding(.top, 16)
-            .padding(.bottom, 8)
-            
-            // Search bar
-            HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass")
-                    .foregroundStyle(.secondary)
-                    .font(.system(size: 12))
-                TextField("Search...", text: $searchText)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 12))
-                if !searchText.isEmpty {
-                    Button(action: { searchText = "" }) {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(.secondary)
-                            .font(.system(size: 11))
+            HStack(spacing: 12) {
+                TextField("Search rules", text: $searchText)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: 320)
+
+                Spacer()
+
+                Button {
+                    showAddRule = true
+                } label: {
+                    Label("Add Rule", systemImage: "plus")
+                }
+
+                if !rules.isEmpty {
+                    Menu {
+                        Button(role: .destructive) {
+                            Task {
+                                await UserDictionary.shared.clearAll()
+                                await loadRules()
+                            }
+                        } label: {
+                            Label("Clear All Rules", systemImage: "trash")
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                            .imageScale(.large)
                     }
-                    .buttonStyle(.plain)
+                    .menuStyle(.borderlessButton)
+                    .help("More actions")
                 }
             }
-            .padding(8)
-            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
             .padding(.horizontal, 16)
-            .padding(.bottom, 8)
-            
-            Divider().padding(.horizontal, 16)
-            
-            // Rules list
+            .padding(.vertical, 12)
+
+            Divider()
+
             if filteredRules.isEmpty {
-                VStack(spacing: 12) {
-                    Image(systemName: searchText.isEmpty ? "book.closed" : "magnifyingglass")
-                        .font(.system(size: 32, weight: .light))
-                        .foregroundStyle(.tertiary)
-                    Text(searchText.isEmpty ? "No rules yet" : "No matches")
-                        .font(.system(size: 13))
-                        .foregroundStyle(.secondary)
-                    if searchText.isEmpty {
-                        Text("Rules are learned automatically\nor added manually")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.tertiary)
-                            .multilineTextAlignment(.center)
+                EmptyStateView(
+                    title: searchText.isEmpty ? "No rules yet" : "No matches",
+                    systemImage: searchText.isEmpty ? "book.closed" : "magnifyingglass",
+                    message: searchText.isEmpty ? "Rules are learned automatically or added manually." : nil
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                Table(filteredRules, selection: $selected) {
+                    TableColumn("Token") { rule in
+                        Text(rule.token)
+                            .fontDesign(.monospaced)
+                            .lineLimit(1)
+                    }
+                    TableColumn("Action") { rule in
+                        RuleActionBadge(rule: rule)
+                    }
+                    TableColumn("Source") { rule in
+                        Text(rule.source == .learned ? "Learned" : "Manual")
+                            .foregroundStyle(.secondary)
+                    }
+                    TableColumn("Updated") { rule in
+                        Text(rule.updatedAt, style: .relative)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .contextMenu(forSelectionType: UserDictionaryRule.ID.self) { ids in
+                    if !ids.isEmpty {
+                        Button(role: .destructive) {
+                            for id in ids {
+                                deleteRule(id)
+                            }
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                    } else {
+                        EmptyView()
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding()
-            } else {
-                ScrollView {
-                    LazyVStack(spacing: 1) {
-                        ForEach(filteredRules) { rule in
-                            RuleRow(rule: rule, isSelected: selectedRuleId == rule.id)
-                                .contentShape(Rectangle())
-                                .onTapGesture { selectedRuleId = rule.id }
-                                .contextMenu {
-                                    Button(role: .destructive) {
-                                        deleteRule(rule.id)
-                                    } label: {
-                                        Label("Delete", systemImage: "trash")
-                                    }
-                                }
-                        }
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                }
             }
-            
-            Divider()
-            
-            // Footer
-            HStack(spacing: 12) {
-                Text("\(rules.count) rule\(rules.count == 1 ? "" : "s")")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.tertiary)
-                
-                Spacer()
-                
-                if !rules.isEmpty {
-                    Button("Clear All") {
-                        Task {
-                            await UserDictionary.shared.clearAll()
-                            await loadRules()
-                        }
-                    }
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .buttonStyle(.plain)
-                }
-                
-                Button(action: { showAddRule = true }) {
-                    Label("Add", systemImage: "plus")
-                        .font(.system(size: 11, weight: .medium))
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
         }
-        .task {
-            await loadRules()
-        }
+        .task { await loadRules() }
         .sheet(isPresented: $showAddRule) {
             AddRuleDialog { newRule in
                 Task {
@@ -130,17 +96,18 @@ struct UserDictionaryView: View {
             }
         }
     }
-    
+
     private var filteredRules: [UserDictionaryRule] {
         let sorted = rules.sorted { $0.updatedAt > $1.updatedAt }
-        if searchText.isEmpty { return sorted }
-        return sorted.filter { $0.token.localizedCaseInsensitiveContains(searchText) }
+        let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if q.isEmpty { return sorted }
+        return sorted.filter { $0.token.localizedCaseInsensitiveContains(q) }
     }
-    
+
     private func loadRules() async {
-        self.rules = await UserDictionary.shared.getAllRules()
+        rules = await UserDictionary.shared.getAllRules()
     }
-    
+
     private func deleteRule(_ id: UUID) {
         Task {
             await UserDictionary.shared.removeRule(id: id)
@@ -149,91 +116,62 @@ struct UserDictionaryView: View {
     }
 }
 
-struct RuleRow: View {
+private struct RuleActionBadge: View {
     let rule: UserDictionaryRule
-    var isSelected: Bool = false
-    
+
     var body: some View {
-        HStack(spacing: 10) {
-            // Token → Converted
-            HStack(spacing: 4) {
-                Text(rule.token)
-                    .font(.system(size: 12, weight: .medium, design: .monospaced))
-                if let converted = rule.convertedText {
-                    Text("→")
-                        .foregroundStyle(.secondary)
-                    Text(converted)
-                        .font(.system(size: 12, weight: .medium, design: .monospaced))
-                        .foregroundStyle(.purple)
-                }
-            }
-            .lineLimit(1)
-            
-            Spacer()
-            
-            // Action with emoji
-            HStack(spacing: 4) {
-                Text(actionEmoji)
-                Text(actionLabel)
-                    .font(.system(size: 10, weight: .medium))
-            }
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(actionColor.opacity(0.15), in: Capsule())
-            .foregroundStyle(actionColor)
-            
-            // Source indicator
-            if rule.source == .learned {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 9))
-                    .foregroundStyle(.indigo)
-            }
+        HStack(spacing: 6) {
+            Image(systemName: icon)
+                .imageScale(.small)
+            Text(label)
+                .font(.callout)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(isSelected ? Color.accentColor.opacity(0.1) : Color.clear, in: RoundedRectangle(cornerRadius: 6))
+        .foregroundStyle(color)
     }
-    
-    private var actionEmoji: String {
+
+    private var icon: String {
         switch rule.action {
-        case .none: return "⏳"
-        case .keepAsIs: return "✋"
-        case .preferLanguage(let l):
-            switch l {
-            case .english: return "🇺🇸"
-            case .russian: return "🇷🇺"
-            case .hebrew: return "🇮🇱"
-            }
+        case .none: "questionmark.circle"
+        case .keepAsIs: "hand.raised"
+        case .preferLanguage: "scope"
+        case .preferHypothesis: "wand.and.stars"
+        }
+    }
+
+    private var label: String {
+        switch rule.action {
+        case .none:
+            "Pending"
+        case .keepAsIs:
+            "Keep"
+        case .preferLanguage(let lang):
+            "Prefer \(lang.shortName)"
         case .preferHypothesis(let h):
-            // Parse hypothesis to get target language
-            if h.contains("en") { return "🇺🇸" }
-            if h.contains("ru") { return "🇷🇺" }
-            if h.contains("he") { return "🇮🇱" }
-            return "🎯"
+            "Prefer \(h)"
         }
     }
-    
-    private var actionLabel: String {
+
+    private var color: Color {
         switch rule.action {
-        case .none: return "pending"
-        case .keepAsIs: return "keep"
-        case .preferLanguage(let l): return "→ \(l.rawValue.prefix(2).uppercased())"
-        case .preferHypothesis(let h):
-            // Show simplified hypothesis
-            let parts = h.split(separator: "_")
-            if parts.count >= 2 {
-                return "→ \(parts[0].prefix(2).uppercased())"
-            }
-            return "→ ?"
+        case .none: .secondary
+        case .keepAsIs: .green
+        case .preferLanguage: .blue
+        case .preferHypothesis: .purple
         }
     }
-    
-    private var actionColor: Color {
-        switch rule.action {
-        case .none: return .gray
-        case .keepAsIs: return .green
-        case .preferLanguage: return .blue
-        case .preferHypothesis: return .purple
+}
+
+private extension Language {
+    var shortName: String {
+        switch self {
+        case .english: "EN"
+        case .russian: "RU"
+        case .hebrew: "HE"
         }
     }
+}
+
+#Preview {
+    UserDictionaryView()
+        .frame(width: 820, height: 420)
 }

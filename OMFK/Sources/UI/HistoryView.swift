@@ -2,114 +2,158 @@ import SwiftUI
 
 struct HistoryView: View {
     @StateObject private var historyManager = HistoryManager.shared
-    
+    @State private var searchText = ""
+    @State private var selected: Set<HistoryManager.HistoryRecord.ID> = []
+
     var body: some View {
         VStack(spacing: 0) {
-            // Header
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("History")
-                        .font(.system(size: 18, weight: .semibold, design: .rounded))
-                    Text("\(historyManager.records.count) corrections")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
+            header
+            Divider()
+            content
+        }
+        .frame(minWidth: 860, minHeight: 420)
+        .searchable(text: $searchText, placement: .toolbar, prompt: "Search history")
+        .toolbar {
+            ToolbarItemGroup {
+                Button {
+                    guard let firstId = selected.first,
+                          let record = historyManager.records.first(where: { $0.id == firstId }) else { return }
+                    Clipboard.copy(record.corrected)
+                } label: {
+                    Label("Copy Result", systemImage: "doc.on.doc")
                 }
-                Spacer()
-                if !historyManager.records.isEmpty {
-                    Button("Clear") { historyManager.clear() }
-                        .font(.system(size: 12, weight: .medium))
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.secondary)
+                .disabled(selected.isEmpty)
+
+                Button(role: .destructive) {
+                    historyManager.clear()
+                } label: {
+                    Label("Clear", systemImage: "trash")
                 }
-            }
-            .padding(20)
-            
-            // Content
-            if historyManager.records.isEmpty {
-                Spacer()
-                VStack(spacing: 14) {
-                    ZStack {
-                        Circle()
-                            .fill(.ultraThinMaterial)
-                            .frame(width: 64, height: 64)
-                        Image(systemName: "clock.arrow.circlepath")
-                            .font(.system(size: 26, weight: .light))
-                            .foregroundStyle(.tertiary)
-                    }
-                    Text("No corrections yet")
-                        .font(.system(size: 13))
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-            } else {
-                ScrollView {
-                    LazyVStack(spacing: 10) {
-                        ForEach(historyManager.records) { record in
-                            HistoryCard(record: record)
-                        }
-                    }
-                    .padding(16)
-                }
+                .disabled(historyManager.records.isEmpty)
             }
         }
-        .frame(width: 340, height: 380)
-        .background(.ultraThinMaterial)
+        .navigationTitle("History")
     }
-}
 
-struct HistoryCard: View {
-    let record: HistoryManager.HistoryRecord
-    @State private var isHovered = false
-    
-    var body: some View {
-        HStack(spacing: 14) {
-            // Flags
-            HStack(spacing: 4) {
-                Text(record.fromLang.flag)
-                Image(systemName: "arrow.right")
-                    .font(.system(size: 8, weight: .medium))
-                    .foregroundStyle(.tertiary)
-                Text(record.toLang.flag)
+    private var header: some View {
+        HStack(alignment: .firstTextBaseline) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("History")
+                    .font(.title2.weight(.semibold))
+                Text("\(historyManager.records.count) recent corrections")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
-            .font(.system(size: 14))
-            
-            // Text
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
-                    Text(record.original)
-                        .strikethrough(color: .secondary.opacity(0.5))
-                        .foregroundStyle(.secondary)
-                    Text("→")
-                        .foregroundStyle(.tertiary)
-                    Text(record.corrected)
-                        .fontWeight(.medium)
-                }
-                .font(.system(size: 12))
-                
-                Text(record.timestamp, style: .relative)
-                    .font(.system(size: 10))
-                    .foregroundStyle(.tertiary)
-            }
-            
             Spacer()
         }
-        .padding(14)
-        .background {
-            RoundedRectangle(cornerRadius: 12)
-                .fill(isHovered ? AnyShapeStyle(.white.opacity(0.08)) : AnyShapeStyle(.ultraThinMaterial))
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if historyManager.records.isEmpty {
+            EmptyStateView(title: "No corrections yet", systemImage: "clock.arrow.circlepath")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if filteredRecords.isEmpty {
+            EmptyStateView(title: "No matches", systemImage: "magnifyingglass")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            Table(filteredRecords, selection: $selected) {
+                TableColumn("Time") { record in
+                    Text(record.timestamp, style: .time)
+                        .foregroundStyle(.secondary)
+                }
+                .width(min: 80, ideal: 90, max: 120)
+
+                TableColumn("From") { record in
+                    Text(record.fromLang.flag)
+                        .help(record.fromLang.displayName)
+                }
+                .width(min: 34, ideal: 40, max: 44)
+
+                TableColumn("To") { record in
+                    Text(record.toLang.flag)
+                        .help(record.toLang.displayName)
+                }
+                .width(min: 34, ideal: 40, max: 44)
+
+                TableColumn("Original") { record in
+                    Text(record.original)
+                        .fontDesign(.monospaced)
+                        .lineLimit(1)
+                }
+
+                TableColumn("Corrected") { record in
+                    Text(record.corrected)
+                        .fontDesign(.monospaced)
+                        .lineLimit(1)
+                }
+            }
+            .contextMenu(forSelectionType: HistoryManager.HistoryRecord.ID.self) { ids in
+                if !ids.isEmpty {
+                    Button {
+                        let joined = ids.compactMap { id in
+                            historyManager.records.first(where: { $0.id == id })?.original
+                        }.joined(separator: "\n")
+                        Clipboard.copy(joined)
+                    } label: {
+                        Label("Copy Original", systemImage: "doc.on.doc")
+                    }
+
+                    Button {
+                        let joined = ids.compactMap { id in
+                            historyManager.records.first(where: { $0.id == id })?.corrected
+                        }.joined(separator: "\n")
+                        Clipboard.copy(joined)
+                    } label: {
+                        Label("Copy Corrected", systemImage: "doc.on.doc.fill")
+                    }
+
+                    Divider()
+
+                    Button(role: .destructive) {
+                        historyManager.clear()
+                    } label: {
+                        Label("Clear History", systemImage: "trash")
+                    }
+                } else {
+                    EmptyView()
+                }
+            }
         }
-        .onHover { isHovered = $0 }
+    }
+
+    private var filteredRecords: [HistoryManager.HistoryRecord] {
+        let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty else { return historyManager.records }
+        return historyManager.records.filter { record in
+            record.original.localizedCaseInsensitiveContains(q) ||
+                record.corrected.localizedCaseInsensitiveContains(q) ||
+                record.fromLang.displayName.localizedCaseInsensitiveContains(q) ||
+                record.toLang.displayName.localizedCaseInsensitiveContains(q)
+        }
     }
 }
 
-extension Language {
+private extension Language {
+    var displayName: String {
+        switch self {
+        case .english: "English"
+        case .russian: "Russian"
+        case .hebrew: "Hebrew"
+        }
+    }
+
     var flag: String {
         switch self {
-        case .english: return "🇺🇸"
-        case .russian: return "🇷🇺"
-        case .hebrew: return "🇮🇱"
+        case .english: "🇺🇸"
+        case .russian: "🇷🇺"
+        case .hebrew: "🇮🇱"
         }
     }
 }
 
-#Preview { HistoryView() }
+#Preview {
+    HistoryView()
+}

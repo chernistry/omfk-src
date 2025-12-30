@@ -1,498 +1,309 @@
 import SwiftUI
+import AppKit
 
-// Version: prefer Info.plist (release), fallback to VERSION file (debug)
-let appVersion: String = {
-    // 1. Try Info.plist (works in release .app bundle)
-    if let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String, v != "1.0" {
-        return v
-    }
-    // 2. Try VERSION file (works in debug builds)
-    let possiblePaths = [
-        Bundle.main.bundlePath + "/../../../VERSION",  // .build/debug/OMFK -> project root
-        Bundle.main.bundlePath + "/../../VERSION",
-    ]
-    for path in possiblePaths {
-        if let version = try? String(contentsOfFile: path, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines) {
-            return version
+private enum SettingsPane: String, CaseIterable, Identifiable {
+    case general
+    case languages
+    case hotkey
+    case apps
+    case learning
+    case updates
+    case about
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .general: "General"
+        case .languages: "Languages"
+        case .hotkey: "Hotkey"
+        case .apps: "Apps"
+        case .learning: "Learning"
+        case .updates: "Updates"
+        case .about: "About"
         }
     }
-    // 3. Fallback (updated by build script)
-    return "1.3"
-}()
+
+    var systemImage: String {
+        switch self {
+        case .general: "gearshape"
+        case .languages: "globe"
+        case .hotkey: "keyboard"
+        case .apps: "app.badge"
+        case .learning: "brain"
+        case .updates: "arrow.down.circle"
+        case .about: "info.circle"
+        }
+    }
+}
 
 struct SettingsView: View {
     @StateObject private var settings = SettingsManager.shared
-    @State private var selectedTab = 0
-    
+    @State private var selection: SettingsPane = .general
+    @State private var searchText = ""
+
     var body: some View {
-        VStack(spacing: 0) {
-            // Header
-            VStack(spacing: 16) {
-                ZStack {
-                    Circle()
-                        .fill(.linearGradient(colors: [.blue.opacity(0.8), .purple.opacity(0.6)], startPoint: .topLeading, endPoint: .bottomTrailing))
-                        .frame(width: 52, height: 52)
-                    Image(systemName: "keyboard")
-                        .font(.system(size: 22, weight: .light))
-                        .foregroundStyle(.white)
-                }
-                
-                VStack(spacing: 4) {
-                    Text("OMFK").font(.system(size: 18, weight: .semibold, design: .rounded))
-                    Text("v\(appVersion)").font(.system(size: 11)).foregroundStyle(.tertiary)
-                }
-                
-                Picker("", selection: $selectedTab) {
-                    Text("General").tag(0)
-                    Text("Hotkey").tag(1)
-                    Text("Apps").tag(2)
-                    Text("Dictionary").tag(3)
-                    Text("About").tag(4)
-                }
-                .pickerStyle(.segmented)
-                .padding(.horizontal, 30)
+        NavigationSplitView {
+            List(SettingsPane.allCases, selection: $selection) { pane in
+                Label(pane.title, systemImage: pane.systemImage)
+                    .tag(pane)
             }
-            .padding(.top, 24)
-            .padding(.bottom, 16)
-            
-            Divider().padding(.horizontal, 20)
-            
-            // Content
+            .navigationTitle("OMFK")
+        } detail: {
             Group {
-                switch selectedTab {
-                case 0: GeneralTab(settings: settings)
-                case 1: HotkeyTab(settings: settings)
-                case 2: AppsTab(settings: settings)
-                case 3: UserDictionaryView()
-                default: AboutTab()
+                if !searchText.isEmpty {
+                    SettingsSearchResultsView(
+                        query: searchText,
+                        onSelectPane: { pane in
+                            selection = pane
+                            searchText = ""
+                        }
+                    )
+                } else {
+                    SettingsPaneView(pane: selection, settings: settings)
                 }
             }
-            .frame(maxHeight: .infinity)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(minWidth: 360, maxWidth: 500, minHeight: 480, maxHeight: 700)
-        .background(.ultraThinMaterial)
+        .searchable(text: $searchText, placement: .toolbar, prompt: "Search settings")
+        .frame(minWidth: 860, minHeight: 560)
     }
 }
 
-// MARK: - General Tab
+private struct SettingsPaneView: View {
+    let pane: SettingsPane
+    @ObservedObject var settings: SettingsManager
 
-struct GeneralTab: View {
+    var body: some View {
+        switch pane {
+        case .general:
+            GeneralPane(settings: settings)
+        case .languages:
+            LanguagesPane(settings: settings)
+        case .hotkey:
+            HotkeyPane(settings: settings)
+        case .apps:
+            AppsPane(settings: settings)
+        case .learning:
+            LearningPane(settings: settings)
+        case .updates:
+            UpdatesPane()
+        case .about:
+            AboutPane()
+        }
+    }
+}
+
+private struct GeneralPane: View {
     @ObservedObject var settings: SettingsManager
     @State private var launchAtLogin = LaunchAtLogin.isEnabled
-    
+
     var body: some View {
-        VStack(spacing: 12) {
-            GlassCard {
-                SettingRow(icon: "wand.and.stars", iconColor: .green,
-                    title: "Auto-correction", subtitle: "Fix wrong layout automatically",
-                    toggle: $settings.isEnabled)
-            }
-            GlassCard {
-                SettingRow(icon: "arrow.left.arrow.right", iconColor: .blue,
-                    title: "Auto-switch layout", subtitle: "Change system layout after fix",
-                    toggle: $settings.autoSwitchLayout)
-            }
-            GlassCard {
-                SettingRow(icon: "power", iconColor: .purple,
-                    title: "Launch at login", subtitle: "Start OMFK with system",
-                    toggle: Binding(get: { launchAtLogin }, set: { launchAtLogin = $0; LaunchAtLogin.isEnabled = $0 }))
-            }
-            GlassCard {
-                VStack(spacing: 12) {
-                    Label { Text("Preferred language").font(.system(size: 13, weight: .medium)) }
-                        icon: { Image(systemName: "globe").foregroundStyle(.orange) }
-                    
-                    HStack(spacing: 10) {
-                        LangPill(lang: "🇺🇸 EN", isSelected: settings.preferredLanguage == .english) { settings.preferredLanguage = .english }
-                        LangPill(lang: "🇷🇺 RU", isSelected: settings.preferredLanguage == .russian) { settings.preferredLanguage = .russian }
-                        LangPill(lang: "🇮🇱 HE", isSelected: settings.preferredLanguage == .hebrew) { settings.preferredLanguage = .hebrew }
+        Form {
+            Section {
+                Toggle("Enable auto-correction", isOn: $settings.isEnabled)
+                    .help("Automatically fix text typed in the wrong keyboard layout.")
+                Toggle("Switch system layout after fix", isOn: $settings.autoSwitchLayout)
+                    .help("After correcting a word, switch the active keyboard layout to match the corrected language.")
+                Toggle("Launch at login", isOn: Binding(
+                    get: { launchAtLogin },
+                    set: { newValue in
+                        launchAtLogin = newValue
+                        LaunchAtLogin.isEnabled = newValue
                     }
-                }
-                .frame(maxWidth: .infinity)
+                ))
+            } header: {
+                Text("Behavior")
             }
-            Divider().padding(.horizontal, 10)
-            Spacer(minLength: 0)
+
+            Section {
+                Picker("Preferred language", selection: $settings.preferredLanguage) {
+                    Text("English").tag(Language.english)
+                    Text("Russian").tag(Language.russian)
+                    Text("Hebrew").tag(Language.hebrew)
+                }
+                .help("When text is ambiguous, this bias helps OMFK pick the most likely intended language.")
+            } header: {
+                Text("Language")
+            } footer: {
+                Text("OMFK uses on-device language detection (n-grams + Apple recognition) and your preferences as tie-breakers.")
+            }
         }
-        .padding(16)
-        .padding(.bottom, 8)
+        .formStyle(.grouped)
+        .navigationTitle("General")
     }
 }
 
-// MARK: - Hotkey Tab
-
-struct HotkeyTab: View {
+private struct LanguagesPane: View {
     @ObservedObject var settings: SettingsManager
-    
+    @State private var installed: [String: [InputSourceManager.InstalledLayoutVariant]] = [:]
+
     var body: some View {
-        VStack(spacing: 16) {
-            GlassCard {
-                SettingRow(
-                    icon: "option",
-                    iconColor: .purple,
-                    title: "Manual correction",
-                    subtitle: "Cycle through alternatives",
-                    toggle: $settings.hotkeyEnabled
+        Form {
+            Section {
+                LayoutPickerRow(
+                    title: "English layout",
+                    selection: binding(for: "en", fallback: "us"),
+                    options: installed["en"] ?? []
                 )
+                LayoutPickerRow(
+                    title: "Russian layout",
+                    selection: binding(for: "ru", fallback: "russianwin"),
+                    options: installed["ru"] ?? []
+                )
+                LayoutPickerRow(
+                    title: "Hebrew layout",
+                    selection: binding(for: "he", fallback: "hebrew"),
+                    options: installed["he"] ?? []
+                )
+            } header: {
+                Text("Active Layout Variants")
+            } footer: {
+                Text("Pick the exact keyboard layout variants you use (e.g. Russian Phonetic, Hebrew QWERTY). This improves accuracy for layout-variant corrections.")
             }
-            
-            GlassCard {
-                HStack {
-                    Label {
-                        Text("Hotkey").font(.system(size: 13, weight: .medium))
-                    } icon: {
-                        Image(systemName: "command").foregroundStyle(.indigo)
-                    }
-                    
-                    Spacer()
-                    
-                    Text(keyName(settings.hotkeyKeyCode))
-                        .font(.system(size: 12, weight: .medium, design: .rounded))
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(.ultraThinMaterial, in: Capsule())
+
+            Section {
+                Button("Auto-detect from macOS") {
+                    settings.autoDetectLayouts()
+                    installed = InputSourceManager.shared.installedLayoutVariantsByLanguage()
+                }
+            } footer: {
+                Text("Auto-detect chooses the most likely installed variants and saves them as defaults.")
+            }
+        }
+        .formStyle(.grouped)
+        .navigationTitle("Languages")
+        .task {
+            installed = InputSourceManager.shared.installedLayoutVariantsByLanguage()
+        }
+    }
+
+    private func binding(for languageCode: String, fallback: String) -> Binding<String> {
+        Binding(
+            get: { settings.activeLayouts[languageCode] ?? fallback },
+            set: { newValue in settings.activeLayouts[languageCode] = newValue }
+        )
+    }
+}
+
+private struct LayoutPickerRow: View {
+    let title: String
+    @Binding var selection: String
+    let options: [InputSourceManager.InstalledLayoutVariant]
+
+    var body: some View {
+        Picker(title, selection: $selection) {
+            if options.isEmpty {
+                Text("No matching layouts found").tag(selection)
+            } else {
+                ForEach(options) { opt in
+                    Text(opt.displayName).tag(opt.layoutId)
                 }
             }
-            .opacity(settings.hotkeyEnabled ? 1 : 0.5)
-            
-            // Tip
-            HStack(spacing: 10) {
-                Image(systemName: "lightbulb.fill")
-                    .foregroundStyle(.yellow)
-                Text("Press hotkey to undo or cycle corrections")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-            }
-            .padding(14)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.yellow.opacity(0.1), in: RoundedRectangle(cornerRadius: 12))
-            
-            Spacer(minLength: 0)
-        }
-        .padding(20)
-        .frame(maxHeight: .infinity, alignment: .top)
-    }
-    
-    private func keyName(_ code: UInt16) -> String {
-        switch code {
-        case 58: return "⌥ Left Option"
-        case 61: return "⌥ Right Option"
-        default: return "Key \(code)"
         }
     }
 }
 
-// MARK: - Apps Tab
+private struct HotkeyPane: View {
+    @ObservedObject var settings: SettingsManager
 
-struct AppsTab: View {
+    var body: some View {
+        Form {
+            Section {
+                Toggle("Enable manual correction hotkey", isOn: $settings.hotkeyEnabled)
+                    .help("Press the hotkey to undo or cycle between layout alternatives.")
+                Picker("Hotkey", selection: $settings.hotkeyKeyCode) {
+                    Text("Left Option (⌥)").tag(UInt16(58))
+                    Text("Right Option (⌥)").tag(UInt16(61))
+                }
+                .disabled(!settings.hotkeyEnabled)
+            } footer: {
+                Text("Tip: You can select text and press the hotkey to cycle it between EN/RU/HE alternatives.")
+            }
+        }
+        .formStyle(.grouped)
+        .navigationTitle("Hotkey")
+    }
+}
+
+private struct AppsPane: View {
     @ObservedObject var settings: SettingsManager
     @State private var showingAppPicker = false
-    
+
     var body: some View {
-        VStack(spacing: 16) {
-            // Tip
-            HStack(spacing: 10) {
-                Image(systemName: "app.badge.checkmark")
-                    .foregroundStyle(.blue)
-                Text("Exclude apps from auto-correction")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-            }
-            .padding(14)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.blue.opacity(0.1), in: RoundedRectangle(cornerRadius: 12))
-            
-            GlassCard {
-                VStack(spacing: 12) {
-                    HStack {
-                        Text("Excluded").font(.system(size: 13, weight: .medium))
-                        Spacer()
-                        Button(action: { showingAppPicker = true }) {
-                            Label("Add app", systemImage: "plus")
-                                .font(.system(size: 11, weight: .medium))
+        Form {
+            Section {
+                Toggle("Enable in all apps", isOn: Binding(
+                    get: { settings.excludedApps.isEmpty },
+                    set: { newValue in
+                        if newValue {
+                            settings.excludedApps.removeAll()
+                        } else {
+                            showingAppPicker = true
                         }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.blue)
                     }
-                    
-                    if settings.excludedApps.isEmpty {
-                        VStack(spacing: 8) {
-                            Image(systemName: "checkmark.circle")
-                                .font(.system(size: 28, weight: .light))
-                                .foregroundStyle(.tertiary)
-                            Text("No excluded apps")
-                                .font(.system(size: 12))
-                                .foregroundStyle(.tertiary)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 20)
-                    } else {
-                        ScrollView {
-                            VStack(spacing: 8) {
-                                ForEach(Array(settings.excludedApps), id: \.self) { bundleId in
-                                    AppRow(bundleId: bundleId) { settings.toggleApp(bundleId) }
-                                }
+                ))
+                .help("When disabled, you can exclude specific apps where you don't want auto-correction.")
+            } footer: {
+                Text("Excluded apps are not monitored and will never be auto-corrected.")
+            }
+
+            Section("Excluded Apps") {
+                if settings.excludedApps.isEmpty {
+                    EmptyStateView(title: "No excluded apps", systemImage: "checkmark.circle")
+                } else {
+                    List {
+                        ForEach(Array(settings.excludedApps).sorted(), id: \.self) { bundleId in
+                            ExcludedAppRow(bundleId: bundleId) {
+                                settings.toggleApp(bundleId)
                             }
                         }
-                        .frame(maxHeight: 120)
                     }
+                    .frame(minHeight: 220)
                 }
+
+                Button("Add App…") { showingAppPicker = true }
             }
-            
-            Spacer(minLength: 0)
         }
-        .padding(20)
-        .frame(maxHeight: .infinity, alignment: .top)
+        .formStyle(.grouped)
+        .navigationTitle("Apps")
         .sheet(isPresented: $showingAppPicker) {
             AppPickerSheet(settings: settings, isPresented: $showingAppPicker)
         }
     }
 }
 
-struct AppPickerSheet: View {
-    @ObservedObject var settings: SettingsManager
-    @Binding var isPresented: Bool
-    
-    private var runningApps: [NSRunningApplication] {
-        NSWorkspace.shared.runningApplications
-            .filter { $0.activationPolicy == .regular }
-            .filter { $0.bundleIdentifier != Bundle.main.bundleIdentifier }
-            .filter { !settings.excludedApps.contains($0.bundleIdentifier ?? "") }
-            .sorted { ($0.localizedName ?? "") < ($1.localizedName ?? "") }
-    }
-    
-    var body: some View {
-        VStack(spacing: 16) {
-            Text("Select App to Exclude")
-                .font(.headline)
-            
-            ScrollView {
-                VStack(spacing: 4) {
-                    ForEach(runningApps, id: \.bundleIdentifier) { app in
-                        Button(action: {
-                            if let bundleId = app.bundleIdentifier {
-                                settings.toggleApp(bundleId)
-                                isPresented = false
-                            }
-                        }) {
-                            HStack(spacing: 12) {
-                                if let icon = app.icon {
-                                    Image(nsImage: icon)
-                                        .resizable()
-                                        .frame(width: 24, height: 24)
-                                }
-                                Text(app.localizedName ?? "Unknown")
-                                    .font(.system(size: 13))
-                                Spacer()
-                            }
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-            }
-            .frame(maxHeight: 300)
-            
-            Button("Cancel") { isPresented = false }
-                .buttonStyle(.bordered)
-        }
-        .padding(20)
-        .frame(width: 300)
-    }
-}
-
-// MARK: - About Tab
-
-struct AboutTab: View {
-    @ObservedObject var updateState = UpdateState.shared
-    @ObservedObject var settings = SettingsManager.shared
-    
-    var body: some View {
-        ScrollView {
-            VStack(spacing: 20) {
-                Spacer(minLength: 10)
-                
-                // App info
-                VStack(spacing: 6) {
-                    Text("Oh My F***ing Keyboard")
-                        .font(.system(size: 14))
-                        .foregroundStyle(.secondary)
-                    
-                    Text("Version \(appVersion)")
-                        .font(.system(size: 12, weight: .medium, design: .monospaced))
-                        .foregroundStyle(.tertiary)
-                }
-                
-                Divider().padding(.horizontal, 20)
-                
-                // Updates section
-                GlassCard {
-                    VStack(alignment: .leading, spacing: 16) {
-                        Label {
-                            Text("Updates").font(.system(size: 13, weight: .semibold))
-                        } icon: {
-                            Image(systemName: "arrow.down.circle").foregroundStyle(.green)
-                        }
-                        
-                        UpdateCheckButton(updateState: updateState)
-                        
-                        Divider()
-                        
-                        // Auto-check toggle
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Check automatically")
-                                    .font(.system(size: 13, weight: .medium))
-                                Text("Check on launch and every 24 hours")
-                                    .font(.system(size: 11))
-                                    .foregroundStyle(.secondary)
-                            }
-                            
-                            Spacer()
-                            
-                            Toggle("", isOn: $settings.checkForUpdatesAutomatically)
-                                .toggleStyle(.switch)
-                                .labelsHidden()
-                        }
-                        
-                        // Privacy note
-                        HStack(alignment: .top, spacing: 8) {
-                            Image(systemName: "lock.shield")
-                                .foregroundStyle(.blue)
-                                .font(.system(size: 12))
-                            Text("Checks github.com/chernistry/omfk for new releases. No personal data is sent.")
-                                .font(.system(size: 10))
-                                .foregroundStyle(.tertiary)
-                        }
-                        .padding(.top, 4)
-                    }
-                }
-                .padding(.horizontal, 4)
-                
-                Spacer(minLength: 10)
-                
-                // Credits
-                VStack(spacing: 4) {
-                    Text("Created by Alex Chernysh")
-                        .font(.system(size: 12, weight: .medium))
-                    Text("© 2025")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.tertiary)
-                }
-                
-                Spacer(minLength: 10)
-            }
-            .padding(20)
-        }
-        .frame(maxHeight: .infinity)
-        .sheet(isPresented: $updateState.showingUpdateAlert) {
-            if let release = updateState.availableRelease {
-                UpdateAvailableView(
-                    release: release,
-                    onDownload: {
-                        updateState.openDownloadURL()
-                        updateState.showingUpdateAlert = false
-                    },
-                    onDismiss: {
-                        updateState.showingUpdateAlert = false
-                    }
-                )
-            }
-        }
-    }
-}
-
-// MARK: - Components
-
-struct GlassCard<Content: View>: View {
-    @ViewBuilder let content: Content
-    var body: some View {
-        content
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .liquidGlass()
-    }
-}
-
-struct SettingRow: View {
-    let icon: String
-    let iconColor: Color
-    let title: String
-    let subtitle: String
-    @Binding var toggle: Bool
-    
-    var body: some View {
-        HStack(spacing: 14) {
-            Image(systemName: icon)
-                .font(.system(size: 16, weight: .medium))
-                .foregroundStyle(iconColor)
-                .frame(width: 28)
-            
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.system(size: 13, weight: .medium))
-                Text(subtitle).font(.system(size: 11)).foregroundStyle(.secondary)
-            }
-            
-            Spacer()
-            
-            Toggle("", isOn: $toggle)
-                .toggleStyle(.switch)
-                .labelsHidden()
-        }
-    }
-}
-
-struct LangPill: View {
-    let lang: String
-    let isSelected: Bool
-    let action: () -> Void
-    
-    var body: some View {
-        Button(action: action) {
-            Text(lang)
-                .font(.system(size: 12, weight: .semibold, design: .rounded))
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
-                .background(isSelected ? .blue : .clear, in: Capsule())
-                .background(.ultraThinMaterial, in: Capsule())
-                .foregroundStyle(isSelected ? .white : .primary)
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-struct AppRow: View {
+private struct ExcludedAppRow: View {
     let bundleId: String
     let onRemove: () -> Void
-    @State private var isHovered = false
-    
+
     var body: some View {
         HStack(spacing: 10) {
-            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) {
-                Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
-                    .resizable()
-                    .frame(width: 24, height: 24)
-            } else {
-                Image(systemName: "app").frame(width: 24, height: 24).foregroundStyle(.secondary)
-            }
-            
-            Text(appName).font(.system(size: 12)).lineLimit(1)
+            appIcon
+            Text(appName)
+                .lineLimit(1)
             Spacer()
-            
-            if isHovered {
-                Button(action: onRemove) {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
+            Button(role: .destructive, action: onRemove) {
+                Image(systemName: "minus.circle")
             }
+            .buttonStyle(.plain)
+            .help("Remove from excluded apps")
         }
-        .padding(10)
-        .background(isHovered ? .white.opacity(0.05) : .clear, in: RoundedRectangle(cornerRadius: 8))
-        .onHover { isHovered = $0 }
     }
-    
+
+    @ViewBuilder
+    private var appIcon: some View {
+        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) {
+            Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
+                .resizable()
+                .frame(width: 22, height: 22)
+        } else {
+            Image(systemName: "app")
+                .frame(width: 22, height: 22)
+                .foregroundStyle(.secondary)
+        }
+    }
+
     private var appName: String {
         if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) {
             return FileManager.default.displayName(atPath: url.path)
@@ -501,22 +312,153 @@ struct AppRow: View {
     }
 }
 
-// MARK: - Liquid Glass Modifier (macOS 26+)
+private struct LearningPane: View {
+    @ObservedObject var settings: SettingsManager
 
-extension View {
-    /// Apply Liquid Glass effect on macOS 26+, fallback to ultraThinMaterial on older versions
-    @ViewBuilder
-    func liquidGlass(in shape: some Shape = RoundedRectangle(cornerRadius: 14)) -> some View {
-        #if compiler(>=6.1)
-        if #available(macOS 26.0, *) {
-            self.glassEffect(.regular, in: shape)
-        } else {
-            self.background(.ultraThinMaterial, in: shape)
+    var body: some View {
+        VStack(spacing: 0) {
+            Form {
+                Section {
+                    Toggle("Learn from usage", isOn: $settings.isLearningEnabled)
+                        .help("OMFK can learn from your manual undos and accepted corrections to reduce future mistakes.")
+                } footer: {
+                    Text("Learning never sends any personal data off-device.")
+                }
+            }
+            .formStyle(.grouped)
+
+            Divider()
+
+            UserDictionaryView()
         }
-        #else
-        self.background(.ultraThinMaterial, in: shape)
-        #endif
+        .navigationTitle("Learning")
     }
 }
 
-#Preview { SettingsView() }
+private struct UpdatesPane: View {
+    @ObservedObject private var updateState = UpdateState.shared
+    @ObservedObject private var settings = SettingsManager.shared
+
+    var body: some View {
+        Form {
+            Section {
+                UpdateCheckButton(updateState: updateState)
+            }
+
+            Section {
+                Toggle("Check automatically", isOn: $settings.checkForUpdatesAutomatically)
+            } footer: {
+                Text("OMFK periodically checks GitHub Releases for new versions.")
+            }
+        }
+        .formStyle(.grouped)
+        .navigationTitle("Updates")
+    }
+}
+
+private struct AboutPane: View {
+    var body: some View {
+        Form {
+            Section {
+                LabeledContent("Version") {
+                    Text(appVersion)
+                        .fontDesign(.monospaced)
+                }
+                Link("GitHub Repository", destination: URL(string: "https://github.com/chernistry/omfk")!)
+                Link("Release Notes", destination: URL(string: "https://github.com/chernistry/omfk/releases")!)
+                Link("Report a Bug", destination: URL(string: "https://github.com/chernistry/omfk/issues")!)
+            }
+
+            Section {
+                Text("Oh My F***ing Keyboard automatically fixes text typed in the wrong keyboard layout (EN/RU/HE).")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .navigationTitle("About")
+    }
+}
+
+private struct SettingsSearchResultsView: View {
+    let query: String
+    let onSelectPane: (SettingsPane) -> Void
+
+    private var matches: [SettingsPane] {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty else { return [] }
+        return SettingsPane.allCases.filter { pane in
+            pane.title.lowercased().contains(q) || pane.rawValue.lowercased().contains(q)
+        }
+    }
+
+    var body: some View {
+        List {
+            if matches.isEmpty {
+                EmptyStateView(title: "No matches", systemImage: "magnifyingglass")
+            } else {
+                Section("Sections") {
+                    ForEach(matches) { pane in
+                        Button {
+                            onSelectPane(pane)
+                        } label: {
+                            Label(pane.title, systemImage: pane.systemImage)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+        .navigationTitle("Search")
+    }
+}
+
+private struct AppPickerSheet: View {
+    @ObservedObject var settings: SettingsManager
+    @Binding var isPresented: Bool
+
+    private var runningApps: [NSRunningApplication] {
+        NSWorkspace.shared.runningApplications
+            .filter { $0.activationPolicy == .regular }
+            .filter { $0.bundleIdentifier != Bundle.main.bundleIdentifier }
+            .filter { !settings.excludedApps.contains($0.bundleIdentifier ?? "") }
+            .sorted { ($0.localizedName ?? "") < ($1.localizedName ?? "") }
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                ForEach(runningApps, id: \.bundleIdentifier) { app in
+                    Button {
+                        if let bundleId = app.bundleIdentifier {
+                            settings.toggleApp(bundleId)
+                            isPresented = false
+                        }
+                    } label: {
+                        HStack(spacing: 10) {
+                            if let icon = app.icon {
+                                Image(nsImage: icon)
+                                    .resizable()
+                                    .frame(width: 20, height: 20)
+                            }
+                            Text(app.localizedName ?? "Unknown")
+                                .lineLimit(1)
+                            Spacer()
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .navigationTitle("Add Excluded App")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { isPresented = false }
+                }
+            }
+        }
+        .frame(minWidth: 360, minHeight: 420)
+    }
+}
+
+#Preview {
+    SettingsView()
+}

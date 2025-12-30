@@ -11,22 +11,20 @@ struct OMFKApp: App {
         MenuBarExtra("O.M.F.K", systemImage: "keyboard") {
             MenuBarView()
         }
-        .menuBarExtraStyle(.window)
+        .menuBarExtraStyle(.menu)
         
         // Settings window (opened via WindowManager)
         Window("OMFK Settings", id: "settings") {
             SettingsView()
         }
-        .windowStyle(.hiddenTitleBar)
-        .windowResizability(.contentSize)
+        .windowResizability(.contentMinSize)
         .defaultPosition(.center)
         
         // History window
         Window("History", id: "history") {
             HistoryView()
         }
-        .windowStyle(.hiddenTitleBar)
-        .windowResizability(.contentSize)
+        .windowResizability(.contentMinSize)
         .defaultPosition(.center)
     }
 }
@@ -184,4 +182,3 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 }
-

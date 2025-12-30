@@ -7,6 +7,15 @@ final class InputSourceManager {
     static let shared = InputSourceManager()
     
     private let logger = Logger.inputSource
+
+    struct InstalledLayoutVariant: Identifiable, Hashable {
+        let layoutId: String
+        let appleId: String
+        let displayName: String
+        let languageCode: String
+
+        var id: String { layoutId }
+    }
     
     /// Maps macOS layout IDs to our layout IDs (must match layouts.json)
     private let macOSToLayoutID: [String: String] = [
@@ -152,6 +161,92 @@ final class InputSourceManager {
         }
         
         return Dictionary(uniqueKeysWithValues: best.map { ($0.key, $0.value.id) })
+    }
+
+    /// Returns installed keyboard layout variants (restricted to layouts OMFK knows about), grouped by language code.
+    func installedLayoutVariantsByLanguage() -> [String: [InstalledLayoutVariant]] {
+        // Keep scoring consistent with `detectInstalledLayouts()`.
+        let layoutInfo: [String: (lang: String, score: Int)] = [
+            // English
+            "us": ("en", 300),
+            "abc": ("en", 200),
+            "british": ("en", 180),
+            "british_pc": ("en", 170),
+            "australian": ("en", 160),
+            "austrian": ("en", 155),
+            "canadian": ("en", 150),
+            "canadian_csa": ("en", 145),
+            "canadianfrench_pc": ("en", 140),
+            "irish": ("en", 135),
+            "colemak": ("en", 120),
+            "dvorak": ("en", 120),
+            "dvorak_left": ("en", 115),
+            "dvorak_right": ("en", 115),
+            "dvorak_qwertycmd": ("en", 115),
+            "usinternational_pc": ("en", 110),
+
+            // Russian
+            "russianwin": ("ru", 300),
+            "russian": ("ru", 250),
+            "russian_phonetic": ("ru", 200),
+            "byelorussian": ("ru", 150),
+            "ingush": ("ru", 120),
+
+            // Hebrew
+            "hebrew_qwerty": ("he", 300),
+            "hebrew_pc": ("he", 200),
+            "hebrew": ("he", 150),
+        ]
+
+        let filter: [CFString: Any] = [
+            kTISPropertyInputSourceType: kTISTypeKeyboardLayout as Any
+        ]
+
+        guard let list = TISCreateInputSourceList(filter as CFDictionary, false)?.takeRetainedValue() else {
+            return [:]
+        }
+
+        var grouped: [String: [InstalledLayoutVariant]] = [:]
+
+        let count = CFArrayGetCount(list)
+        for index in 0..<count {
+            guard let src = CFArrayGetValueAtIndex(list, index) else { continue }
+            let source = unsafeBitCast(src, to: TISInputSource.self)
+
+            guard let idPtr = TISGetInputSourceProperty(source, kTISPropertyInputSourceID) else { continue }
+            let appleId = unsafeBitCast(idPtr, to: CFString.self) as String
+
+            guard let layoutId = macOSToLayoutID[appleId] else { continue }
+            guard let info = layoutInfo[layoutId] else { continue }
+
+            var displayName = layoutId
+            if let namePtr = TISGetInputSourceProperty(source, kTISPropertyLocalizedName) {
+                displayName = unsafeBitCast(namePtr, to: CFString.self) as String
+            }
+
+            grouped[info.lang, default: []].append(
+                InstalledLayoutVariant(
+                    layoutId: layoutId,
+                    appleId: appleId,
+                    displayName: displayName,
+                    languageCode: info.lang
+                )
+            )
+        }
+
+        // De-dupe by internal layoutId and sort by likelihood + name.
+        for (lang, variants) in grouped {
+            var seen: Set<String> = []
+            let deduped = variants.filter { seen.insert($0.layoutId).inserted }
+            grouped[lang] = deduped.sorted { lhs, rhs in
+                let lScore = layoutInfo[lhs.layoutId]?.score ?? 0
+                let rScore = layoutInfo[rhs.layoutId]?.score ?? 0
+                if lScore != rScore { return lScore > rScore }
+                return lhs.displayName.localizedCaseInsensitiveCompare(rhs.displayName) == .orderedAscending
+            }
+        }
+
+        return grouped
     }
     
     func currentLanguage() -> Language? {

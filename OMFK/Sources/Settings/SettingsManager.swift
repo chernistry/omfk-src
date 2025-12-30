@@ -85,7 +85,7 @@ final class SettingsManager: ObservableObject {
             detectAndUpdateLayouts()
         }
     }
-    
+
     /// Auto-detect keyboard layout variants from macOS
     private func detectAndUpdateLayouts() {
         let detected = InputSourceManager.shared.detectInstalledLayouts()
@@ -114,5 +114,10 @@ final class SettingsManager: ObservableObject {
         } else {
             excludedApps.insert(bundleId)
         }
+    }
+
+    /// Re-runs layout auto-detection and persists the results.
+    func autoDetectLayouts() {
+        detectAndUpdateLayouts()
     }
 }

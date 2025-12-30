@@ -56,19 +56,22 @@ public struct LanguageDataConfig: Sendable {
         russianPrepositions = mappings["russianPrepositions"] as? [String: String] ?? 
             ["f": "а", "d": "в", "r": "к", "j": "о", "e": "у", "b": "и", "z": "я"]
         
+        let defaultConversions: [(from: Language, to: Language)] = [
+            (.english, .russian), (.english, .hebrew),
+            (.russian, .english), (.russian, .hebrew),
+            (.hebrew, .english), (.hebrew, .russian)
+        ]
+
         if let convArray = mappings["languageConversions"] as? [[String]] {
-            languageConversions = convArray.compactMap { pair -> (Language, Language)? in
+            let parsed = convArray.compactMap { pair -> (Language, Language)? in
                 guard pair.count == 2,
-                      let from = Language(rawValue: pair[0]),
-                      let to = Language(rawValue: pair[1]) else { return nil }
+                      let from = Self.parseLanguage(pair[0]),
+                      let to = Self.parseLanguage(pair[1]) else { return nil }
                 return (from, to)
             }
+            languageConversions = parsed.isEmpty ? defaultConversions : parsed
         } else {
-            languageConversions = [
-                (.english, .russian), (.english, .hebrew),
-                (.russian, .english), (.russian, .hebrew),
-                (.hebrew, .english), (.hebrew, .russian)
-            ]
+            languageConversions = defaultConversions
         }
         
         // Parse lexicon
@@ -87,6 +90,18 @@ public struct LanguageDataConfig: Sendable {
     private static func parseCharSet(_ value: Any?) -> Set<Character>? {
         guard let arr = value as? [String] else { return nil }
         return Set(arr.compactMap { $0.first })
+    }
+
+    private static func parseLanguage(_ value: String) -> Language? {
+        let v = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if let lang = Language(rawValue: v) { return lang } // "en"/"ru"/"he"
+
+        switch v {
+        case "english": return .english
+        case "russian": return .russian
+        case "hebrew": return .hebrew
+        default: return nil
+        }
     }
     
     // MARK: - Convenience accessors

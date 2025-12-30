@@ -492,8 +492,9 @@ actor CorrectionEngine {
         
         // Build alternatives with "undo-first" semantics:
         // [0] = original (undo target)
-        // [1] = smart correction (per-segment) if different from original
-        // [2+] = whole-text conversions
+        // [1] = primary whole-text correction for dominant hypothesis (if available)
+        // [2] = smart per-segment correction (if available)
+        // [3+] = other whole-text conversions
         
         var alternatives: [CyclingContext.Alternative] = []
         
@@ -502,45 +503,55 @@ actor CorrectionEngine {
         
         // [0] Original text (undo target)
         alternatives.append(CyclingContext.Alternative(text: text, hypothesis: nil))
-        
-        // [1] Smart per-segment correction (if different)
-        if let smart = smartCorrected, smart != text {
-            alternatives.append(CyclingContext.Alternative(text: smart, hypothesis: .ru)) // Best guess
-            logger.info("🧠 Smart correction: \(DecisionLogger.tokenSummary(smart), privacy: .public)")
-        }
-        
-        // Generate whole-text conversions as fallback alternatives
+
+        // Generate whole-text conversions. We'll pick the most plausible one as the primary correction
+        // for the first hotkey press (round 1), then keep the rest for cycling.
         let conversions = LanguageMappingsConfig.shared.languageConversions
-        
-        var otherAlternatives: [(text: String, hyp: LanguageHypothesis, score: Double)] = []
-        
+
+        var candidates: [(text: String, hyp: LanguageHypothesis, quality: Double, bonus: Double)] = []
+        candidates.reserveCapacity(conversions.count)
+
+        var seen = Set<String>()
+        seen.insert(text)
+
         for (from, to) in conversions {
             let hyp = hypothesisFor(source: from, target: to)
             let variants = LayoutMapper.shared.convertAllVariants(text, from: from, to: to, activeLayouts: activeLayouts)
 
-            var bestCandidate: (text: String, score: Double)? = nil
-            for (_, converted) in variants {
-                guard converted != text else { continue }
-                guard !alternatives.contains(where: { $0.text == converted }) else { continue }
-                guard !otherAlternatives.contains(where: { $0.text == converted }) else { continue }
-
-                let quality = fastTextScore(converted)
-                if bestCandidate == nil || quality > bestCandidate!.score {
-                    bestCandidate = (converted, quality)
-                }
+            guard let converted = variants.lazy.map(\.result).first(where: { candidate in
+                candidate != text && seen.insert(candidate).inserted
+            }) else {
+                continue
             }
 
-            if let bestCandidate {
-                let score = (hyp == decision.layoutHypothesis) ? 1.0 : 0.5
-                otherAlternatives.append((text: bestCandidate.text, hyp: hyp, score: score))
+            // Pick best-looking output by lightweight scoring. This strongly prefers real words
+            // like "привет" over script-consistent but meaningless strings like "עינגאמ".
+            let quality = fastTextScore(converted)
+            let bonus = (hyp == decision.layoutHypothesis) ? 0.20 : 0.0
+            candidates.append((text: converted, hyp: hyp, quality: quality, bonus: bonus))
+        }
+
+        // [1] Primary whole-text conversion: highest (quality + small router bonus).
+        let primary = candidates.max(by: { ($0.quality + $0.bonus) < ($1.quality + $1.bonus) })
+        if let primary {
+            alternatives.append(CyclingContext.Alternative(text: primary.text, hypothesis: primary.hyp))
+        }
+
+        // [2] Smart per-segment correction (if different and not identical to primary whole-text)
+        if let smart = smartCorrected,
+           smart != text,
+           smart != primary?.text {
+            alternatives.append(CyclingContext.Alternative(text: smart, hypothesis: nil))
+            logger.info("🧠 Smart correction: \(DecisionLogger.tokenSummary(smart), privacy: .public)")
+        }
+
+        // [3+] Remaining whole-text conversions (stable order: best first)
+        candidates
+            .sorted(by: { ($0.quality + $0.bonus) > ($1.quality + $1.bonus) })
+            .forEach { cand in
+                guard cand.text != primary?.text else { return }
+                alternatives.append(CyclingContext.Alternative(text: cand.text, hypothesis: cand.hyp))
             }
-        }
-        
-        otherAlternatives.sort { $0.score > $1.score }
-        
-        for alt in otherAlternatives {
-            alternatives.append(CyclingContext.Alternative(text: alt.text, hypothesis: alt.hyp))
-        }
         
         guard alternatives.count > 1 else {
             logger.warning("❌ No conversions possible for: \(text)")

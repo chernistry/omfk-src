@@ -152,3 +152,7 @@ None of these trigger word boundary: `.` `,` `!` `?` `()` `[]` `{}` `""` `:` `;`
 ```
 
 This runs only the ~40 tests that failed in the full E2E run, saving time during development.
+
+Files:
+- `tests/failed_cases_2025_12_30.json` (curated failing subset)
+- `scripts/test_failed_cases.py` (runner for the subset)

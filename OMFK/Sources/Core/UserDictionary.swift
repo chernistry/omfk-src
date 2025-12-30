@@ -19,15 +19,32 @@ public actor UserDictionary {
         d.dateDecodingStrategy = .iso8601
         return d
     }()
-    
-    private var storageURL: URL {
+
+    private static var isRunningTests: Bool {
+        // `swift test` doesn't consistently set a dedicated env var; detect XCTest by presence of its classes.
+        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil { return true }
+        return NSClassFromString("XCTestCase") != nil
+    }
+
+    private static func resolveStorageURL(customStorageURL: URL?) -> URL {
         if let custom = customStorageURL { return custom }
+
+        // Never read/write the real user dictionary from unit tests.
+        if isRunningTests {
+            return FileManager.default.temporaryDirectory.appendingPathComponent("omfk_user_dictionary_tests.json")
+        }
+
+        let fileManager = FileManager.default
         let home = fileManager.homeDirectoryForCurrentUser
         let omfkDir = home.appendingPathComponent(".omfk")
         if !fileManager.fileExists(atPath: omfkDir.path) {
             try? fileManager.createDirectory(at: omfkDir, withIntermediateDirectories: true)
         }
         return omfkDir.appendingPathComponent("user_dictionary.json")
+    }
+    
+    private var storageURL: URL {
+        Self.resolveStorageURL(customStorageURL: customStorageURL)
     }
     
     public static let shared = UserDictionary()
@@ -38,17 +55,11 @@ public actor UserDictionary {
         self.customStorageURL = storageURL
         
         // Load synchronously on init
-        let url: URL
-        if let custom = storageURL { 
-            url = custom 
-        } else {
-            let fileManager = FileManager.default
-            let home = fileManager.homeDirectoryForCurrentUser
-            let omfkDir = home.appendingPathComponent(".omfk")
-            if !fileManager.fileExists(atPath: omfkDir.path) {
-                try? fileManager.createDirectory(at: omfkDir, withIntermediateDirectories: true)
-            }
-            url = omfkDir.appendingPathComponent("user_dictionary.json")
+        let url = Self.resolveStorageURL(customStorageURL: storageURL)
+
+        // Ensure a clean slate for test runs to avoid cross-run contamination.
+        if Self.isRunningTests, storageURL == nil {
+            try? FileManager.default.removeItem(at: url)
         }
         
         do {
@@ -133,8 +144,8 @@ public actor UserDictionary {
         rule.evidence.timestamps.append(Date())
         rule.updatedAt = Date()
         
-        // Check threshold (2+ undos -> keepAsIs)
-        if rule.action != .keepAsIs && rule.evidence.autoRejectCount >= 2 {
+        // Check threshold (3+ undos -> keepAsIs)
+        if rule.action != .keepAsIs && rule.evidence.autoRejectCount >= 3 {
              // Only auto-learn global rules for now, as per plan
             rules[rule.id] = UserDictionaryRule(
                 id: rule.id,

@@ -119,6 +119,43 @@ actor ConfidenceRouter {
             }
         }
 
+        // Mixed-script guard (automatic + manual):
+        // If the token contains letters from multiple scripts (Latin/Cyrillic/Hebrew),
+        // do NOT attempt layout correction. Treat it as intended and keep as-is.
+        // This prevents false positives like "hello мир" becoming "hello vbh".
+        do {
+            var latin = 0
+            var cyr = 0
+            var heb = 0
+            for scalar in token.unicodeScalars {
+                switch scalar.value {
+                case 0x0041...0x005A, 0x0061...0x007A:
+                    latin += 1
+                case 0x0400...0x04FF:
+                    cyr += 1
+                case 0x0590...0x05FF:
+                    heb += 1
+                default:
+                    continue
+                }
+            }
+
+            let scriptCount = (latin > 0 ? 1 : 0) + (cyr > 0 ? 1 : 0) + (heb > 0 ? 1 : 0)
+            if scriptCount >= 2 {
+                let lang: Language
+                if cyr >= latin && cyr >= heb {
+                    lang = .russian
+                } else if heb >= latin && heb >= cyr {
+                    lang = .hebrew
+                } else {
+                    lang = .english
+                }
+                let decision = LanguageDecision(language: lang, layoutHypothesis: lang.asHypothesis, confidence: 1.0, scores: [:])
+                DecisionLogger.shared.logDecision(token: token, path: "MIXED_SCRIPT_KEEP", result: decision)
+                return decision
+            }
+        }
+
         // Technical token guard (automatic mode):
         // Prevent accidental conversion of file paths, UUIDs, semver, etc.
         if mode == .automatic, isTechnicalToken(token) {
@@ -833,6 +870,18 @@ actor ConfidenceRouter {
     private func isTechnicalToken(_ token: String) -> Bool {
         guard !token.isEmpty else { return false }
 
+        // Common file extensions (keep these tokens as-is in automatic mode).
+        // This intentionally excludes arbitrary one-letter "extensions" to avoid blocking
+        // punctuation-as-letter corrections like `epyf.n` → `узнают`.
+        let commonExtensions: Set<String> = [
+            // docs/config
+            "md", "txt", "rtf", "pdf", "json", "yaml", "yml", "toml", "ini", "conf", "plist", "xml", "csv", "log",
+            // source
+            "swift", "m", "mm", "c", "h", "cpp", "hpp", "cc", "hh", "rs", "go", "java", "kt", "py", "js", "ts", "tsx", "jsx", "html", "css", "scss",
+            // archives/binaries
+            "zip", "gz", "bz2", "xz", "7z", "dmg", "pkg", "app"
+        ]
+
         // Unix-like paths
         if token.hasPrefix("/"), token.contains("/") {
             return true
@@ -858,7 +907,10 @@ actor ConfidenceRouter {
            dot != token.startIndex,
            dot != token.index(before: token.endIndex) {
             let ext = token[token.index(after: dot)...]
-            if ext.count <= 8, ext.allSatisfy({ $0.isLetter || $0.isNumber }) {
+            let extLower = ext.lowercased()
+            if extLower.count <= 8,
+               extLower.allSatisfy({ $0.isLetter || $0.isNumber }),
+               commonExtensions.contains(extLower) {
                 let base = token[..<dot]
                 if base.contains(where: { $0.isLetter }) {
                     return true

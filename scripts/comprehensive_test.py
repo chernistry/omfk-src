@@ -17,7 +17,7 @@ from pathlib import Path
 from datetime import datetime
 
 from Quartz import (
-    CGEventCreateKeyboardEvent, CGEventPost, CGEventSetFlags,
+    CGEventCreateKeyboardEvent, CGEventPost, CGEventSetFlags, CGEventKeyboardSetUnicodeString,
     kCGHIDEventTap, kCGEventFlagMaskAlternate, kCGEventFlagMaskCommand, kCGEventFlagMaskShift,
     CGEventSourceCreate, kCGEventSourceStateHIDSystemState,
     CGEventTapCreate, CGEventMaskBit, kCGEventKeyDown, kCGHeadInsertEventTap,
@@ -42,7 +42,7 @@ LOG_FILE = Path.home() / ".omfk" / "debug.log"
 KEYCODES_FILE = Path(__file__).parent / "keycodes.json"
 SWITCH_LAYOUT = OMFK_DIR / "scripts/switch_layout"
 
-KEY_OPTION, KEY_DELETE, KEY_SPACE, KEY_F10 = 58, 51, 49, 109
+KEY_OPTION, KEY_DELETE, KEY_SPACE, KEY_TAB, KEY_RETURN, KEY_F10 = 58, 51, 49, 48, 36, 109
 BUNDLE_ID = "com.chernistry.omfk"
 
 
@@ -243,32 +243,45 @@ def detect_input_layout(text: str) -> str | None:
         lay_id = lay.lower().replace("-", "_")
         enabled_ids.add(lay_id)
     
+    # Pure ASCII input is assumed to be typed on US (even if other layouts can technically emit it).
+    stripped = "".join(c for c in text if c not in " \t\n")
+    if stripped and all(c.isascii() for c in stripped):
+        return "us" if "us" in enabled_ids else None
+
     # Priority order, but only check enabled layouts
     for layout in ["us", "russianwin", "hebrew", "hebrew_qwerty", "russian_phonetic", "russian", "hebrew_pc"]:
         if layout not in enabled_ids:
             continue
         layout_map = _keycodes.get(layout, {})
-        if all(c in layout_map or c in " \t\n" for c in text):
+        # Some characters (emoji, typographic quotes, em-dash, currency symbols) are not typable
+        # via keycodes.json in any layout. We'll paste them during typing, so they shouldn't block
+        # layout detection. Only require that *typable* characters are supported.
+        if all((c in " \t\n") or (c in layout_map) or (not c.isascii()) for c in text):
             return layout
     return None
 
 
 def type_char_real(char: str, layout: str, delay: float = 0.012) -> bool:
-    """Type a single character via AppleScript key code."""
-    if char == ' ':
-        subprocess.run(['osascript', '-e', 'tell application "System Events" to key code 49'], capture_output=True)
-        time.sleep(delay)
+    """Type a single character by injecting the Unicode character directly.
+
+    This avoids flakiness from macOS input-source switching mid-test.
+    """
+    ensure_textedit_focused_auto()
+
+    # Emoji / non-BMP are more reliable via paste under PyObjC.
+    if ord(char) > 0xFFFF:
+        clipboard_set(char)
+        cmd_key(9)
+        time.sleep(max(0.10, delay))
         return True
-    
-    layout_map = _keycodes.get(layout, {})
-    if char not in layout_map:
-        return False
-    
-    keycode, shift = layout_map[char]
-    if shift:
-        subprocess.run(['osascript', '-e', f'tell application "System Events" to key code {keycode} using shift down'], capture_output=True)
-    else:
-        subprocess.run(['osascript', '-e', f'tell application "System Events" to key code {keycode}'], capture_output=True)
+
+    utf16_len = len(char.encode("utf-16-le")) // 2
+    ev_down = CGEventCreateKeyboardEvent(None, 0, True)
+    CGEventKeyboardSetUnicodeString(ev_down, utf16_len, char)
+    CGEventPost(kCGHIDEventTap, ev_down)
+    ev_up = CGEventCreateKeyboardEvent(None, 0, False)
+    CGEventKeyboardSetUnicodeString(ev_up, utf16_len, char)
+    CGEventPost(kCGHIDEventTap, ev_up)
     time.sleep(delay)
     return True
 
@@ -334,9 +347,22 @@ def get_text():
 
 
 def clear_field():
-    cmd_key(0)  # Cmd+A
-    time.sleep(0.08)
-    press_key(KEY_DELETE)
+    # Prefer key-based clear (OMFK should observe Cmd+A+Delete and reset its context),
+    # but verify and fall back to direct TextEdit set if needed.
+    for _ in range(3):
+        cmd_key(0)  # Cmd+A
+        time.sleep(0.08)
+        press_key(KEY_DELETE)
+        time.sleep(0.08)
+        if wait_for_result("", timeout=0.6, stable_for=0.08) == "":
+            return
+
+    # Fallback: force-clear via AppleScript (more reliable if key events were dropped).
+    subprocess.run(
+        ["osascript", "-e", 'tell application "TextEdit" to set text of front document to ""'],
+        capture_output=True,
+        text=True,
+    )
     time.sleep(0.08)
 
 
@@ -357,12 +383,34 @@ def select_all_and_correct():
     time.sleep(0.15)
 
 
+def _normalize_osascript_stdout(text: str) -> str:
+    # osascript terminates stdout with a newline; remove exactly one while preserving
+    # meaningful whitespace/newlines from the document.
+    if text.endswith("\n"):
+        return text[:-1]
+    return text
+
+
 def get_result():
-    """Get current text from TextEdit via AppleScript (more reliable than AX API)."""
-    r = subprocess.run(['osascript', '-e', 
-        'tell application "TextEdit" to get text of front document'],
-        capture_output=True, text=True)
-    return r.stdout.strip()
+    """Get current TextEdit document text (preserve whitespace)."""
+    # AX readback preserves whitespace better; fallback to AppleScript if AX fails.
+    ax = get_text()
+    if ax:
+        return ax
+    r = subprocess.run(
+        ["osascript", "-e", 'tell application "TextEdit" to get text of front document'],
+        capture_output=True,
+        text=True,
+    )
+    return _normalize_osascript_stdout(r.stdout)
+
+
+def normalize_for_compare(actual: str, expected: str) -> str:
+    """Normalize actual text for comparison without destroying meaningful whitespace."""
+    # Most real-typing tests type an extra trailing space to trigger OMFK; ignore exactly one.
+    if expected and not expected[-1].isspace() and actual.endswith(" "):
+        return actual[:-1]
+    return actual
 
 def wait_for_result(expected: str | None, timeout: float = 1.2, stable_for: float = 0.12) -> str:
     """Wait until TextEdit document text reaches a stable state (and optionally matches expected)."""
@@ -428,21 +476,23 @@ def run_single_test_real(input_text: str, expected: str) -> tuple[bool, str]:
     words = input_text.split()
     for i, word in enumerate(words):
         check_abort()  # Check for F10 abort between words
-        for char in word:
-            type_char_real(char, layout)
-        
+        _ = type_string_real(word, layout, char_delay=0.012)
+
         check_focus()
-        
+
         # Type space via key code (so OMFK sees it)
         subprocess.run(['osascript', '-e', 'tell application "System Events" to key code 49'], capture_output=True)
-        
+
+        # Give OMFK time to apply auto-correction before typing the next token.
         if i == len(words) - 1:
-            time.sleep(0.15)  # Wait for OMFK after last word
+            time.sleep(0.45)
         else:
-            time.sleep(0.1)
+            time.sleep(0.35)
     
-    result = wait_for_result(expected, timeout=1.5).rstrip()
-    return result == expected, result
+    expected_for_wait = expected if expected.endswith(" ") else expected + " "
+    result = wait_for_result(expected_for_wait, timeout=1.5)
+    result_cmp = normalize_for_compare(result, expected)
+    return result_cmp == expected, result_cmp
 
 
 def start_omfk():
@@ -503,6 +553,15 @@ def check_focus():
     if app != "TextEdit":
         raise FocusLostError(f"Focus lost to: {app}")
 
+def ensure_textedit_focused_auto(retries: int = 10) -> None:
+    """Ensure TextEdit is frontmost (non-interactive)."""
+    for _ in range(max(1, retries)):
+        subprocess.run(["osascript", "-e", 'tell application "TextEdit" to activate'], capture_output=True)
+        time.sleep(0.08)
+        if get_frontmost_app() == "TextEdit":
+            return
+    check_focus()
+
 
 def ensure_textedit_focused():
     """Ensure TextEdit is frontmost. Pause and wait if not."""
@@ -533,12 +592,12 @@ def run_single_test(input_text, expected):
     
     clipboard_set(input_text)
     cmd_key(9)  # Paste
-    pasted = wait_for_result(input_text.strip(), timeout=0.8)
-    if pasted != input_text.strip():
+    pasted = wait_for_result(input_text, timeout=0.8)
+    if pasted != input_text:
         # Retry once (TextEdit can be slow to accept the very first paste after launch/restart).
         clipboard_set(input_text)
         cmd_key(9)
-        _ = wait_for_result(input_text.strip(), timeout=0.8)
+        _ = wait_for_result(input_text, timeout=0.8)
     check_focus()
     
     cmd_key(0)  # Select all
@@ -570,8 +629,9 @@ def run_context_boost_test(words, expected_final):
         type_word_and_space_real(word, "us", char_delay=0.05, space_wait=0.5)
     
     time.sleep(0.2)
-    result = get_result().rstrip()
-    return result == expected_final, result
+    result = get_result()
+    result_cmp = normalize_for_compare(result, expected_final)
+    return result_cmp == expected_final, result
 
 
 def run_cycling_test(input_text, alt_presses, expected_sequence=None):
@@ -587,11 +647,11 @@ def run_cycling_test(input_text, alt_presses, expected_sequence=None):
     
     clipboard_set(input_text)
     cmd_key(9)
-    pasted = wait_for_result(input_text.strip(), timeout=0.8)
-    if pasted != input_text.strip():
+    pasted = wait_for_result(input_text, timeout=0.8)
+    if pasted != input_text:
         clipboard_set(input_text)
         cmd_key(9)
-        _ = wait_for_result(input_text.strip(), timeout=0.8)
+        _ = wait_for_result(input_text, timeout=0.8)
     check_focus()
 
     cmd_key(0)
@@ -616,6 +676,86 @@ def run_cycling_test(input_text, alt_presses, expected_sequence=None):
         return match, results
     
     return True, results  # Just verify no crash
+
+
+def run_whitespace_only_test(input_text: str, expected: str) -> tuple[bool, str]:
+    """Type whitespace via real key events (paste would bypass OMFK)."""
+    check_abort()
+    ensure_textedit_focused_auto()
+
+    clear_field()
+    time.sleep(0.12)
+
+    # Use actual key events so OMFK sees them.
+    for ch in input_text:
+        if ch == " ":
+            press_key(KEY_SPACE)
+        elif ch == "\t":
+            press_key(KEY_TAB)
+        elif ch == "\n":
+            press_key(KEY_RETURN)
+        else:
+            clipboard_set(ch)
+            cmd_key(9)
+        time.sleep(0.03)
+
+    result = wait_for_result(expected, timeout=1.0)
+    return result == expected, result
+
+
+def run_test_category(category_name: str, category_data: dict, real_typing: bool = True) -> tuple[int, int]:
+    """Run a single category payload (used by subset runners)."""
+    cases = (category_data or {}).get("cases", [])
+    passed = 0
+    failed = 0
+
+    if not cases:
+        return 0, 0
+
+    for case in cases:
+        check_abort()
+        try:
+            # Context-boost cases are structured differently.
+            if "words" in case and "expected_final" in case:
+                ok, result = run_context_boost_test(case["words"], case["expected_final"])
+                if ok:
+                    passed += 1
+                else:
+                    failed += 1
+                    print(f"  ✗ {case.get('desc','')}")
+                    print(f"    Words: {case['words']}")
+                    print(f"    Got: '{result}'")
+                    print(f"    Exp: '{case['expected_final']}'")
+                continue
+
+            input_text = case["input"]
+            expected = case["expected"]
+
+            if category_name in ("whitespace", "edge_cases_system"):
+                ok, result = run_whitespace_only_test(input_text, expected)
+            else:
+                if real_typing:
+                    ok, result = run_single_test_real(input_text, expected)
+                    result = normalize_for_compare(result, expected)
+                else:
+                    ok, result = run_single_test(input_text, expected)
+
+            if ok:
+                passed += 1
+            else:
+                failed += 1
+                print(f"  ✗ {case.get('desc','')}")
+                print(f"    In : {repr(input_text)}")
+                print(f"    Got: {repr(result)}")
+                print(f"    Exp: {repr(expected)}")
+
+            time.sleep(0.08)
+        except FocusLostError:
+            failed += 1
+            ensure_textedit_focused_auto()
+            print(f"  ✗ {case.get('desc','')} (focus lost)")
+
+    return passed, failed
 
 
 def run_stress_cycling(input_text, times, delay_ms=50):

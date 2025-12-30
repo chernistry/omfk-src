@@ -24,3 +24,4 @@ releases/build/*
 .vscode/settings.json
 releases/*
 data/*.sdd/
+.venv/*

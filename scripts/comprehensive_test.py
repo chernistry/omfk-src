@@ -364,6 +364,44 @@ def get_result():
         capture_output=True, text=True)
     return r.stdout.strip()
 
+def wait_for_result(expected: str | None, timeout: float = 1.2, stable_for: float = 0.12) -> str:
+    """Wait until TextEdit document text reaches a stable state (and optionally matches expected)."""
+    start = time.time()
+    last = None
+    last_change = time.time()
+
+    while time.time() - start < timeout:
+        check_abort()
+        current = get_result()
+
+        if current != last:
+            last = current
+            last_change = time.time()
+
+        stable = (time.time() - last_change) >= stable_for
+        if expected is not None:
+            if current == expected and stable:
+                return current
+        else:
+            if stable:
+                return current
+
+        time.sleep(0.03)
+
+    return last if last is not None else ""
+
+def wait_for_change(previous: str, timeout: float = 1.2, stable_for: float = 0.12) -> str:
+    """Wait until TextEdit document text changes from `previous`, then settles."""
+    start = time.time()
+    while time.time() - start < timeout:
+        check_abort()
+        current = get_result()
+        if current != previous:
+            remaining = max(0.05, timeout - (time.time() - start))
+            return wait_for_result(None, timeout=remaining, stable_for=stable_for)
+        time.sleep(0.03)
+    return get_result()
+
 
 def run_single_test_real(input_text: str, expected: str) -> tuple[bool, str]:
     """Run test with REAL typing simulation."""
@@ -403,7 +441,7 @@ def run_single_test_real(input_text: str, expected: str) -> tuple[bool, str]:
         else:
             time.sleep(0.1)
     
-    result = get_result().rstrip()
+    result = wait_for_result(expected, timeout=1.5).rstrip()
     return result == expected, result
 
 
@@ -484,21 +522,30 @@ def ensure_textedit_focused():
 def run_single_test(input_text, expected):
     """Run single correction test."""
     check_abort()  # Check for F10 abort
+
+    # Ensure TextEdit is frontmost (focus loss leads to false negatives).
+    subprocess.run(["osascript", "-e", 'tell application "TextEdit" to activate'], capture_output=True)
+    time.sleep(0.1)
+    check_focus()
     
     clear_field()
-    time.sleep(0.08)
+    time.sleep(0.12)
     
     clipboard_set(input_text)
     cmd_key(9)  # Paste
-    time.sleep(0.08)
+    pasted = wait_for_result(input_text.strip(), timeout=0.8)
+    if pasted != input_text.strip():
+        # Retry once (TextEdit can be slow to accept the very first paste after launch/restart).
+        clipboard_set(input_text)
+        cmd_key(9)
+        _ = wait_for_result(input_text.strip(), timeout=0.8)
+    check_focus()
     
     cmd_key(0)  # Select all
     time.sleep(0.15)
     
     press_option()
-    time.sleep(0.15)
-    
-    result = get_result()
+    result = wait_for_result(expected, timeout=1.5)
     return result == expected, result
 
 
@@ -529,21 +576,39 @@ def run_context_boost_test(words, expected_final):
 
 def run_cycling_test(input_text, alt_presses, expected_sequence=None):
     """Test Alt cycling through alternatives."""
+    check_abort()
+
+    subprocess.run(["osascript", "-e", 'tell application "TextEdit" to activate'], capture_output=True)
+    time.sleep(0.1)
+    check_focus()
+
     clear_field()
-    time.sleep(0.08)
+    time.sleep(0.12)
     
     clipboard_set(input_text)
     cmd_key(9)
-    time.sleep(0.08)
+    pasted = wait_for_result(input_text.strip(), timeout=0.8)
+    if pasted != input_text.strip():
+        clipboard_set(input_text)
+        cmd_key(9)
+        _ = wait_for_result(input_text.strip(), timeout=0.8)
+    check_focus()
+
     cmd_key(0)
     time.sleep(0.15)
-    
+
     results = [get_result()]
     
     for i in range(alt_presses):
+        prev = results[-1]
         press_option()
-        time.sleep(0.15)
-        results.append(get_result())
+        expected_after = None
+        if expected_sequence and (i + 1) < len(expected_sequence):
+            expected_after = expected_sequence[i + 1]
+        if expected_after is not None:
+            results.append(wait_for_result(expected_after, timeout=1.5))
+        else:
+            results.append(wait_for_change(prev, timeout=1.5))
     
     if expected_sequence:
         # Check if results match expected sequence

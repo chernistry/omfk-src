@@ -76,6 +76,7 @@ actor CorrectionEngine {
         var roundNumber: Int = 1
         var visibleAlternativesCount: Int
         var cycleCount: Int = 0 // Tracks how many times we wrapped 0->1->0
+        var hasReturnedToOriginal: Bool = false // Track if user returned to index 0 after auto-correction
         
         struct Alternative {
             let text: String
@@ -90,6 +91,11 @@ actor CorrectionEngine {
                 currentIndex = 0
             } else {
                 currentIndex = nextIndex
+            }
+            
+            // Track first return to original after auto-correction
+            if wasAutomatic && currentIndex == 0 && !hasReturnedToOriginal {
+                hasReturnedToOriginal = true
             }
             
             return alternatives[currentIndex]
@@ -531,25 +537,56 @@ actor CorrectionEngine {
             candidates.append((text: converted, hyp: hyp, quality: quality, bonus: bonus))
         }
 
-        // [1] Primary whole-text conversion: highest (quality + small router bonus).
-        let primary = candidates.max(by: { ($0.quality + $0.bonus) < ($1.quality + $1.bonus) })
-        if let primary {
-            alternatives.append(CyclingContext.Alternative(text: primary.text, hypothesis: primary.hyp))
+        let primaryWhole = candidates.max(by: { ($0.quality + $0.bonus) < ($1.quality + $1.bonus) })
+
+        // Prefer smart-per-segment correction when it clearly looks better (especially for punctuation separators),
+        // otherwise keep the best whole-text conversion as primary.
+        let smartCandidate: (text: String, score: Double)? = {
+            guard let smart = smartCorrected, smart != text else { return nil }
+            return (text: smart, score: fastTextScore(smart))
+        }()
+
+        enum PrimaryKind { case smart, whole }
+        let primaryKind: PrimaryKind
+        if let smartCandidate {
+            if let primaryWhole {
+                let wholeScore = primaryWhole.quality + primaryWhole.bonus
+                // Small bias towards the smart candidate because it tends to preserve punctuation semantics.
+                primaryKind = (smartCandidate.score + 0.05 >= wholeScore) ? .smart : .whole
+            } else {
+                primaryKind = .smart
+            }
+        } else {
+            primaryKind = .whole
         }
 
-        // [2] Smart per-segment correction (if different and not identical to primary whole-text)
-        if let smart = smartCorrected,
-           smart != text,
-           smart != primary?.text {
-            alternatives.append(CyclingContext.Alternative(text: smart, hypothesis: nil))
-            logger.info("🧠 Smart correction: \(DecisionLogger.tokenSummary(smart), privacy: .public)")
+        // [1] Primary correction: smart or whole-text depending on quality.
+        switch primaryKind {
+        case .smart:
+            if let smartCandidate {
+                alternatives.append(CyclingContext.Alternative(text: smartCandidate.text, hypothesis: nil))
+                logger.info("🧠 Smart correction (primary): \(DecisionLogger.tokenSummary(smartCandidate.text), privacy: .public)")
+                seen.insert(smartCandidate.text)
+            }
+        case .whole:
+            if let primaryWhole {
+                alternatives.append(CyclingContext.Alternative(text: primaryWhole.text, hypothesis: primaryWhole.hyp))
+            }
+        }
+
+        // [2] Secondary: include the other candidate (if it exists and is different).
+        if primaryKind == .smart, let primaryWhole, seen.insert(primaryWhole.text).inserted {
+            alternatives.append(CyclingContext.Alternative(text: primaryWhole.text, hypothesis: primaryWhole.hyp))
+        } else if primaryKind == .whole, let smartCandidate, seen.insert(smartCandidate.text).inserted {
+            alternatives.append(CyclingContext.Alternative(text: smartCandidate.text, hypothesis: nil))
+            logger.info("🧠 Smart correction: \(DecisionLogger.tokenSummary(smartCandidate.text), privacy: .public)")
         }
 
         // [3+] Remaining whole-text conversions (stable order: best first)
         candidates
             .sorted(by: { ($0.quality + $0.bonus) > ($1.quality + $1.bonus) })
             .forEach { cand in
-                guard cand.text != primary?.text else { return }
+                guard cand.text != primaryWhole?.text else { return }
                 alternatives.append(CyclingContext.Alternative(text: cand.text, hypothesis: cand.hyp))
             }
         
@@ -796,6 +833,35 @@ actor CorrectionEngine {
         )
     }
 
+    private func shouldPreferSplitOverWholeForDotCommaSeparator(
+        original: String,
+        split: SmartCorrection,
+        whole: SmartCorrection
+    ) -> Bool {
+        // If the original contains "." or "," between two reasonably long word runs, treat it as a separator,
+        // and prefer the split candidate when whole-token conversion "swallows" the punctuation by mapping it to a letter.
+        // Example: "ghbdtn.rfr" should become "привет.как", not "приветюкак".
+        let parts = splitWordRunsAndDelimiters(original)
+        guard parts.count >= 3 else { return false }
+
+        for i in 1..<(parts.count - 1) {
+            guard !parts[i].isWord else { continue }
+            let delim = parts[i].text
+            guard delim == "." || delim == "," else { continue }
+            guard parts[i - 1].isWord, parts[i + 1].isWord else { continue }
+
+            let leftLetters = parts[i - 1].text.filter { $0.isLetter }.count
+            let rightLetters = parts[i + 1].text.filter { $0.isLetter }.count
+            guard leftLetters >= 2, rightLetters >= 2 else { continue }
+
+            if split.text.contains(delim), !whole.text.contains(delim) {
+                return true
+            }
+        }
+
+        return false
+    }
+
     private func bestSmartCorrection(
         for token: String,
         wholeDecision: LanguageDecision?,
@@ -833,10 +899,14 @@ actor CorrectionEngine {
 
         let best: SmartCorrection
         if whole.hypothesis != nil {
+            if shouldPreferSplitOverWholeForDotCommaSeparator(original: token, split: split, whole: whole) {
+                best = split
+            } else {
             // When the router thinks whole-token correction is valid, only switch to split-mode
             // if it's meaningfully better. This avoids flipping to a different language just
             // because a short split-part looks "valid" by score.
-            best = (split.score > whole.score + 0.25) ? split : whole
+                best = (split.score > whole.score + 0.25) ? split : whole
+            }
         } else {
             // No strong whole-token correction → prefer split on ties.
             best = (split.score >= whole.score) ? split : whole
@@ -964,8 +1034,8 @@ actor CorrectionEngine {
                  DecisionLogger.shared.log("LEARNING: token='\(token)' finalIndex=\(finalIndex) wasAutomatic=\(state.wasAutomatic) hypothesis=\(finalAlt.hypothesis?.rawValue ?? "nil")")
                  
                  if state.wasAutomatic {
-                     if finalIndex == 0 {
-                         // 1. Learn from Undo (AutoReject)
+                     if finalIndex == 0 && state.hasReturnedToOriginal {
+                         // 1. Learn from Undo (AutoReject) - only if user actually returned to original
                          DecisionLogger.shared.log("LEARNING: recordAutoReject for '\(token)'")
                          await UserDictionary.shared.recordAutoReject(token: token, bundleId: bundleId)
                      } else if finalIndex != 1 {

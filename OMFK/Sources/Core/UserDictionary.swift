@@ -144,8 +144,8 @@ public actor UserDictionary {
         rule.evidence.timestamps.append(Date())
         rule.updatedAt = Date()
         
-        // Check threshold (3+ undos -> keepAsIs)
-        if rule.action != .keepAsIs && rule.evidence.autoRejectCount >= 3 {
+        // Check threshold (2+ undos -> keepAsIs)
+        if rule.action != .keepAsIs && rule.evidence.autoRejectCount >= 2 {
              // Only auto-learn global rules for now, as per plan
             rules[rule.id] = UserDictionaryRule(
                 id: rule.id,

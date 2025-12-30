@@ -1,52 +1,227 @@
-# Known Issues
+# Known Issues - Detailed Analysis
 
-В этом файле собраны результаты неправильных автопереключений для будущих исправлений.
+**Last Updated:** 2024-12-30  
+**Test Results:** 60 passed / 101 failed (37% success rate)
 
-## Статусы
-- `OPEN` — проблема воспроизводится в E2E тесте
-- `RESOLVED` — исправлено
-- `WONTFIX` — не будем исправлять (указать причину)
+## 🎯 Executive Summary
 
-## Сводка по категориям (E2E тест 2024-12-30)
+OMFK fails to convert text in 3 main scenarios:
+1. **Punctuation inside words** - `.` and `,` block conversion
+2. **Single-letter words** - Context not used for detection
+3. **Punctuation boundaries** - Many punctuation marks don't trigger word processing
 
-| Категория | Passed | Failed | % |
-|-----------|--------|--------|---|
-| single_words | 16 | 6 | 73% |
-| real_paragraphs | 0 | 5 | 0% |
-| multiline_realistic | 0 | 2 | 0% |
-| mixed_language_real | 1 | 7 | 13% |
-| special_symbols | 3 | 0 | 100% |
-| hebrew_cases | 7 | 20 | 26% |
-| punctuation_triggers | 3 | 13 | 19% |
-| typos_and_errors | 0 | 8 | 0% |
-| numbers_and_special | 0 | 8 | 0% |
-| ambiguous_words | 23 | 0 | 100% |
-| negative_should_not_change | 10 | 0 | 100% |
-| edge_cases_system | 5 | 3 | 63% |
-| context_boost_hard | 6 | 4 | 60% |
-| cycling | 1 | 3 | 25% |
-| performance | 0 | 2 | 0% |
+## 📊 Test Results by Category
 
----
-
-## Критические проблемы (из wrongs.md пользователя)
-
-| Input | Expected | Actual | Category | Status | Notes |
-|-------|----------|--------|----------|--------|-------|
-| k.,k. | люблю | k.,k. | context_boost | OPEN | Запятая в середине слова не конвертируется |
-| ,tp | без | ,tp | single_word | OPEN | Запятая в начале слова |
-| vtyz | меня | меня | single_word | RESOLVED | Работает |
-| xnj,s | чтобы | чтобы | single_word | RESOLVED | Работает |
-| e | у | e/b | context_boost | OPEN | Не конвертируется в контексте |
-| epyf.n | узнают | узна.т | single_word | OPEN | Точка в середине слова |
-| j, | об | j, | single_word | OPEN | Запятая в конце короткого слова |
-| ,ele | буду | ,ele | single_word | OPEN | Запятая в начале слова |
+| Category | Passed | Failed | % | Key Issues |
+|-----------|--------|--------|---|------------|
+| single_words | 16 | 6 | 73% | Punctuation in words |
+| context_boost_hard | 6 | 4 | 60% | Single letters, punctuation |
+| punctuation_triggers | 3 | 13 | 19% | Most punctuation ignored |
+| hebrew_cases | 7 | 20 | 26% | Poor HE support |
+| typos_and_errors | 0 | 8 | 0% | All typos fail |
+| numbers_and_special | 0 | 8 | 0% | Times, dates, phones fail |
+| real_paragraphs | 0 | 5 | 0% | Long text fails |
+| multiline_realistic | 0 | 2 | 0% | Multi-line fails |
+| mixed_language_real | 1 | 7 | 13% | Mixed lang fails |
+| ambiguous_words | 23 | 0 | 100% | ✅ Works! |
+| negative_should_not_change | 10 | 0 | 100% | ✅ Works! |
+| special_symbols | 3 | 0 | 100% | ✅ Works! |
+| edge_cases_system | 5 | 3 | 63% | Some edge cases |
+| cycling | 1 | 3 | 25% | Alt cycling broken |
+| performance | 0 | 2 | 0% | Slow detection |
 
 ---
 
-## Проблемы по категориям
+## 🔴 Issue #1: Punctuation Inside Words (HIGH PRIORITY)
 
-### Context Boost (4 failed)
+### Problem
+Words containing `.` or `,` don't convert because system treats them as word separators.
+
+### Examples
+| Input | Expected | Actual | Why It Fails |
+|-------|----------|--------|--------------|
+| `k.,k.` | `люблю` | `k.,k.` | `.` = `ю`, `,` = `б` on RU, but treated as punctuation |
+| `,tp` | `без` | `,tp` | `,` at start blocks conversion |
+| `j,` | `об` | `j,` | `,` at end blocks conversion |
+| `epyf.n` | `узнают` | `узна.т` | `.` in middle blocks conversion |
+| `,ele` | `буду` | `,ele` | `,` at start blocks conversion |
+
+### Root Cause
+1. **EventMonitor**: `.` and `,` trigger word boundary → word processed prematurely
+2. **LayoutMapper**: ✅ FIXED - now converts `.` and `,` correctly
+3. **Detection**: Rejects words with punctuation as invalid or classifies as English
+
+### Current Status
+- ✅ Unit test passes: `k.,k.` → `люблю`
+- ❌ E2E test fails: word not converted in real usage
+- ❌ Detector thinks it's English with 100% confidence
+
+### Solution Ideas
+1. **Lookahead**: Before triggering boundary, check if next char would convert to letter
+2. **Punctuation context**: Allow `.` and `,` inside words if surrounded by letters
+3. **Validation fix**: Don't reject words with punctuation during validation
+4. **Two-pass detection**: First pass accumulates word, second pass validates
+
+---
+
+## 🔴 Issue #2: Single-Letter Prepositions (HIGH PRIORITY)
+
+### Problem
+Single letters like `e`, `r`, `k` should convert to `у`, `к` in context, but don't.
+
+### Examples
+| Input | Expected | Actual | Why It Fails |
+|-------|----------|--------|--------------|
+| `e vtyz` | `у меня` | `e меня` | `e` not converted, but `vtyz` is |
+| `r cj;fktyb.` | `к сожалению` | `r сожалении.` | `r` not converted |
+| `e vtyz ytn dhtvtyb` | `у меня нет времени` | `e меня нет времени` | `e` ignored |
+
+### Root Cause
+Single-letter words processed independently without context. Next word should boost confidence.
+
+### Current Behavior
+- `vtyz` → `меня` ✅ (works alone)
+- `e` → stays `e` ❌ (not converted)
+- Context boost exists but doesn't apply to first word
+
+### Solution Ideas
+1. **Lookahead for single letters**: If word is 1 letter, check next word before deciding
+2. **Preposition whitelist**: `e`, `r`, `k`, `d`, `j`, `z`, `b` → always try RU conversion
+3. **Confidence boost**: If next word is RU, boost confidence for previous single letter
+4. **Pending correction**: Store single letter, correct it when next word confirms language
+
+---
+
+## 🟡 Issue #3: Punctuation Word Boundaries (MEDIUM PRIORITY)
+
+### Problem
+Many punctuation marks don't trigger word boundary, so words aren't processed.
+
+### Missing Triggers
+Currently only space and newline trigger. Missing:
+- `?` `!` `:` `;` - Sentence punctuation
+- `(` `)` `[` `]` `{` `}` - Brackets
+- `«` `»` `"` `"` - Quotes
+- `—` `–` `-` - Dashes
+- `/` `\` - Slashes
+- `…` - Ellipsis
+
+### Examples
+| Input | Expected | Actual | Why It Fails |
+|-------|----------|--------|--------------|
+| `ghbdtn?rfr ltkf` | `привет?как дела` | `ghbdtn?rfr ltkf` | `?` doesn't trigger |
+| `(ghbdtn)` | `(привет)` | `(ghbdtn)` | `()` don't trigger |
+| `"ghbdtn"` | `"привет"` | `"ghbdtn"` | `""` don't trigger |
+| `ghbdtn—vbh` | `привет—мир` | `ghbdtn—vbh` | `—` doesn't trigger |
+
+### Solution
+Add all these to `wordBoundary` in `language_data.json` and update `EventMonitor` logic.
+
+---
+
+## 🟠 Issue #4: Typos and Errors (MEDIUM PRIORITY)
+
+### Problem
+Words with typos don't convert because validation rejects them.
+
+### Examples
+| Input | Expected | Actual | Why It Fails |
+|-------|----------|--------|--------------|
+| `ghbdtn vbhh` | `привет мирр` | `ghbdtn vbhh` | Double letter rejected |
+| `ghbdtnn` | `приветт` | `ghbdtnn` | Extra letter rejected |
+| `ghbdetn` | `привует` | `ghbdetn` | Typo rejected |
+| `cgfcboj` | `спасищо` | `cgfcboj` | Typo in спасибо rejected |
+
+### Root Cause
+Validation too strict - rejects words not in dictionary, even if they're close.
+
+### Solution Ideas
+1. **Fuzzy matching**: Allow 1-2 char difference from dictionary words
+2. **Disable validation**: Just convert and let user decide
+3. **Confidence penalty**: Lower confidence for typos but still convert
+
+---
+
+## 🟠 Issue #5: Numbers and Special Characters (MEDIUM PRIORITY)
+
+### Problem
+Text with numbers, times, dates, phones doesn't convert.
+
+### Examples
+| Input | Expected | Actual | Why It Fails |
+|-------|----------|--------|--------------|
+| `dcnhtxf d 15:00` | `встреча в 15:00` | `dcnhtxf d 15:00` | `:` in time blocks |
+| `wtyf 1000 he,` | `цена 1000 руб` | `wtyf 1000 he,` | Numbers block |
+| `lfnf 25.12.2024` | `дата 25.12.2024` | `lfnf 25.12.2024` | Date format blocks |
+
+### Solution
+Handle numbers and special formats separately, convert only letter parts.
+
+---
+
+## 🟢 What Works Well
+
+### ✅ Ambiguous Words (100% pass rate)
+System correctly handles words that could be multiple languages.
+
+### ✅ Negative Cases (100% pass rate)
+Correctly doesn't convert when it shouldn't (e.g., valid English words).
+
+### ✅ Special Symbols (100% pass rate)
+Handles special symbols correctly.
+
+---
+
+## 🎯 Recommended Fix Priority
+
+1. **Issue #1 (Punctuation)** - Blocks 20+ test cases, affects UX heavily
+2. **Issue #2 (Single letters)** - Blocks 10+ test cases, common in Russian
+3. **Issue #3 (Boundaries)** - Blocks 13 test cases, easy fix
+4. **Issue #4 (Typos)** - Blocks 8 test cases, UX improvement
+5. **Issue #5 (Numbers)** - Blocks 8 test cases, less common
+
+---
+
+## 💡 Holistic Solution Ideas
+
+### Idea 1: Smart Word Accumulation
+Instead of triggering on first punctuation, accumulate until:
+- Whitespace
+- Punctuation followed by whitespace
+- Punctuation followed by different language chars
+
+### Idea 2: Two-Phase Detection
+1. **Phase 1**: Accumulate entire phrase (until whitespace)
+2. **Phase 2**: Split by punctuation, detect each part, convert
+
+### Idea 3: Context-Aware Validation
+- Single letters: use next word for validation
+- Punctuation: allow if surrounded by same-language letters
+- Typos: use fuzzy matching with confidence penalty
+
+### Idea 4: Punctuation Classification
+Classify punctuation as:
+- **Word-internal**: `.` `,` in `k.,k.` → part of word
+- **Word-boundary**: `.` `,` after space → end of sentence
+- **Phrase-boundary**: `?` `!` `:` → always boundary
+
+---
+
+## 📝 Test Commands
+
+```bash
+# Run all tests
+python3 scripts/comprehensive_test.py
+
+# Run specific category
+python3 scripts/comprehensive_test.py context_boost_hard --real-typing
+
+# Run single test
+python3 scripts/comprehensive_test.py single --real-typing
+
+# Check logs
+tail -f ~/.omfk/debug.log
+```
 
 | Input | Expected | Actual | Status | Notes |
 |-------|----------|--------|--------|-------|

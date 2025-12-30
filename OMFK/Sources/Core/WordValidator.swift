@@ -60,12 +60,13 @@ struct SystemWordValidator: WordValidator {
 
         var valid = 0
         for w in words {
-            if isValidWord(w, languageCode: code) { valid += 1 }
+            if isValidWord(w, language: language, languageCode: code) { valid += 1 }
         }
         return Double(valid) / Double(words.count)
     }
 
-    private func isValidWord(_ word: String, languageCode: String?) -> Bool {
+    private func isValidWord(_ word: String, language: Language, languageCode: String?) -> Bool {
+        guard Self.matchesLanguageScript(word, language: language) else { return false }
         // `checkSpelling` returns NSNotFound when there are no misspellings.
         let range = spellChecker.checkSpelling(
             of: word,
@@ -76,6 +77,33 @@ struct SystemWordValidator: WordValidator {
             wordCount: nil
         )
         return range.location == NSNotFound
+    }
+
+    private static func matchesLanguageScript(_ word: String, language: Language) -> Bool {
+        // Prevent false positives where NSSpellChecker reports "no misspellings" for a word in
+        // a completely different script (e.g. Cyrillic being treated as valid English).
+        for scalar in word.unicodeScalars {
+            let v = scalar.value
+            switch language {
+            case .english:
+                // Be slightly permissive for Latin letters beyond ASCII (accented names, etc).
+                switch v {
+                case 0x0041...0x005A, 0x0061...0x007A, // Basic Latin
+                     0x00C0...0x00FF, // Latin-1 Supplement (letters)
+                     0x0100...0x017F, // Latin Extended-A
+                     0x0180...0x024F, // Latin Extended-B
+                     0x1E00...0x1EFF: // Latin Extended Additional
+                    break
+                default:
+                    return false
+                }
+            case .russian:
+                if !(0x0400...0x052F).contains(v) { return false }
+            case .hebrew:
+                if !(0x0590...0x05FF).contains(v) { return false }
+            }
+        }
+        return true
     }
 
     private static func resolveLanguageCodes(available: [String]) -> [Language: String?] {

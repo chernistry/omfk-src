@@ -126,6 +126,19 @@ actor ConfidenceRouter {
             DecisionLogger.shared.logDecision(token: token, path: "WHITELIST", result: decision)
             return decision
         }
+
+        // Strong-script sanity (automatic mode):
+        // If the token is dominantly Cyrillic and looks like a valid Russian word/phrase,
+        // do NOT attempt layout corrections away from Russian. This prevents false positives like
+        // "люблю" being treated as `en_from_ru` and entering an auto-reject learning loop.
+        if mode == .automatic, dominantScriptLanguage(token) == .russian {
+            let ruWord = wordValidator.confidence(for: token, language: .russian)
+            if ruWord >= thresholds.sourceWordConfMax {
+                let decision = LanguageDecision(language: .russian, layoutHypothesis: .ru, confidence: 1.0, scores: [:])
+                DecisionLogger.shared.logDecision(token: token, path: "SCRIPT_LOCK_RU", result: decision)
+                return decision
+            }
+        }
         
         let startTime = CFAbsoluteTimeGetCurrent()
         defer {

@@ -43,5 +43,28 @@ final class HebrewQwertyCollisionTests: XCTestCase {
         XCTAssertEqual(decision.layoutHypothesis, .enFromRuLayout)
         XCTAssertEqual(decision.language, .english)
     }
-}
 
+    func testPureCyrillicValidRussianWordIsNotCorrectedToEnglish() async throws {
+        let settings = await MainActor.run { SettingsManager.shared }
+        let router = ConfidenceRouter(settings: settings)
+
+        let token = "люблю"
+        let decision = await router.route(token: token, context: DetectorContext(lastLanguage: nil), mode: .automatic)
+
+        XCTAssertEqual(decision.layoutHypothesis, .ru)
+        XCTAssertEqual(decision.language, .russian)
+        XCTAssertGreaterThanOrEqual(decision.confidence, 0.70)
+    }
+
+    func testDarlingTypedInRussianLayoutPrefersEnglishOverHebrew() async throws {
+        let settings = await MainActor.run { SettingsManager.shared }
+        let router = ConfidenceRouter(settings: settings)
+
+        let token = "вфкдштп" // "darling" typed on RU layout
+        let decision = await router.route(token: token, context: DetectorContext(lastLanguage: .russian), mode: .automatic)
+
+        XCTAssertEqual(decision.layoutHypothesis, .enFromRuLayout)
+        XCTAssertEqual(decision.language, .english)
+        XCTAssertGreaterThanOrEqual(decision.confidence, 0.70)
+    }
+}

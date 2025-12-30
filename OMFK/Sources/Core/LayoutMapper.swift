@@ -202,7 +202,7 @@ public final class LayoutMapper: @unchecked Sendable {
         "\u{20AC}", "\u{00A3}", "\u{00A5}", "\u{20BD}", "\u{20B4}", "\u{20AA}",
         // ASCII punctuation that is NEVER a letter in any layout
         // NOTE: '.' maps to 'ю' on Russian, so NOT included here
-        "!", "?", ":", "-", "_",
+        "!", "?", "-", "_",
         "(", ")", "{", "}",
         "/", "\\", "@", "#", "$", "%", "^", "&", "*", "+", "=",
         "<", ">", "|", "~", "`"
@@ -257,8 +257,9 @@ public final class LayoutMapper: @unchecked Sendable {
                 // Special case: '.' and ',' might be part of a word on RU/HE layouts
                 // (. = ю on RU, , = б on RU), so don't preserve them - always convert
                 if wordSeparatorPunct.contains(c) && lastWasLetter {
-                    // For '.' and ',', NEVER preserve - they should convert
-                    if c == "." || c == "," {
+                    // For '.', ',', ';' and ':' NEVER preserve - these keys map to letters in RU/HE
+                    // and preserving them breaks wrong-layout words (e.g. "cj;fktyb." → "сожалению").
+                    if c == "." || c == "," || c == ";" || c == ":" {
                         // Don't preserve, fall through to conversion logic
                     } else {
                         // For other punctuation, preserve as before
@@ -404,8 +405,8 @@ public final class LayoutMapper: @unchecked Sendable {
                 if wordSeparatorPunct.contains(c) && !buffer.isEmpty {
                     let nextIdx = i + 1
                     
-                    // For '.' and ',', ALWAYS add to buffer (they convert to letters on RU/HE)
-                    if c == "." || c == "," {
+                    // For '.', ',', ';' and ':' ALWAYS add to buffer (they can convert to letters on RU/HE)
+                    if c == "." || c == "," || c == ";" || c == ":" {
                         buffer.append(c)
                         continue
                     }

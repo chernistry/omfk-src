@@ -32,6 +32,26 @@ final class PunctuationDisambiguationTests: XCTestCase {
         XCTAssertEqual(result.corrected, "узнают")
     }
 
+    func testSemicolonAndDotAsMappedLettersIsConverted() async throws {
+        let result = await engine.correctText("cj;fktyb.", expectedLayout: nil)
+        XCTAssertEqual(result.corrected, "сожалению")
+    }
+
+    func testPhraseKSozhaleniyuCorrectsPendingPrepositionAndWord() async throws {
+        await MainActor.run {
+            settings.standardPathThreshold = 0.65
+        }
+
+        let first = await engine.correctText("r", expectedLayout: nil)
+        XCTAssertNil(first.corrected)
+        XCTAssertNil(first.pendingCorrection)
+
+        let second = await engine.correctText("cj;fktyb.", expectedLayout: nil)
+        XCTAssertEqual(second.pendingCorrection, "к")
+        XCTAssertEqual(second.pendingOriginal, "r")
+        XCTAssertEqual(second.corrected, "сожалению")
+    }
+
     func testLeadingCommaCanBeMappedLetter() async throws {
         let result = await engine.correctText(",tp", expectedLayout: nil)
         XCTAssertEqual(result.corrected, "без")

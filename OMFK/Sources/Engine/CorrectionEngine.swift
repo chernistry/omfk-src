@@ -293,27 +293,26 @@ actor CorrectionEngine {
             sourceLayout = .hebrew
         }
         
-        guard needsCorrection else {
-            // Context override for short ambiguous tokens inside a strong sentence.
-            // Example: "vs" should become "мы" inside a Russian sentence.
-            if let dominant = sentenceDominantLanguage,
-               dominant != decision.language,
-               sentenceWordCount >= 2,
-               text.count <= 2,
-               text.allSatisfy({ $0.isLetter }),
-               languageData.whitelistedLanguage(text) == nil {
-                let activeLayouts = await settings.activeLayouts
-                if let override = shortTokenDominantOverride(token: text, from: decision.language, to: dominant, activeLayouts: activeLayouts) {
-                    let applied = await applyCorrection(
-                        original: text,
-                        corrected: override.corrected,
-                        from: override.from,
-                        to: override.to,
-                        hypothesis: override.hypothesis
-                    )
-                    return CorrectionResult(corrected: applied, pendingCorrection: pendingCorrectionResult, pendingOriginal: pendingOriginalText)
-                }
-            }
+	        guard needsCorrection else {
+	            // Context override for short ambiguous tokens inside a strong sentence.
+	            // Example: "vs" should become "мы" inside a Russian sentence.
+	            if let dominant = sentenceDominantLanguage,
+	               dominant != decision.language,
+	               sentenceWordCount >= 2,
+	               text.count <= 2,
+	               text.allSatisfy({ $0.isLetter }) {
+	                let activeLayouts = await settings.activeLayouts
+	                if let override = shortTokenDominantOverride(token: text, from: decision.language, to: dominant, activeLayouts: activeLayouts) {
+	                    let applied = await applyCorrection(
+	                        original: text,
+	                        corrected: override.corrected,
+	                        from: override.from,
+	                        to: override.to,
+	                        hypothesis: override.hypothesis
+	                    )
+	                    return CorrectionResult(corrected: applied, pendingCorrection: pendingCorrectionResult, pendingOriginal: pendingOriginalText)
+	                }
+	            }
 
             logger.info("ℹ️ No correction needed - text is in correct layout, but creating cycling state for manual override")
             

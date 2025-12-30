@@ -1,110 +1,136 @@
-# OMFK Bug Fix - Remaining Issues
+# OMFK Bug Fix - Critical Issue with "darling"
 
-## 🎯 Status Update
+## 🎯 Previous Success
 
-Your previous fixes worked well! **Major progress:**
-- ✅ Punctuation disambiguation: 11/16 tests now pass (was 3/16) - **69% improvement**
-- ✅ Smart segmentation working
-- ✅ Cmd+A+Delete context reset fixed
-- ✅ Unit tests all passing
+Your fixes worked great! Major improvements:
+- ✅ `SCRIPT_LOCK_RU/HE` now working - pure Cyrillic/Hebrew correctly detected
+- ✅ Punctuation triggers: 11/16 pass (was 3/16)
+- ✅ Context boost improvements
+- ✅ First-word prepositions: `r cj;fktyb.` → `к сожалению` ✅
 
-## 🐛 Remaining Critical Issue
+## 🐛 New Critical Bug: "darling" Converts to Hebrew
 
-**Problem:** `люблю` (Russian word) keeps getting detected as English with high confidence, causing auto-reject loop.
+### The Problem
 
-### Evidence from Logs
+When typing `darling` (English word) in a Russian sentence context, OMFK converts it to Hebrew `דארלינג`.
 
+**Example from logs:**
 ```
-Input: len=5 latin=0 cyr=5 heb=0 dig=0 ws=0 other=0 | Path: SCORE | Result: en (Conf: 0.95)
-LEARNING: recordAutoReject for 'люблю'
+🔍 DEBUG: text='вфкдштп' pending=nil currentTargetLang=he
+🔍 DEBUG: text='דארלינג' pending=nil currentTargetLang=he
 ```
 
-**What's happening:**
-1. User types `люблю` (valid Russian word)
-2. System detects it as **English** with 0.95 confidence ❌
-3. Tries to convert EN→RU, fails (it's already Russian!)
-4. Records as "auto-reject" and learns wrong pattern
-5. Next time: `Path: USER_DICT_KEEP | Result: ru (Conf: 1.00)` - now it "knows" to keep it
+User typed: `darling` (English)  
+OMFK converted to: `דארלינג` (Hebrew)  
+Expected: `darling` (no conversion - it's a valid English word)
 
-**The bug:** Pure Cyrillic text (`cyr=5, latin=0`) should NEVER be detected as English. This is a fundamental logic error.
+### Why This Happens
 
-### Root Cause Hypothesis
+From validation logs:
+```
+VALID_CHECK: darling wordConf=1.00 srcWordConf=1.00 tgtNorm=0.91 srcNorm=0.87
+VARIANT[us]: דארלינג → darling | src=-8.81 tgt=-7.19 tgtN=0.91
+REJECTED_VALIDATION: en_from_he | no valid conversion found from 16 variants
+Input: len=7 latin=0 cyr=0 heb=7 dig=0 ws=0 other=0 | Path: STANDARD | Result: he (Conf: 1.00)
+```
 
-In `ConfidenceRouter.swift`, the detection logic likely:
-1. Checks character sets (sees Cyrillic)
-2. But then some scoring/whitelist/learning overrides it to English
-3. Possibly: `люблю` is in English whitelist? Or n-gram model confused?
+**The flow:**
+1. User types `darling` (English, on English keyboard)
+2. Previous context was Russian (`вфкдштп` = some Russian word)
+3. System sees `currentTargetLang=he` (why Hebrew??)
+4. Converts `darling` → `דארלינג` (EN→HE)
+5. User sees Hebrew instead of English ❌
+
+### Root Cause
+
+**Context contamination:** `currentTargetLang` is set to `he` from previous word, and this affects detection of the next word.
+
+Look at the sequence:
+```
+text='дела' currentTargetLang=ru     ← Russian context
+text='вфкдштп' currentTargetLang=he  ← Suddenly Hebrew?
+text='דארלינג' currentTargetLang=he  ← Stays Hebrew
+```
+
+**Question:** Why does `вфкдштп` (Cyrillic text) set `currentTargetLang=he`?
+
+From earlier log:
+```
+Input: len=7 latin=0 cyr=7 heb=0 dig=0 ws=0 other=0 | Path: BASELINE_CORRECTION | Result: he (Conf: 0.85)
+LEARNING: token='вфкдштп' finalIndex=1 wasAutomatic=true hypothesis=he_from_ru
+```
+
+**Aha!** System thinks `вфкдштп` (pure Cyrillic) should be converted to Hebrew with 0.85 confidence. This is wrong!
+
+### The Real Bug
+
+**Pure Cyrillic text (`cyr=7, latin=0, heb=0`) is being classified as `Result: he`**
+
+This violates the script-lock you added! Check your `SCRIPT_LOCK_RU` logic:
+- It works for some words: `я`, `тебя`, `дела` → `Path: SCRIPT_LOCK_RU`
+- But NOT for `вфкдштп` → `Path: BASELINE_CORRECTION | Result: he`
 
 ### What You Need to Fix
 
-**Add a sanity check BEFORE any detection logic:**
+**In ConfidenceRouter.swift, strengthen the script-lock:**
 
 ```swift
-// In ConfidenceRouter.swift, at the START of detection:
-if text is 100% Cyrillic → force Result: ru
-if text is 100% Hebrew → force Result: he  
-if text is 100% Latin → continue with normal detection
+// BEFORE any other logic (including BASELINE_CORRECTION):
+let stats = analyzeCharacters(token)
+
+// Hard constraint: pure script = that language, NO EXCEPTIONS
+if stats.cyrillic > 0 && stats.latin == 0 && stats.hebrew == 0 {
+    return LanguageDecision(language: .russian, hypothesis: .ru, confidence: 1.0, ...)
+}
+if stats.hebrew > 0 && stats.latin == 0 && stats.cyrillic == 0 {
+    return LanguageDecision(language: .hebrew, hypothesis: .he, confidence: 1.0, ...)
+}
+if stats.latin > 0 && stats.cyrillic == 0 && stats.hebrew == 0 {
+    // Pure Latin - continue with normal detection (could be EN/RU/HE typed wrong)
+}
 ```
 
-**Why this is critical:**
-- Pure Cyrillic text being detected as English breaks the entire system
-- It creates wrong learning patterns that persist
-- Users will see Russian text "corrected" to gibberish
+**The issue:** Your `SCRIPT_LOCK` is conditional or comes AFTER `BASELINE_CORRECTION`. It needs to be FIRST and ABSOLUTE.
 
-## 🔍 Debug Task
+### Why This Matters
 
-1. **Find where this happens:**
-   - Search for `Path: SCORE` in ConfidenceRouter.swift
-   - Find where `Result: en` is set despite `cyr=5, latin=0`
-   - Check if there's a whitelist/learning override that ignores character analysis
+1. **UX disaster:** English words randomly become Hebrew in Russian context
+2. **Context pollution:** Wrong detection cascades to next words
+3. **Learning corruption:** System learns wrong patterns
 
-2. **Add character-based sanity check:**
-   ```swift
-   let stats = analyzeCharacters(text)
-   if stats.cyrillic > 0 && stats.latin == 0 && stats.hebrew == 0 {
-       // Pure Cyrillic → must be Russian
-       return LanguageDecision(language: .russian, ...)
-   }
-   if stats.hebrew > 0 && stats.latin == 0 && stats.cyrillic == 0 {
-       // Pure Hebrew → must be Hebrew
-       return LanguageDecision(language: .hebrew, ...)
-   }
-   // Otherwise continue with normal detection
-   ```
+### Test Case
 
-3. **Test the fix:**
-   - Type `люблю` in Notes
-   - Check logs: should show `Result: ru` not `Result: en`
-   - Type `hello` in Notes  
-   - Check logs: should show `Result: en` (normal detection still works)
-
-## 📊 Expected Outcome
-
-After fix:
-- Pure Cyrillic → always detected as Russian
-- Pure Hebrew → always detected as Hebrew
-- Mixed/Latin → normal detection logic
-- No more auto-reject loops for valid Russian words
-
-## 🎯 Success Criteria
-
-Run this test:
 ```bash
 OMFK_DEBUG_LOG=1 swift run
-# Type: люблю [space]
-# Check log: should see "Result: ru" NOT "Result: en"
+# Type in Notes:
+# "как дела вфкдштп"  (Russian sentence)
+# Check log: ALL words should be Path: SCRIPT_LOCK_RU
+# None should be Result: he
+
+# Then type:
+# "how are you darling"  (English sentence)
+# Check log: ALL words should be Result: en
+# None should convert to Hebrew
 ```
 
-If you see `Result: ru (Conf: 1.00)` for pure Cyrillic text → **FIXED** ✅
+### Expected Log After Fix
 
-## 💡 Additional Context
+```
+Input: len=7 latin=0 cyr=7 heb=0 dig=0 ws=0 other=0 | Path: SCRIPT_LOCK_RU | Result: ru (Conf: 1.00)
+```
 
-The character analysis already exists (you can see `cyr=5, latin=0` in logs), so the data is there. You just need to **use it as a hard constraint** before any other detection logic runs.
+NOT:
+```
+Input: len=7 latin=0 cyr=7 heb=0 dig=0 ws=0 other=0 | Path: BASELINE_CORRECTION | Result: he (Conf: 0.85)
+```
 
-Think of it as: "Character set analysis is ground truth, everything else is just refinement."
+## 🎯 Action Items
 
-## 📁 Key File
+1. Find where `BASELINE_CORRECTION` runs in ConfidenceRouter.swift
+2. Move `SCRIPT_LOCK` check to run BEFORE it
+3. Make script-lock absolute: pure Cyrillic = Russian, pure Hebrew = Hebrew, no exceptions
+4. Test with the sequences above
+5. Verify `darling` stays English in all contexts
 
-- `OMFK/Sources/Core/ConfidenceRouter.swift` - Main detection logic, look for where `Result: en` is set
+This should be a 10-minute fix - just reorder the checks!
 
-Good luck! This should be a quick fix once you find where the override happens.

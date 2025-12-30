@@ -325,27 +325,18 @@ final class EventMonitor {
             if ch.isWhitespace || ch.isNewline {
                 return true
             }
-            if Self.wordBoundaryPunctuation.contains(ch) {
-                // Special handling for '.' and ',' - they might be part of a word on RU/HE layouts
-                // (. = ю on RU, , = б on RU)
-                // Only trigger if buffer is empty OR buffer doesn't end with a letter/comma/period
-                // This allows words like "k.,k." to accumulate before triggering
-                if (ch == "." || ch == ",") {
-                    // Don't treat leading '.'/',' as a boundary: they can be mapped letters (e.g. ",tp" -> "без").
-                    if bufferBeforeAppend.isEmpty {
-                        continue
-                    }
-                    let lastChar = bufferBeforeAppend.last!
-                    if lastChar.isLetter || lastChar == "." || lastChar == "," {
-                        continue  // Part of a word, don't trigger yet
-                    }
+            // Punctuation inside tokens is handled by CorrectionEngine's smart segmentation.
+            // Triggering immediately on punctuation causes races (punctuation often appears between
+            // words without spaces: "ghbdtn;rfr", "ghbdtn!rfr", etc.), and can delete/interleave
+            // subsequent typing.
+            //
+            // We only treat punctuation as a boundary when it is typed as a standalone separator
+            // (i.e. when buffer was empty), otherwise we wait for whitespace/newline.
+            if Self.wordBoundaryPunctuation.contains(ch) || Self.trailingDelimiters.contains(ch) || ch == "-" || ch == "—" || ch == "–" {
+                if bufferWasEmpty {
                     return true
                 }
-                return true
-            }
-            // Treat standalone separators as boundaries only when not inside a word.
-            if bufferWasEmpty, ch == "-" || ch == "—" || ch == "–" {
-                return true
+                continue
             }
         }
         return false

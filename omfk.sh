@@ -69,6 +69,8 @@ Commands:
   corpus import-telegram --file result.json
   logs stream            Stream system logs
   release build --version X.Y.Z
+  release github         Trigger GitHub release workflow
+  release status         Check commits since last release
 
 Environment:
   OMFK_ULTRA=1           Enable ultra training mode
@@ -90,6 +92,7 @@ interactive_menu() {
     "📜 logs stream    → Stream debug logs"
     "📦 release build  → Build DMG release"
     "🌐 release github → Trigger GitHub release"
+    "🔍 release status → Check commits since last release"
     "❌ quit           → Exit"
   )
 
@@ -147,6 +150,7 @@ interactive_menu() {
       [[ -n "$ver" ]] && cmd_release_build --version "$ver"
       ;;
     "release github") cmd_release_github ;;
+    "release status") cmd_release_status ;;
     "quit") exit 0 ;;
     *) die "Unknown selection" ;;
   esac
@@ -679,6 +683,57 @@ cmd_logs_stream() {
   log stream --predicate 'subsystem == "com.chernistry.omfk"' --level debug --style compact
 }
 
+cmd_release_status() {
+  info "🔍 Checking release status..."
+  echo ""
+  
+  # Check gh CLI
+  if ! command -v gh &>/dev/null; then
+    die "GitHub CLI (gh) not installed. Run: brew install gh"
+  fi
+  
+  # Get latest release from GitHub
+  local latest_release=$(gh release list --repo chernistry/omfk --limit 1 --json tagName --jq '.[0].tagName' 2>/dev/null)
+  
+  if [[ -z "$latest_release" ]]; then
+    die "Could not fetch latest release from GitHub"
+  fi
+  
+  info "📦 Latest release: ${COLOR_GREEN}${latest_release}${COLOR_RESET}"
+  
+  # Get the workflow run for that release
+  local run_id=$(gh run list --repo chernistry/omfk-src --workflow=release.yml --limit 10 --json databaseId,displayTitle --jq '.[] | select(.displayTitle == "Release") | .databaseId' 2>/dev/null | head -1)
+  
+  if [[ -z "$run_id" ]]; then
+    warn "Could not find release workflow run"
+    return 1
+  fi
+  
+  # Get commit SHA from that run
+  local release_sha=$(gh api repos/chernistry/omfk-src/actions/runs/$run_id --jq '.head_sha' 2>/dev/null)
+  local release_sha_short=$(echo $release_sha | cut -c1-7)
+  
+  info "📍 Release built from: ${COLOR_YELLOW}${release_sha_short}${COLOR_RESET}"
+  echo ""
+  
+  # Check commits since release
+  local commits_ahead=$(git rev-list --count ${release_sha}..HEAD 2>/dev/null || echo "0")
+  
+  if [[ "$commits_ahead" -eq 0 ]]; then
+    success "Up to date - no new commits since ${latest_release}"
+    echo ""
+    info "Current HEAD: $(git rev-parse --short HEAD) (same as release)"
+  else
+    warn "⚠️  ${commits_ahead} commit(s) ahead of ${latest_release}"
+    echo ""
+    info "New commits:"
+    git log --oneline --decorate ${release_sha}..HEAD
+    echo ""
+    info "💡 Consider releasing a new version:"
+    info "   ${COLOR_GREEN}./omfk.sh release github${COLOR_RESET}"
+  fi
+}
+
 cmd_run() {
   local with_logs=0
   while [[ $# -gt 0 ]]; do
@@ -755,7 +810,8 @@ main() {
       case "${1:-}" in
         build) shift; cmd_release_build "$@" ;;
         github) shift; cmd_release_github "$@" ;;
-        *) die "Unknown release subcommand. Use: release build|github" ;;
+        status) shift; cmd_release_status "$@" ;;
+        *) die "Unknown release subcommand. Use: release build|github|status" ;;
       esac
       ;;
     logs)

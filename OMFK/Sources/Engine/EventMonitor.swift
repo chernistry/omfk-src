@@ -122,6 +122,7 @@ final class EventMonitor {
     private var optionKeyWasPressed = false  // Track Option key state for tap detection
     private var phraseBuffer: String = ""  // Buffer for entire phrase (cleared on app switch/click)
     private var lastHotkeyTime: Date = .distantPast  // Debounce hotkey
+    private var lastSelectAllTime: Date = .distantPast  // Cmd+A tracking for full-clear detection
     private var currentProxy: CGEventTapProxy?  // Store proxy for posting events "after" our tap
     
     private enum DeferredInput {
@@ -330,8 +331,9 @@ final class EventMonitor {
                 // Only trigger if buffer is empty OR buffer doesn't end with a letter/comma/period
                 // This allows words like "k.,k." to accumulate before triggering
                 if (ch == "." || ch == ",") {
+                    // Don't treat leading '.'/',' as a boundary: they can be mapped letters (e.g. ",tp" -> "без").
                     if bufferBeforeAppend.isEmpty {
-                        return true  // Standalone punctuation
+                        continue
                     }
                     let lastChar = bufferBeforeAppend.last!
                     if lastChar.isLetter || lastChar == "." || lastChar == "," {
@@ -380,8 +382,8 @@ final class EventMonitor {
         }
         
         while end > start, isDelimiterLikeCharacter(chars[end - 1]) {
-            // Don't strip '.' if preceded by a letter (could be 'ю' on RU layout)
-            if chars[end - 1] == "." && end > 1 && chars[end - 2].isLetter {
+            // Don't strip '.' or ',' if preceded by a letter (could be 'ю'/'б' on RU layout)
+            if (chars[end - 1] == "." || chars[end - 1] == ",") && end > 1 && chars[end - 2].isLetter {
                 break
             }
             end -= 1
@@ -467,8 +469,12 @@ final class EventMonitor {
             return Unmanaged.passUnretained(event)
         }
         
-        // Ignore key events with Command or Control modifiers (shortcuts like Cmd+C, Cmd+A)
+        // Ignore key events with Command or Control modifiers (shortcuts like Cmd+C, Cmd+A),
+        // but track Cmd+A so a following Delete can be treated as full-clear.
         if flags.contains(.maskCommand) || flags.contains(.maskControl) {
+            if flags.contains(.maskCommand), keyCode == 0 {
+                lastSelectAllTime = timeProvider.now
+            }
             return Unmanaged.passUnretained(event)
         }
 
@@ -517,6 +523,21 @@ final class EventMonitor {
 
         // Handle backspace/delete so internal buffers match the real text
         if keyCode == 51 {
+            let now = timeProvider.now
+            // Detect Cmd+A -> Delete full clear (common in tests and real usage).
+            if now.timeIntervalSince(lastSelectAllTime) < 0.35 {
+                lastSelectAllTime = .distantPast
+                buffer = ""
+                phraseBuffer = ""
+                lastCorrectedLength = 0
+                lastCorrectedText = ""
+                lastCorrectionTime = .distantPast
+                Task {
+                    await engine.resetSentence()
+                    await engine.resetCycling()
+                }
+                return Unmanaged.passUnretained(event)
+            }
             if !buffer.isEmpty { buffer.removeLast() }
             if !phraseBuffer.isEmpty { phraseBuffer.removeLast() }
             return Unmanaged.passUnretained(event)
@@ -530,6 +551,10 @@ final class EventMonitor {
             }
             buffer = ""
             phraseBuffer = ""  // Also clear phrase on timeout
+            Task {
+                await engine.resetSentence()
+                await engine.resetCycling()
+            }
         }
         lastEventTime = now
         

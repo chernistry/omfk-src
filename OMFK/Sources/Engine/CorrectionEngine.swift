@@ -32,6 +32,16 @@ actor CorrectionEngine {
     
     /// Single-letter tokens that map to common Russian prepositions (а в к о у и я)
     private let russianPrepositionMappings: [String: String] = LanguageMappingsConfig.shared.russianPrepositions
+
+    private lazy var unigramModels: [Language: WordFrequencyModel] = {
+        var out: [Language: WordFrequencyModel] = [:]
+        if let ru = try? WordFrequencyModel.loadLanguage("ru") { out[.russian] = ru }
+        if let en = try? WordFrequencyModel.loadLanguage("en") { out[.english] = en }
+        if let he = try? WordFrequencyModel.loadLanguage("he") { out[.hebrew] = he }
+        return out
+    }()
+    private let builtinValidator = BuiltinWordValidator()
+    private let languageData = LanguageDataConfig.shared
     
     /// Result of correction attempt, may include pending word correction
     struct CorrectionResult {
@@ -189,6 +199,34 @@ actor CorrectionEngine {
             }
             pendingWord = nil  // Clear pending regardless
         }
+
+        // Smart handling for tokens with internal punctuation/symbols:
+        // - If punctuation is actually a mapped RU/HE letter (e.g. "k.,k.", "cj;fktyb."), whole-token conversion should win.
+        // - If punctuation is a separator between multiple words (e.g. "ghbdtn.rfr"), split + per-word conversion should win.
+        if text.contains(where: { !$0.isLetter && !$0.isNumber }) {
+            let activeLayouts = await settings.activeLayouts
+            if let smart = await bestSmartCorrection(
+                for: text,
+                wholeDecision: decision,
+                wholeConfidence: adjustedConfidence,
+                context: context,
+                activeLayouts: activeLayouts,
+                mode: .automatic,
+                minConfidence: threshold
+            ) {
+                if let hyp = smart.hypothesis, let from = smart.from, let to = smart.to {
+                    let applied = await applyCorrection(original: text, corrected: smart.text, from: from, to: to, hypothesis: hyp)
+                    if sentenceDominantLanguage == nil {
+                        sentenceDominantLanguage = to
+                        sentenceWordCount = 1
+                    } else if sentenceDominantLanguage == to {
+                        sentenceWordCount += 1
+                    }
+                    return CorrectionResult(corrected: applied, pendingCorrection: pendingCorrectionResult, pendingOriginal: pendingOriginalText)
+                }
+                return CorrectionResult(corrected: smart.text, pendingCorrection: pendingCorrectionResult, pendingOriginal: pendingOriginalText)
+            }
+        }
         
         // Update sentence dominant language when we have high confidence
         if adjustedConfidence > threshold {
@@ -256,6 +294,27 @@ actor CorrectionEngine {
         }
         
         guard needsCorrection else {
+            // Context override for short ambiguous tokens inside a strong sentence.
+            // Example: "vs" should become "мы" inside a Russian sentence.
+            if let dominant = sentenceDominantLanguage,
+               dominant != decision.language,
+               sentenceWordCount >= 2,
+               text.count <= 2,
+               text.allSatisfy({ $0.isLetter }),
+               languageData.whitelistedLanguage(text) == nil {
+                let activeLayouts = await settings.activeLayouts
+                if let override = shortTokenDominantOverride(token: text, from: decision.language, to: dominant, activeLayouts: activeLayouts) {
+                    let applied = await applyCorrection(
+                        original: text,
+                        corrected: override.corrected,
+                        from: override.from,
+                        to: override.to,
+                        hypothesis: override.hypothesis
+                    )
+                    return CorrectionResult(corrected: applied, pendingCorrection: pendingCorrectionResult, pendingOriginal: pendingOriginalText)
+                }
+            }
+
             logger.info("ℹ️ No correction needed - text is in correct layout, but creating cycling state for manual override")
             
             // Even if no correction needed, create cycling state so user can force-convert
@@ -488,59 +547,37 @@ actor CorrectionEngine {
             // Single segment - no benefit from per-segment analysis
             return nil
         }
-        
-        var result: [String] = []
+
+        var out = ""
+        out.reserveCapacity(text.count)
         var anyChanged = false
-        
+
+        let context = DetectorContext(lastLanguage: nil)
+
         for segment in segments {
             // Preserve whitespace as-is
             if segment.allSatisfy({ $0.isWhitespace || $0.isNewline }) {
-                result.append(segment)
+                out.append(segment)
                 continue
             }
-            
-            // Analyze this segment
-            let decision = await router.route(token: segment, context: DetectorContext(lastLanguage: nil), mode: .manual)
-            
-            // Check if segment needs correction
-            let needsCorrection: Bool
-            let sourceLayout: Language
-            
-            switch decision.layoutHypothesis {
-            case .ru, .en, .he:
-                needsCorrection = false
-                sourceLayout = decision.language
-            case .ruFromEnLayout:
-                needsCorrection = true
-                sourceLayout = .english
-            case .heFromEnLayout:
-                needsCorrection = true
-                sourceLayout = .english
-            case .enFromRuLayout:
-                needsCorrection = true
-                sourceLayout = .russian
-            case .enFromHeLayout:
-                needsCorrection = true
-                sourceLayout = .hebrew
-            case .heFromRuLayout:
-                needsCorrection = true
-                sourceLayout = .russian
-            case .ruFromHeLayout:
-                needsCorrection = true
-                sourceLayout = .hebrew
-            }
-            
-            if needsCorrection, decision.confidence > 0.4,
-               let corrected = LayoutMapper.shared.convertBest(segment, from: sourceLayout, to: decision.language, activeLayouts: activeLayouts) {
-                result.append(corrected)
+
+            if let smart = await bestSmartCorrection(
+                for: segment,
+                wholeDecision: nil,
+                wholeConfidence: nil,
+                context: context,
+                activeLayouts: activeLayouts,
+                mode: .manual,
+                minConfidence: 0.25
+            ) {
+                out.append(smart.text)
                 anyChanged = true
-                logger.debug("📝 Segment '\(segment)' → '\(corrected)' (\(decision.layoutHypothesis.rawValue))")
             } else {
-                result.append(segment)
+                out.append(segment)
             }
         }
-        
-        return anyChanged ? result.joined() : nil
+
+        return anyChanged ? out : nil
     }
     
     /// Split text into segments (words + whitespace preserved separately)
@@ -562,6 +599,249 @@ actor CorrectionEngine {
             segments.append(current)
         }
         return segments
+    }
+
+    private struct SmartCorrection: Sendable {
+        let text: String
+        let hypothesis: LanguageHypothesis?
+        let from: Language?
+        let to: Language?
+        let score: Double
+    }
+
+    private struct CompoundPart: Sendable {
+        let isWord: Bool
+        let text: String
+    }
+
+    private func languages(for hypothesis: LanguageHypothesis) -> (source: Language, target: Language)? {
+        switch hypothesis {
+        case .ruFromEnLayout: return (.english, .russian)
+        case .heFromEnLayout: return (.english, .hebrew)
+        case .enFromRuLayout: return (.russian, .english)
+        case .heFromRuLayout: return (.russian, .hebrew)
+        case .enFromHeLayout: return (.hebrew, .english)
+        case .ruFromHeLayout: return (.hebrew, .russian)
+        case .ru, .en, .he: return nil
+        }
+    }
+
+    private func fastWordScore(_ word: String, language: Language) -> Double {
+        let trimmed = word.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return 0.0 }
+        let unigramRaw = unigramModels[language]?.score(trimmed) ?? 0.0
+        // Ignore ultra-rare unigram hits for English (they often include gibberish-like tokens).
+        let unigram: Double
+        switch language {
+        case .english:
+            unigram = unigramRaw >= 0.20 ? unigramRaw : 0.0
+        case .russian, .hebrew:
+            unigram = unigramRaw
+        }
+        let builtin = builtinValidator.confidence(for: trimmed, language: language)
+        return max(unigram, builtin)
+    }
+
+    private func bestWordScore(_ word: String) -> Double {
+        max(
+            fastWordScore(word, language: .english),
+            fastWordScore(word, language: .russian),
+            fastWordScore(word, language: .hebrew)
+        )
+    }
+
+    private func fastTextScore(_ text: String) -> Double {
+        let words = text
+            .split(whereSeparator: { !$0.isLetter })
+            .map { String($0) }
+            .filter { !$0.isEmpty }
+        guard !words.isEmpty else { return 0.0 }
+        return words.reduce(0.0) { $0 + bestWordScore($1) }
+    }
+
+    private func splitWordRunsAndDelimiters(_ text: String) -> [CompoundPart] {
+        guard !text.isEmpty else { return [] }
+
+        var parts: [CompoundPart] = []
+        parts.reserveCapacity(min(16, text.count))
+
+        var current = ""
+        current.reserveCapacity(min(16, text.count))
+        var inWord: Bool? = nil
+
+        func flush() {
+            guard !current.isEmpty, let inWord else { return }
+            parts.append(CompoundPart(isWord: inWord, text: current))
+            current.removeAll(keepingCapacity: true)
+        }
+
+        for ch in text {
+            let isWordChar = ch.isLetter || ch.isNumber
+            if let inWord, inWord != isWordChar {
+                flush()
+            }
+            inWord = isWordChar
+            current.append(ch)
+        }
+        flush()
+        return parts
+    }
+
+    private func buildWholeCandidate(
+        token: String,
+        decision: LanguageDecision,
+        confidence: Double,
+        activeLayouts: [String: String],
+        minConfidence: Double
+    ) -> SmartCorrection {
+        if decision.layoutHypothesis.rawValue.contains("_from_"),
+           confidence >= minConfidence,
+           let (source, target) = languages(for: decision.layoutHypothesis),
+           let converted = LayoutMapper.shared.convertBest(token, from: source, to: target, activeLayouts: activeLayouts),
+           converted != token {
+            return SmartCorrection(
+                text: converted,
+                hypothesis: decision.layoutHypothesis,
+                from: source,
+                to: target,
+                score: fastTextScore(converted)
+            )
+        }
+        return SmartCorrection(text: token, hypothesis: nil, from: nil, to: nil, score: fastTextScore(token))
+    }
+
+    private func buildSplitCandidate(
+        token: String,
+        context: DetectorContext,
+        activeLayouts: [String: String],
+        mode: DetectionMode,
+        minConfidence: Double
+    ) async -> SmartCorrection {
+        let parts = splitWordRunsAndDelimiters(token)
+        guard !parts.isEmpty else {
+            return SmartCorrection(text: token, hypothesis: nil, from: nil, to: nil, score: 0.0)
+        }
+
+        var result = ""
+        result.reserveCapacity(token.count)
+
+        var hypCounts: [LanguageHypothesis: Int] = [:]
+
+        for part in parts {
+            guard part.isWord else {
+                result.append(part.text)
+                continue
+            }
+
+            let decision = await router.route(token: part.text, context: context, mode: mode)
+            if decision.layoutHypothesis.rawValue.contains("_from_"),
+               decision.confidence >= minConfidence,
+               let (source, target) = languages(for: decision.layoutHypothesis),
+               let corrected = LayoutMapper.shared.convertBest(part.text, from: source, to: target, activeLayouts: activeLayouts),
+               corrected != part.text {
+                result.append(corrected)
+                hypCounts[decision.layoutHypothesis, default: 0] += 1
+            } else {
+                result.append(part.text)
+            }
+        }
+
+        let dominantHypothesis = hypCounts.max(by: { $0.value < $1.value })?.key
+        let langPair = dominantHypothesis.flatMap(languages(for:))
+
+        return SmartCorrection(
+            text: result,
+            hypothesis: dominantHypothesis,
+            from: langPair?.source,
+            to: langPair?.target,
+            score: fastTextScore(result)
+        )
+    }
+
+    private func bestSmartCorrection(
+        for token: String,
+        wholeDecision: LanguageDecision?,
+        wholeConfidence: Double?,
+        context: DetectorContext,
+        activeLayouts: [String: String],
+        mode: DetectionMode,
+        minConfidence: Double
+    ) async -> SmartCorrection? {
+        let originalScore = fastTextScore(token)
+
+        let decision: LanguageDecision
+        if let wholeDecision {
+            decision = wholeDecision
+        } else {
+            decision = await router.route(token: token, context: context, mode: mode)
+        }
+
+        let confidence = wholeConfidence ?? decision.confidence
+
+        let whole = buildWholeCandidate(
+            token: token,
+            decision: decision,
+            confidence: confidence,
+            activeLayouts: activeLayouts,
+            minConfidence: minConfidence
+        )
+        let split = await buildSplitCandidate(
+            token: token,
+            context: context,
+            activeLayouts: activeLayouts,
+            mode: mode,
+            minConfidence: minConfidence
+        )
+
+        let best: SmartCorrection
+        if whole.hypothesis != nil {
+            // When the router thinks whole-token correction is valid, only switch to split-mode
+            // if it's meaningfully better. This avoids flipping to a different language just
+            // because a short split-part looks "valid" by score.
+            best = (split.score > whole.score + 0.25) ? split : whole
+        } else {
+            // No strong whole-token correction → prefer split on ties.
+            best = (split.score >= whole.score) ? split : whole
+        }
+        guard best.text != token else { return nil }
+        // If our fast scoring can't distinguish (e.g. missing lexicon form),
+        // still allow correction when the original scored as pure "unknown".
+        if best.score > originalScore || (best.hypothesis != nil && originalScore == 0.0) {
+            return best
+        }
+        return nil
+    }
+
+    private struct ShortTokenOverride: Sendable {
+        let corrected: String
+        let hypothesis: LanguageHypothesis
+        let from: Language
+        let to: Language
+    }
+
+    private func shortTokenDominantOverride(
+        token: String,
+        from: Language,
+        to: Language,
+        activeLayouts: [String: String]
+    ) -> ShortTokenOverride? {
+        guard from != to else { return nil }
+        guard token.count <= 2 else { return nil }
+        guard token.allSatisfy({ $0.isLetter }) else { return nil }
+
+        let hyp = hypothesisFor(source: from, target: to)
+        guard hyp.rawValue.contains("_from_") else { return nil }
+
+        guard let converted = LayoutMapper.shared.convertBest(token, from: from, to: to, activeLayouts: activeLayouts),
+              converted != token else { return nil }
+
+        let sourceScore = fastWordScore(token, language: from)
+        let targetScore = fastWordScore(converted, language: to)
+
+        // Only override when the target is a clearly better/common word in the dominant language.
+        guard targetScore >= 0.70, targetScore >= sourceScore + 0.25 else { return nil }
+
+        return ShortTokenOverride(corrected: converted, hypothesis: hyp, from: from, to: to)
     }
     
     /// Cycle to next alternative on repeated hotkey press

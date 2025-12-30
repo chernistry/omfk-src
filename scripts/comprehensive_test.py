@@ -520,7 +520,7 @@ def run_context_boost_test(words, expected_final):
     # Type words one by one with spaces (real typing, not paste)
     for word in words:
         check_abort()  # Check for F10 abort between words
-        type_word_and_space_real(word, "us", char_delay=0.012, space_wait=0.5)
+        type_word_and_space_real(word, "us", char_delay=0.05, space_wait=0.5)
     
     time.sleep(0.2)
     result = get_result().rstrip()

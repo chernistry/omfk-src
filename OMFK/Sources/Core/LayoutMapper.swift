@@ -468,20 +468,50 @@ public final class LayoutMapper: @unchecked Sendable {
         return convert(text, fromLayout: fromID, toLayout: toID)
     }
     
-    /// Try ALL target layouts for a language and return all possible conversions
-    /// This handles cases where user might have different layout variant than detected
-    /// e.g., user has Hebrew QWERTY but typed as if on Hebrew Mac
+    /// Try all relevant layout variants and return all possible conversions.
+    /// - Always tries **all target layouts** for the destination language.
+    /// - Additionally tries **all source layouts** for RU/HE (small variant sets) to handle cases
+    ///   where the detected/selected layout variant doesn't match what produced the typed text.
+    ///
+    /// Example: user typed English on Russian Phonetic → Cyrillic token like "челло".
+    /// If the app is configured for "russianwin", deterministic RU→EN conversion fails, but trying
+    /// RU source variants recovers "hello".
     public func convertAllVariants(_ text: String, from: Language, to: Language, activeLayouts: [String: String]? = nil) -> [(layout: String, result: String)] {
         guard let targetLayouts = allLayoutsPerLanguage[to] else { return [] }
         let fromID = activeLayouts?[from.rawValue] ?? self.activeLayouts[from] ?? "us"
-        
-        var results: [(String, String)] = []
-        for tgtLayout in targetLayouts {
-            if let converted = convertBest(text, fromLayout: fromID, toLayout: tgtLayout),
-               converted != text {  // Only include if actually changed
-                results.append((tgtLayout, converted))
+        let toID = activeLayouts?[to.rawValue] ?? self.activeLayouts[to] ?? "us"
+
+        var sourceLayouts: [String] = [fromID]
+        if (from == .russian || from == .hebrew),
+           let allSources = allLayoutsPerLanguage[from] {
+            for src in allSources where !sourceLayouts.contains(src) {
+                sourceLayouts.append(src)
             }
         }
+
+        var orderedTargets: [String] = [toID]
+        for tgt in targetLayouts where !orderedTargets.contains(tgt) {
+            orderedTargets.append(tgt)
+        }
+
+        var results: [(String, String)] = []
+        results.reserveCapacity(min(orderedTargets.count, 8))
+
+        var seenResults = Set<String>()
+        seenResults.reserveCapacity(min(orderedTargets.count, 16))
+
+        for srcLayout in sourceLayouts {
+            for tgtLayout in orderedTargets {
+                guard let converted = convertBest(text, fromLayout: srcLayout, toLayout: tgtLayout),
+                      converted != text,
+                      seenResults.insert(converted).inserted else {
+                    continue
+                }
+                let label = (srcLayout == fromID) ? tgtLayout : "\(srcLayout)->\(tgtLayout)"
+                results.append((label, converted))
+            }
+        }
+
         return results
     }
     

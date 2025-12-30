@@ -42,7 +42,46 @@ final class InputSourceManager {
     private init() {
         logger.info("InputSourceManager initialized")
     }
-    
+
+    /// Switches to an input source that matches our internal layout ID (as used in `layouts.json`),
+    /// e.g. "russian_phonetic", "hebrew_qwerty", "us".
+    ///
+    /// Returns `true` if a matching enabled layout was found and selected.
+    @discardableResult
+    func switchToLayoutVariant(_ layoutId: String) -> Bool {
+        let filter: [CFString: Any] = [
+            kTISPropertyInputSourceType: kTISTypeKeyboardLayout as Any
+        ]
+
+        guard let list = TISCreateInputSourceList(filter as CFDictionary, false)?.takeRetainedValue() else {
+            logger.warning("Failed to get input source list for variant switch")
+            return false
+        }
+
+        let count = CFArrayGetCount(list)
+        for index in 0..<count {
+            guard let src = CFArrayGetValueAtIndex(list, index) else { continue }
+            let source = unsafeBitCast(src, to: TISInputSource.self)
+
+            guard let idPtr = TISGetInputSourceProperty(source, kTISPropertyInputSourceID) else { continue }
+            let macOSID = unsafeBitCast(idPtr, to: CFString.self) as String
+
+            guard macOSToLayoutID[macOSID] == layoutId else { continue }
+
+            let status = TISSelectInputSource(source)
+            if status == noErr {
+                logger.info("✅ Switched input source to layout variant: \(layoutId, privacy: .public)")
+                return true
+            } else {
+                logger.error("❌ Failed to select input source for layout variant \(layoutId, privacy: .public), OSStatus: \(status)")
+                return false
+            }
+        }
+
+        logger.warning("No matching input source found for layout variant: \(layoutId, privacy: .public)")
+        return false
+    }
+
     /// Detects all installed keyboard layouts and returns our layout IDs
     func detectInstalledLayouts() -> [String: String] {
         var best: [String: (id: String, score: Int)] = [

@@ -109,14 +109,22 @@ actor LanguageEnsemble {
         
         // If input is primarily CYRILLIC
         if hasCyrillic {
-            // Check if input (Russian) maps to Hebrew (via RU→EN→HE)
-            if let heMapped = LayoutMapper.shared.convert(token, from: .russian, to: .hebrew, activeLayouts: activeLayouts) {
-                hypothesisScores[.heFromRuLayout] = evaluate(text: heMapped, target: .hebrew, context: context, isMapped: true)
+            // Try ALL Russian layout variants for reverse mappings.
+            // This supports Russian Phonetic and other RU variants without requiring perfect layout detection.
+            let heVariants = LayoutMapper.shared.convertAllSourceVariants(token, from: .russian, to: .hebrew, activeLayouts: activeLayouts)
+            for (_, converted) in heVariants {
+                let score = evaluate(text: converted, target: .hebrew, context: context, isMapped: true)
+                if hypothesisScores[.heFromRuLayout] == nil || score > hypothesisScores[.heFromRuLayout]! {
+                    hypothesisScores[.heFromRuLayout] = score
+                }
             }
-            
-            // Reverse mappings (EN from RU)
-            if let enFromRu = LayoutMapper.shared.convert(token, from: .russian, to: .english, activeLayouts: activeLayouts) {
-                hypothesisScores[.enFromRuLayout] = evaluate(text: enFromRu, target: .english, context: context, isMapped: true)
+
+            let enVariants = LayoutMapper.shared.convertAllSourceVariants(token, from: .russian, to: .english, activeLayouts: activeLayouts)
+            for (_, converted) in enVariants {
+                let score = evaluate(text: converted, target: .english, context: context, isMapped: true)
+                if hypothesisScores[.enFromRuLayout] == nil || score > hypothesisScores[.enFromRuLayout]! {
+                    hypothesisScores[.enFromRuLayout] = score
+                }
             }
         }
         

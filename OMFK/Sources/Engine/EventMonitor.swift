@@ -763,8 +763,12 @@ final class EventMonitor {
                     buffer = ""
                     
                     if let targetLang = await engine.getLastCorrectionTargetLanguage() {
-                        InputSourceManager.shared.switchTo(language: targetLang)
-                        logger.info("🔄 Switched system layout to: \(targetLang.rawValue)")
+                        let preferredLayout = settings.activeLayouts[targetLang.rawValue]
+                        let didSwitch = preferredLayout.map { InputSourceManager.shared.switchToLayoutVariant($0) } ?? false
+                        if !didSwitch {
+                            InputSourceManager.shared.switchTo(language: targetLang)
+                        }
+                        logger.info("🔄 Switched system layout to: \(targetLang.rawValue) (\(preferredLayout ?? "auto"))")
                     }
                 }
                 return
@@ -826,8 +830,12 @@ final class EventMonitor {
             
             // Switch system layout to match the corrected text language
             if let targetLang = await engine.getLastCorrectionTargetLanguage() {
-                InputSourceManager.shared.switchTo(language: targetLang)
-                logger.info("🔄 Switched system layout to: \(targetLang.rawValue)")
+                let preferredLayout = settings.activeLayouts[targetLang.rawValue]
+                let didSwitch = preferredLayout.map { InputSourceManager.shared.switchToLayoutVariant($0) } ?? false
+                if !didSwitch {
+                    InputSourceManager.shared.switchTo(language: targetLang)
+                }
+                logger.info("🔄 Switched system layout to: \(targetLang.rawValue) (\(preferredLayout ?? "auto"))")
             }
         } else {
             logger.warning("❌ Manual correction failed for: \(DecisionLogger.tokenSummary(textToConvert), privacy: .public)")
@@ -843,35 +851,37 @@ final class EventMonitor {
         lastSelectionWasExplicit = false
         let timeSinceLastKey = timeProvider.now.timeIntervalSince(lastEventTime)
         let bundleId = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
-        
-        // Fast path: use buffer if fresh (< 0.5s)
-        if !buffer.isEmpty && timeSinceLastKey < 0.5 {
-            lastSelectionWasExplicit = false
-            return buffer
-        }
-        
-        // Check if this app is known to not support AX selection
+
+        // Selection should take priority over the internal buffer: users can select arbitrary text
+        // unrelated to our recent typing (especially for single-word hotkey corrections).
         if appsWithoutAXSelection.contains(bundleId) {
-            // Go straight to clipboard fallback
-            if let clipboardText = await getSelectedTextViaClipboard(proxy: proxy) {
+            // App is known to not support AX selection: go straight to clipboard.
+            if let clipboardText = await getSelectedTextViaClipboard(proxy: proxy), !clipboardText.isEmpty {
                 lastSelectionWasExplicit = true
                 return clipboardText
             }
         } else {
-            // Try AX selection first (instant, no delay)
+            // Try AX selection first (instant, no delay).
             if let axText = getSelectedTextViaAccessibility(), !axText.isEmpty {
                 lastSelectionWasExplicit = true
                 return axText
             }
-            
-            // AX returned empty - try clipboard fallback
-            if let clipboardText = await getSelectedTextViaClipboard(proxy: proxy), !clipboardText.isEmpty {
-                // Remember this app doesn't support AX selection
+        }
+
+        // Fast path: use buffer if fresh (< 0.5s). This avoids clipboard side-effects when nothing is selected.
+        if !buffer.isEmpty && timeSinceLastKey < 0.5 {
+            lastSelectionWasExplicit = false
+            return buffer
+        }
+
+        // Clipboard fallback (for apps without AX selection or when AX returned empty but selection still exists).
+        if let clipboardText = await getSelectedTextViaClipboard(proxy: proxy), !clipboardText.isEmpty {
+            if !appsWithoutAXSelection.contains(bundleId) {
                 appsWithoutAXSelection.insert(bundleId)
                 logger.info("📋 App '\(bundleId)' added to clipboard fallback list")
-                lastSelectionWasExplicit = true
-                return clipboardText
             }
+            lastSelectionWasExplicit = true
+            return clipboardText
         }
         
         // Fallback to buffer even if stale

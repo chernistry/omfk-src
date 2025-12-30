@@ -423,8 +423,14 @@ actor CorrectionEngine {
         // If auto-switch is enabled, switch the actual input source to the target language.
         if await settings.autoSwitchLayout {
             logger.info("🔄 Auto-switch enabled - switching input source to \(to.rawValue, privacy: .public)")
+            let activeLayouts = await settings.activeLayouts
             await MainActor.run {
-                InputSourceManager.shared.switchTo(language: to)
+                if let preferredLayout = activeLayouts[to.rawValue],
+                   InputSourceManager.shared.switchToLayoutVariant(preferredLayout) {
+                    // Switched to the user's configured variant.
+                } else {
+                    InputSourceManager.shared.switchTo(language: to)
+                }
             }
         }
         return corrected
@@ -441,9 +447,20 @@ actor CorrectionEngine {
         }
         
         let activeLayouts = await settings.activeLayouts
-        guard let corrected = LayoutMapper.shared.convertBest(text, from: sourceLayout, to: decision.language, activeLayouts: activeLayouts) else {
-            return nil
+        let variants = LayoutMapper.shared.convertAllVariants(text, from: sourceLayout, to: decision.language, activeLayouts: activeLayouts)
+
+        var corrected: String? = nil
+        for (_, converted) in variants {
+            if BuiltinLexicon.contains(converted, language: decision.language) {
+                corrected = converted
+                break
+            }
+            if corrected == nil {
+                corrected = converted
+            }
         }
+
+        guard let corrected else { return nil }
         
         return await applyCorrection(original: text, corrected: corrected, from: sourceLayout, to: decision.language, hypothesis: decision.layoutHypothesis)
     }
@@ -498,13 +515,24 @@ actor CorrectionEngine {
         var otherAlternatives: [(text: String, hyp: LanguageHypothesis, score: Double)] = []
         
         for (from, to) in conversions {
-            if let converted = LayoutMapper.shared.convertBest(text, from: from, to: to, activeLayouts: activeLayouts),
-               converted != text,
-               !alternatives.contains(where: { $0.text == converted }),
-               !otherAlternatives.contains(where: { $0.text == converted }) {
-                let hyp = hypothesisFor(source: from, target: to)
+            let hyp = hypothesisFor(source: from, target: to)
+            let variants = LayoutMapper.shared.convertAllVariants(text, from: from, to: to, activeLayouts: activeLayouts)
+
+            var bestCandidate: (text: String, score: Double)? = nil
+            for (_, converted) in variants {
+                guard converted != text else { continue }
+                guard !alternatives.contains(where: { $0.text == converted }) else { continue }
+                guard !otherAlternatives.contains(where: { $0.text == converted }) else { continue }
+
+                let quality = fastTextScore(converted)
+                if bestCandidate == nil || quality > bestCandidate!.score {
+                    bestCandidate = (converted, quality)
+                }
+            }
+
+            if let bestCandidate {
                 let score = (hyp == decision.layoutHypothesis) ? 1.0 : 0.5
-                otherAlternatives.append((text: converted, hyp: hyp, score: score))
+                otherAlternatives.append((text: bestCandidate.text, hyp: hyp, score: score))
             }
         }
         

@@ -255,67 +255,43 @@ public final class LayoutMapper: @unchecked Sendable {
                 
                 // Check if this is word-separator punctuation that should be preserved
                 // Special case: '.' and ',' might be part of a word on RU/HE layouts
-                // (. = ю on RU, , = б on RU), so don't preserve them if between letters
+                // (. = ю on RU, , = б on RU), so don't preserve them - always convert
                 if wordSeparatorPunct.contains(c) && lastWasLetter {
-                    let nextIdx = i + 1
-                    var shouldPreserve = false
-                    
-                    // For '.' and ',', check if they're between letters (might be part of word)
-                    if (c == "." || c == ",") && nextIdx < chars.count {
-                        let nextChar = chars[nextIdx]
-                        // If next char is a letter or would convert to a letter, DON'T preserve
-                        // (this punctuation is likely part of a word on target layout)
-                        if nextChar.isLetter {
-                            shouldPreserve = false
-                        } else if let (nextKey, nextMod) = sourceMap[nextChar],
-                           let nextMapping = fullMap[nextKey]?[toLayout] {
-                            let nextTarget: String?
-                            switch nextMod {
-                            case "n": nextTarget = nextMapping.n
-                            case "s": nextTarget = nextMapping.s
-                            case "a": nextTarget = nextMapping.a
-                            case "sa": nextTarget = nextMapping.sa
-                            default: nextTarget = nil
-                            }
-                            if let s = nextTarget, s.count == 1, let nc = s.first, nc.isLetter {
-                                // Next char converts to a letter - this punct is mid-word, don't preserve
-                                shouldPreserve = false
-                            } else {
-                                shouldPreserve = true
-                            }
-                        } else {
-                            shouldPreserve = true
-                        }
-                    } else if nextIdx >= chars.count {
-                        // End of string - preserve punctuation after word
-                        shouldPreserve = true
+                    // For '.' and ',', NEVER preserve - they should convert
+                    if c == "." || c == "," {
+                        // Don't preserve, fall through to conversion logic
                     } else {
-                        let nextChar = chars[nextIdx]
-                        // Preserve if next char is whitespace or another punctuation
-                        if nextChar.isWhitespace || nextChar.isNewline || !nextChar.isLetter {
+                        // For other punctuation, preserve as before
+                        let nextIdx = i + 1
+                        var shouldPreserve = false
+                        
+                        if nextIdx >= chars.count {
                             shouldPreserve = true
-                        } else if let (nextKey, nextMod) = sourceMap[nextChar],
-                           let nextMapping = fullMap[nextKey]?[toLayout] {
-                            // Check if next char would convert to a letter
-                            let nextTarget: String?
-                            switch nextMod {
-                            case "n": nextTarget = nextMapping.n
-                            case "s": nextTarget = nextMapping.s
-                            case "a": nextTarget = nextMapping.a
-                            case "sa": nextTarget = nextMapping.sa
-                            default: nextTarget = nil
-                            }
-                            if let s = nextTarget, s.count == 1, let nc = s.first, nc.isLetter {
-                                // Next char converts to a letter - preserve this punctuation
+                        } else {
+                            let nextChar = chars[nextIdx]
+                            if nextChar.isWhitespace || nextChar.isNewline || !nextChar.isLetter {
                                 shouldPreserve = true
+                            } else if let (nextKey, nextMod) = sourceMap[nextChar],
+                               let nextMapping = fullMap[nextKey]?[toLayout] {
+                                let nextTarget: String?
+                                switch nextMod {
+                                case "n": nextTarget = nextMapping.n
+                                case "s": nextTarget = nextMapping.s
+                                case "a": nextTarget = nextMapping.a
+                                case "sa": nextTarget = nextMapping.sa
+                                default: nextTarget = nil
+                                }
+                                if let s = nextTarget, s.count == 1, let nc = s.first, nc.isLetter {
+                                    shouldPreserve = true
+                                }
                             }
                         }
-                    }
-                    
-                    if shouldPreserve {
-                        result.append(c)
-                        lastWasLetter = false
-                        continue
+                        
+                        if shouldPreserve {
+                            result.append(c)
+                            lastWasLetter = false
+                            continue
+                        }
                     }
                 }
 
@@ -427,27 +403,19 @@ public final class LayoutMapper: @unchecked Sendable {
                 // Special case: '.' and ',' might be part of a word on RU/HE layouts
                 if wordSeparatorPunct.contains(c) && !buffer.isEmpty {
                     let nextIdx = i + 1
-                    var shouldPreserve = false
                     
-                    // For '.' and ',', check if they're between letters (might be part of word)
-                    if (c == "." || c == ",") && nextIdx < chars.count {
-                        let nextChar = chars[nextIdx]
-                        // If next char is a letter or converts to a letter, DON'T preserve
-                        // (this punctuation is likely part of a word on target layout)
-                        if nextChar.isLetter || isConvertibleWordChar(nextChar) {
-                            // Don't preserve - let it convert as part of the word
-                            buffer.append(c)
-                            i += 1
-                            continue
-                        } else {
-                            shouldPreserve = true
-                        }
-                    } else if nextIdx >= chars.count {
-                        // End of string - preserve punctuation after word
+                    // For '.' and ',', ALWAYS add to buffer (they convert to letters on RU/HE)
+                    if c == "." || c == "," {
+                        buffer.append(c)
+                        continue
+                    }
+                    
+                    // For other punctuation, preserve as before
+                    var shouldPreserve = false
+                    if nextIdx >= chars.count {
                         shouldPreserve = true
                     } else {
                         let nextChar = chars[nextIdx]
-                        // Preserve if next char is whitespace or converts to a letter
                         if nextChar.isWhitespace || nextChar.isNewline {
                             shouldPreserve = true
                         } else if nextChar.isLetter || isConvertibleWordChar(nextChar) {
@@ -458,7 +426,6 @@ public final class LayoutMapper: @unchecked Sendable {
                     if shouldPreserve {
                         flushBuffer()
                         result.append(c)
-                        i += 1
                         continue
                     }
                 }

@@ -23,6 +23,11 @@
 > **📦 This is the source code repository.**  
 > For pre-built installers, go to [chernistry/omfk](https://github.com/chernistry/omfk/releases/latest).
 
+> **🔒 Why source code is public:**  
+> OMFK monitors keyboard input - a sensitive area. This repository provides full transparency so you can verify the app doesn't collect or transmit any data. Everything runs 100% on-device.
+> 
+> **Note:** Pre-trained model weights and training data are not included. To use OMFK, download the pre-built installer from the [releases repository](https://github.com/chernistry/omfk/releases/latest).
+
 </div>
 
 ---

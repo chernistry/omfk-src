@@ -328,7 +328,7 @@ final class EventMonitor {
             // Punctuation triggers boundary if:
             // 1. Buffer was empty (standalone punctuation)
             // 2. OR buffer ends with letter (punctuation after word)
-            if Self.wordBoundaryPunctuation.contains(ch) || Self.trailingDelimiters.contains(ch) || ch == "-" || ch == "—" || ch == "–" || ch == ";" {
+            if Self.wordBoundaryPunctuation.contains(ch) || Self.trailingDelimiters.contains(ch) {
                 if bufferWasEmpty {
                     return true
                 }

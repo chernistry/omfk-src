@@ -261,13 +261,11 @@ def detect_input_layout(text: str) -> str | None:
     return None
 
 
-def type_char_real(char: str, layout: str, delay: float = 0.012) -> bool:
+def type_char_real(char: str, layout: str, delay: float = 0.008) -> bool:
     """Type a single character by injecting the Unicode character directly.
 
     This avoids flakiness from macOS input-source switching mid-test.
     """
-    ensure_textedit_focused_auto()
-
     # Emoji / non-BMP are more reliable via paste under PyObjC.
     if ord(char) > 0xFFFF:
         clipboard_set(char)
@@ -464,10 +462,8 @@ def run_single_test_real(input_text: str, expected: str) -> tuple[bool, str]:
     if not switch_system_layout(layout):
         return False, f"[failed to switch to {layout}]"
     
-    # Activate TextEdit and verify
-    subprocess.run(["osascript", "-e", 'tell application "TextEdit" to activate'], capture_output=True)
-    time.sleep(0.1)
-    check_focus()
+    # Ensure TextEdit is focused before typing
+    ensure_textedit_focused_auto(retries=5)
     
     clear_field()
     time.sleep(0.15)
@@ -476,18 +472,16 @@ def run_single_test_real(input_text: str, expected: str) -> tuple[bool, str]:
     words = input_text.split()
     for i, word in enumerate(words):
         check_abort()  # Check for F10 abort between words
-        _ = type_string_real(word, layout, char_delay=0.012)
-
-        check_focus()
+        _ = type_string_real(word, layout, char_delay=0.008)
 
         # Type space via key code (so OMFK sees it)
         subprocess.run(['osascript', '-e', 'tell application "System Events" to key code 49'], capture_output=True)
 
         # Give OMFK time to apply auto-correction before typing the next token.
         if i == len(words) - 1:
-            time.sleep(0.45)
+            time.sleep(0.25)
         else:
-            time.sleep(0.35)
+            time.sleep(0.20)
     
     expected_for_wait = expected if expected.endswith(" ") else expected + " "
     result = wait_for_result(expected_for_wait, timeout=1.5)
@@ -566,7 +560,7 @@ def ensure_textedit_focused_auto(retries: int = 30) -> None:
     for _ in range(max(1, retries)):
         subprocess.run(["open", "-a", "TextEdit"], capture_output=True)
         subprocess.run(["osascript", "-e", script], capture_output=True)
-        time.sleep(0.20)
+        time.sleep(0.10)
         if get_frontmost_app() == "TextEdit":
             return
     check_focus()
@@ -591,10 +585,8 @@ def run_single_test(input_text, expected):
     """Run single correction test."""
     check_abort()  # Check for F10 abort
 
-    # Ensure TextEdit is frontmost (focus loss leads to false negatives).
-    subprocess.run(["osascript", "-e", 'tell application "TextEdit" to activate'], capture_output=True)
-    time.sleep(0.1)
-    check_focus()
+    # Ensure TextEdit is focused
+    ensure_textedit_focused_auto(retries=5)
     
     clear_field()
     time.sleep(0.12)
@@ -607,7 +599,7 @@ def run_single_test(input_text, expected):
         clipboard_set(input_text)
         cmd_key(9)
         _ = wait_for_result(input_text, timeout=0.8)
-    check_focus()
+    ensure_textedit_focused_auto(retries=3)
     
     cmd_key(0)  # Select all
     time.sleep(0.15)
@@ -970,6 +962,22 @@ def main():
 
         if not categories or "edge" in categories or "edge_cases_system" in categories:
             run_input_expected_category("edge_cases_system", "EDGE CASES (SYSTEM)")
+        
+        # GitHub Issues
+        if not categories or "issue" in categories or "issue_2" in categories:
+            run_input_expected_category("issue_2_prepositions", "ISSUE #2: Prepositions")
+        
+        if not categories or "issue" in categories or "issue_3" in categories:
+            run_input_expected_category("issue_3_punctuation_boundaries", "ISSUE #3: Punctuation Boundaries")
+        
+        if not categories or "issue" in categories or "issue_6" in categories:
+            run_input_expected_category("issue_6_technical_text", "ISSUE #6: Technical Text")
+        
+        if not categories or "issue" in categories or "issue_7" in categories:
+            run_input_expected_category("issue_7_numbers_punctuation", "ISSUE #7: Numbers Punctuation")
+        
+        if not categories or "issue" in categories or "issue_8" in categories:
+            run_input_expected_category("issue_8_emoji_unicode", "ISSUE #8: Emoji Unicode")
         
         # Context boost
         if not categories or "context" in categories or "context_boost_hard" in categories:

@@ -176,18 +176,17 @@ actor CorrectionEngine {
             print("📌 DEBUG: Checking pending word: '\(pending.text)' isFirst=\(pending.isFirstWord) conf=\(pending.adjustedConfidence)")
             print("📌 DEBUG: Current word decision: lang=\(decision.language.rawValue) hyp=\(decision.layoutHypothesis.rawValue) conf=\(adjustedConfidence) targetLang=\(currentTargetLang.rawValue)")
             
-            // Special handling for first-word Russian prepositions - check this FIRST
-            if pending.isFirstWord,
-               pending.text.count == 1,
+            // Special handling for Russian prepositions
+            if pending.text.count == 1,
                let expectedRu = russianPrepositionMappings[pending.text.lowercased()],
                (currentTargetLang == .russian || adjustedConfidence > threshold && decision.layoutHypothesis.rawValue.contains("ru")) {
-                // First word is single letter that maps to Russian preposition, and current word is Russian
+                // Single letter that maps to Russian preposition, and current word is Russian
                 // Use our direct mapping instead of LayoutMapper (more reliable for single chars)
                 let corrected = pending.text.first?.isUppercase == true ? expectedRu.uppercased() : expectedRu
                 _ = await applyCorrection(original: pending.text, corrected: corrected, from: .english, to: .russian, hypothesis: .ruFromEnLayout)
                 pendingCorrectionResult = corrected
                 pendingOriginalText = pending.text
-                print("✅ DEBUG: First-word preposition corrected: '\(pending.text)' → '\(corrected)'")
+                print("✅ DEBUG: Preposition corrected: '\(pending.text)' → '\(corrected)'")
             }
             // Standard context boost: if current word is high confidence and same language as pending word's decision
             else if adjustedConfidence > threshold && currentTargetLang == pending.decision.layoutHypothesis.targetLanguage {

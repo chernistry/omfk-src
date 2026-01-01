@@ -1,0 +1,91 @@
+OMFK Comprehensive Test Runner [REAL TYPING]
+======================================================================
+💡 Press F10 at any time to abort the test
+======================================================================
+Checking for existing OMFK instances...
+Building OMFK...
+Saved original layouts: ['US', 'Hebrew', 'Russian']
+Using layout combo: Mac defaults
+Setting up system layouts...
+  Current: ['US', 'Hebrew', 'Russian'], Target: ['US', 'Russian', 'Hebrew']
+  Final layouts: ['US', 'Hebrew', 'Russian']
+✓ TextEdit focused and ready
+
+======================================================================
+ISSUE #2: Prepositions
+======================================================================
+✗ е→у preposition
+    'e vtyz' → ' меня' (expected 'у меня')
+✗ е→у with context
+    'e vtyz tcnm bltq' → ' меня есть идей' (expected 'у меня есть идея')
+✗ е→у longer phrase
+    'e vtyz ytn dhtvtyb' → ' меня нет времени' (expected 'у меня нет времени')
+✗ r→к preposition
+    'r cj;fktyb.' → ' fkсалению' (expected 'к сожалению.')
+
+======================================================================
+ISSUE #3: Punctuation Boundaries
+======================================================================
+✗ Question mark boundary
+    'ghbdtn?rfr ltkf' → ' дела' (expected 'привет?как дела')
+✗ Semicolon boundary
+    'ghbdtn; rfr ltkf' → ' как дела' (expected 'привет; как дела')
+✗ Ellipsis boundary
+    'ghbdtn...rfr ltkf' → ' дела' (expected 'привет...как дела')
+✗ Parentheses
+    '(ghbdtn)' → '' (expected '(привет)')
+✗ Square brackets
+    '[ghbdtn]' → '' (expected '[привет]')
+✗ Curly braces
+    '{ghbdtn}' → '' (expected '{привет}')
+✗ Guillemets
+    '«ghbdtn»' → '' (expected '«привет»')
+✗ Em dash
+    'ghbdtn—vbh' → '' (expected 'привет—мир')
+✗ Slash with spaces
+    'ghbdtn / vbh' → ' / мир' (expected 'привет / мир')
+
+======================================================================
+ISSUE #6: Technical Text
+======================================================================
+✗ Unix path unchanged
+    '/Users/sasha/omfk/file.swift' → '' (expected '/Users/sasha/omfk/file.swift')
+✗ Windows path unchanged
+    'C:\Users\Sasha\file.txt' → '' (expected 'C:\Users\Sasha\file.txt')
+✗ Filename with extension
+    'README.md' → '' (expected 'README.md')
+✗ UUID unchanged
+    '550e8400-e29b-41d4-a716-446655440000' → '' (expected '550e8400-e29b-41d4-a716-446655440000')
+✗ Version number
+    'v1.2.3' → '' (expected 'v1.2.3')
+
+======================================================================
+ISSUE #7: Numbers Punctuation
+======================================================================
+✗ Time format
+    '15:00' → '' (expected '15:00')
+✗ Date format
+    '25.12.2024' → '' (expected '25.12.2024')
+✗ Time range
+    '15:00-16:30' → '' (expected '15:00-16:30')
+✗ Percentage
+    '20%' → '' (expected '20%')
+✗ Version with dots
+    'v1.2.3' → '' (expected 'v1.2.3')
+
+======================================================================
+ISSUE #8: Emoji Unicode
+======================================================================
+✓ Emoji preserved
+✗ Guillemets preserved
+    '«ghbdtn»' → '' (expected '«привет»')
+✗ Em dash preserved
+    'ghbdtn—vbh' → '' (expected 'привет—мир')
+✗ Currency symbol preserved
+    'wtyf ¢19' → ' ¢19' (expected 'цена ¢19')
+
+Restoring original layouts: ['US', 'Hebrew', 'Russian']
+
+======================================================================
+TOTAL: 1 passed, 26 failed
+======================================================================

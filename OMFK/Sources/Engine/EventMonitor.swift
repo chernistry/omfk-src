@@ -360,10 +360,18 @@ final class EventMonitor {
         }
         
         while end > start, isDelimiterLikeCharacter(chars[end - 1]) {
-            // Don't strip '.' or ',' if preceded by a letter (could be mapped RU letters like 'ю'/'б').
-            // Example: "cj;fktyb." should keep the final '.' so it can map to 'ю'.
-            if (chars[end - 1] == "." || chars[end - 1] == ",") && end > 1 && chars[end - 2].isLetter {
-                break
+            // Don't strip '.' or ',' if:
+            // 1. It's at the end and preceded by a letter (could be mapped RU letters like 'ю'/'б')
+            // 2. It's between two letters (could be part of word like "hf,jnftn" → "работает")
+            if (chars[end - 1] == "." || chars[end - 1] == ",") {
+                // Check if preceded by letter
+                let hasPrecedingLetter = end > 1 && chars[end - 2].isLetter
+                // Check if followed by letter (not at actual end)
+                let hasFollowingLetter = end < chars.count && chars[end].isLetter
+                
+                if hasPrecedingLetter && (end == chars.count || hasFollowingLetter) {
+                    break
+                }
             }
             end -= 1
         }

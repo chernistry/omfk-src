@@ -950,6 +950,10 @@ def main():
         if not categories or "single" in categories or "single_words" in categories:
             run_input_expected_category("single_words", "SINGLE WORDS")
         
+        # Comma in words
+        if not categories or "comma" in categories or "comma_in_words" in categories:
+            run_input_expected_category("comma_in_words", "COMMA IN WORDS")
+        
         # Paragraphs
         if not categories or "paragraphs" in categories or "real_paragraphs" in categories:
             run_input_expected_category("real_paragraphs", "PARAGRAPHS (REAL)")

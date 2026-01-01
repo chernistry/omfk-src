@@ -1226,5 +1226,25 @@
         "desc": "Currency symbol preserved"
       }
     ]
+  },
+  "comma_in_words": {
+    "description": "Comma/period inside words (б/ю mapping)",
+    "cases": [
+      {
+        "input": "hf,jnftn",
+        "expected": "работает",
+        "desc": "работает with comma"
+      },
+      {
+        "input": "k.,k.",
+        "expected": "люблю",
+        "desc": "люблю with periods"
+      },
+      {
+        "input": "cj;fktyb.",
+        "expected": "сожалению",
+        "desc": "сожалению with period at end"
+      }
+    ]
   }
 }

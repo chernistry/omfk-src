@@ -306,20 +306,6 @@ def type_char_real(char: str, layout: str, delay: float = 0.008) -> bool:
 
     This avoids flakiness from macOS input-source switching mid-test.
     """
-    # Emoji / non-BMP are more reliable via paste under PyObjC.
-    if ord(char) > 0xFFFF:
-        # Ensure focus before paste
-        ensure_test_host_focused_auto(retries=5)
-        clipboard_set(char)
-        cmd_key(9)
-        time.sleep(0.25)  # Longer delay for paste operations
-        # Clear clipboard to avoid interference with subsequent typing
-        pb = NSPasteboard.generalPasteboard()
-        pb.clearContents()
-        # Verify focus after paste (paste can trigger focus loss)
-        ensure_test_host_focused_auto(retries=5)
-        return True
-
     utf16_len = len(char.encode("utf-16-le")) // 2
     ev_down = CGEventCreateKeyboardEvent(None, 0, True)
     CGEventKeyboardSetUnicodeString(ev_down, utf16_len, char)

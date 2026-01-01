@@ -1206,6 +1206,11 @@
     "description": "Issue #8: Emoji and special Unicode characters",
     "cases": [
       {
+        "input": "🙂 ghbdtn",
+        "expected": "🙂 привет",
+        "desc": "Emoji preserved"
+      },
+      {
         "input": "«ghbdtn»",
         "expected": "«привет»",
         "desc": "Guillemets preserved"

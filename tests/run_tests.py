@@ -37,9 +37,9 @@ _abort_requested = False
 _event_tap = None
 
 OMFK_DIR = Path(__file__).parent.parent
-TESTS_FILE = OMFK_DIR / "tests/test_cases.json"
+TESTS_FILE = Path(__file__).parent / "test_cases.json"
 LOG_FILE = Path.home() / ".omfk" / "debug.log"
-KEYCODES_FILE = Path(__file__).parent / "keycodes.json"
+KEYCODES_FILE = Path(__file__).parent / "utils/keycodes.json"
 SWITCH_LAYOUT = OMFK_DIR / "scripts/switch_layout"
 
 KEY_OPTION, KEY_DELETE, KEY_SPACE, KEY_TAB, KEY_RETURN, KEY_F10 = 58, 51, 49, 48, 36, 109

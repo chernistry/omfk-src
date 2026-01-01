@@ -320,26 +320,10 @@ final class EventMonitor {
         ch.isWhitespace || ch.isNewline || Self.wordBoundaryPunctuation.contains(ch) || Self.trailingDelimiters.contains(ch) || ch == "-" || ch == "—" || ch == "–"
     }
     
-    private func isWordBoundaryTrigger(_ text: String, bufferWasEmpty: Bool, bufferBeforeAppend: String) -> Bool {
+    private func isWordBoundaryTrigger(_ text: String) -> Bool {
         for ch in text {
             if ch.isWhitespace || ch.isNewline {
                 return true
-            }
-            // Punctuation triggers boundary if:
-            // 1. Buffer was empty (standalone punctuation)
-            // 2. OR buffer ends with letter (punctuation after word)
-            if Self.wordBoundaryPunctuation.contains(ch) || Self.trailingDelimiters.contains(ch) {
-                if bufferWasEmpty {
-                    return true
-                }
-                // Check if this is punctuation after a word
-                if !bufferBeforeAppend.isEmpty,
-                   let lastChar = bufferBeforeAppend.last,
-                   lastChar.isLetter {
-                    // Punctuation after letter - trigger to let smart segmentation handle it
-                    return true
-                }
-                continue
             }
         }
         return false
@@ -376,7 +360,8 @@ final class EventMonitor {
         }
         
         while end > start, isDelimiterLikeCharacter(chars[end - 1]) {
-            // Don't strip '.' or ',' if preceded by a letter (could be 'ю'/'б' on RU layout)
+            // Don't strip '.' or ',' if preceded by a letter (could be mapped RU letters like 'ю'/'б').
+            // Example: "cj;fktyb." should keep the final '.' so it can map to 'ю'.
             if (chars[end - 1] == "." || chars[end - 1] == ",") && end > 1 && chars[end - 2].isLetter {
                 break
             }
@@ -573,13 +558,12 @@ final class EventMonitor {
                 lastCorrectedLength += filtered.count
             }
             
-            let bufferBeforeAppend = buffer
             buffer.append(filtered)
             phraseBuffer.append(filtered)
             logger.info("⌨️ Typed: \(DecisionLogger.tokenSummary(filtered), privacy: .public) | Buffer: \(DecisionLogger.tokenSummary(self.buffer), privacy: .public)")
             
             // Process on word boundaries (space/newline/punctuation triggers auto-correction)
-            if isWordBoundaryTrigger(filtered, bufferWasEmpty: bufferWasEmpty, bufferBeforeAppend: bufferBeforeAppend) {
+            if isWordBoundaryTrigger(filtered) {
                 logger.info("📍 Word boundary detected - processing buffer")
                 // Capture buffer content AND proxy before clearing to avoid race condition
                 let textToProcess = buffer
@@ -608,6 +592,8 @@ final class EventMonitor {
         let text = parts.token
         let letterCount = text.filter { $0.isLetter }.count
         let totalTypedLength = bufferContent.count
+
+        DecisionLogger.shared.log("PROCESS_BUFFER: raw=\(DecisionLogger.tokenSummary(bufferContent)) token=\(DecisionLogger.tokenSummary(text)) lead=\(DecisionLogger.tokenSummary(parts.leading)) trail=\(DecisionLogger.tokenSummary(parts.trailing))")
         
         // Special case: single Latin letters that are likely Russian prepositions/conjunctions
         // d→в, c→с, r→к, j→о, e→у, b→и, z→я (typed on EN keyboard instead of RU)
@@ -642,26 +628,51 @@ final class EventMonitor {
         
         // Handle pending word correction first (previous word that was boosted by context)
         if let pendingCorrected = result.pendingCorrection, let pendingOriginal = result.pendingOriginal {
+            DecisionLogger.shared.log("REPLACE_PENDING: pendingOrig=\(DecisionLogger.tokenSummary(pendingOriginal)) pendingCorr=\(DecisionLogger.tokenSummary(pendingCorrected)) currTok=\(DecisionLogger.tokenSummary(text)) currCorr=\(DecisionLogger.tokenSummary(result.corrected ?? text))")
             logger.info("🔗 PENDING CORRECTION: '\(pendingOriginal)' → '\(pendingCorrected)'")
             logger.info("🔗 Current word: '\(text)' → '\(result.corrected ?? text)'")
             // Need to go back and fix the previous word
             // Previous word is: pendingOriginal + " " + current word
             // We need to delete: pendingOriginal.count + 1 (space) + wordLength + 1 (current space)
             let totalDeleteLength = pendingOriginal.count + 1 + text.count + parts.trailing.count
-            let replacement = pendingCorrected + " " + (result.corrected ?? text) + parts.trailing
+            let currentCorrected = result.corrected ?? text
+            var suffix = ""
+            if let last = text.last,
+               (last == "." || last == ","),
+               currentCorrected.last != last,
+               !parts.trailing.isEmpty,
+               parts.trailing.first?.isWhitespace == true {
+                suffix = String(last)
+            }
+            let replacement = pendingCorrected + " " + currentCorrected + suffix + parts.trailing
+            DecisionLogger.shared.log("REPLACE_PENDING_APPLY: delete=\(totalDeleteLength) repl=\(DecisionLogger.tokenSummary(replacement))")
             logger.info("🔗 Delete \(totalDeleteLength) chars, replace with '\(replacement)' (\(replacement.count) chars)")
             await replaceText(with: replacement, originalLength: totalDeleteLength, proxy: proxy)
             lastCorrectedLength = replacement.count
             lastCorrectedText = replacement
             lastCorrectionTime = timeProvider.now
         } else if let corrected = result.corrected {
+            DecisionLogger.shared.log("REPLACE_TOKEN: tok=\(DecisionLogger.tokenSummary(text)) corr=\(DecisionLogger.tokenSummary(corrected)) totalTyped=\(totalTypedLength)")
             logger.info("✅ CORRECTION APPLIED: \(DecisionLogger.tokenSummary(text), privacy: .public) → \(DecisionLogger.tokenSummary(corrected), privacy: .public)")
-            let replacement = parts.leading + corrected + parts.trailing
+            // If the original token ended with '.' or ',' and that character was used as a mapped letter
+            // during correction (common for RU layout: '.'→'ю', ','→'б'), also preserve the literal
+            // punctuation at the end when the user finished the token with whitespace.
+            var suffix = ""
+            if let last = text.last,
+               (last == "." || last == ","),
+               corrected.last != last,
+               !parts.trailing.isEmpty,
+               parts.trailing.first?.isWhitespace == true {
+                suffix = String(last)
+            }
+            let replacement = parts.leading + corrected + suffix + parts.trailing
+            DecisionLogger.shared.log("REPLACE_TOKEN_APPLY: delete=\(totalTypedLength) repl=\(DecisionLogger.tokenSummary(replacement))")
             await replaceText(with: replacement, originalLength: totalTypedLength, proxy: proxy)
             lastCorrectedLength = replacement.count
             lastCorrectedText = replacement
             lastCorrectionTime = timeProvider.now  // Enable cycling after auto-correction
         } else {
+            DecisionLogger.shared.log("NO_REPLACE: tok=\(DecisionLogger.tokenSummary(text)) raw=\(DecisionLogger.tokenSummary(bufferContent))")
             logger.info("ℹ️ No correction needed for: \(DecisionLogger.tokenSummary(text), privacy: .public)")
             // Still save the text for potential manual cycling
             let replacement = parts.leading + text + parts.trailing
@@ -1029,6 +1040,7 @@ final class EventMonitor {
     }
     
     private func replaceText(with newText: String, originalLength: Int, proxy: CGEventTapProxy) async {
+        DecisionLogger.shared.log("REPLACE_TEXT: delete=\(originalLength) new=\(DecisionLogger.tokenSummary(newText))")
         // Send backspaces to delete original text
         for _ in 0..<originalLength {
             postKeyEvent(keyCode: 0x33, flags: [], proxy: proxy)

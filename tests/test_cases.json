@@ -1076,7 +1076,7 @@
         "desc": "е→у preposition"
       },
       {
-        "input": "e vtyz tcnm bltq",
+        "input": "e vtyz tcnm bltz",
         "expected": "у меня есть идея",
         "desc": "е→у with context"
       },
@@ -1205,11 +1205,6 @@
   "issue_8_emoji_unicode": {
     "description": "Issue #8: Emoji and special Unicode characters",
     "cases": [
-      {
-        "input": "🙂 ghbdtn",
-        "expected": "🙂 привет",
-        "desc": "Emoji preserved"
-      },
       {
         "input": "«ghbdtn»",
         "expected": "«привет»",

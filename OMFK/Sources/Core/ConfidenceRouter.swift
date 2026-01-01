@@ -867,7 +867,7 @@ actor ConfidenceRouter {
         return LanguageDecision(language: best.target, layoutHypothesis: best.hypothesis, confidence: 0.95, scores: [:])
     }
 
-    private func isTechnicalToken(_ token: String) -> Bool {
+    nonisolated func isTechnicalToken(_ token: String) -> Bool {
         guard !token.isEmpty else { return false }
 
         // Common file extensions (keep these tokens as-is in automatic mode).
@@ -896,10 +896,28 @@ actor ConfidenceRouter {
         }
 
         // UUID (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)
-        if isUUID(token) { return true }
+        if Self.isUUID(token) { return true }
 
         // Semver-like tokens: v1.2.3, 1.2.3, 1.2
-        if isSemver(token) { return true }
+        if Self.isSemver(token) { return true }
+
+        // Numeric tokens with punctuation (times/dates/percents/etc): 15:00, 2026-01-01, 99.9%, 1/2
+        // Only protect if there are no letters at all.
+        let digitCount = token.filter { $0.isNumber }.count
+        if digitCount > 0 {
+            let letterCount = token.filter { $0.isLetter }.count
+            if letterCount == 0 {
+                let allowed = Set("0123456789:+-/%.,")
+                if token.allSatisfy({ ch in
+                    ch.isNumber || allowed.contains(ch)
+                }) {
+                    // Require at least one non-digit separator, otherwise "12345" can still be handled normally.
+                    if token.contains(where: { !$0.isNumber }) {
+                        return true
+                    }
+                }
+            }
+        }
 
         // Simple filename.ext (no path separators)
         if !token.contains("/") && !token.contains("\\"),
@@ -921,7 +939,7 @@ actor ConfidenceRouter {
         return false
     }
 
-    private func isUUID(_ token: String) -> Bool {
+    nonisolated private static func isUUID(_ token: String) -> Bool {
         let chars = Array(token.lowercased())
         guard chars.count == 36 else { return false }
         let dashIdx: Set<Int> = [8, 13, 18, 23]
@@ -936,7 +954,7 @@ actor ConfidenceRouter {
         return true
     }
 
-    private func isSemver(_ token: String) -> Bool {
+    nonisolated private static func isSemver(_ token: String) -> Bool {
         var s = token
         if s.hasPrefix("v") || s.hasPrefix("V") {
             s.removeFirst()

@@ -39,11 +39,14 @@ _event_tap = None
 OMFK_DIR = Path(__file__).parent.parent
 TESTS_FILE = Path(__file__).parent / "test_cases.json"
 LOG_FILE = Path.home() / ".omfk" / "debug.log"
+TEST_HOST_VALUE_FILE = Path.home() / ".omfk" / "testhost_value.txt"
 KEYCODES_FILE = Path(__file__).parent / "utils/keycodes.json"
 SWITCH_LAYOUT = OMFK_DIR / "scripts/switch_layout"
 
 KEY_OPTION, KEY_DELETE, KEY_SPACE, KEY_TAB, KEY_RETURN, KEY_F10 = 58, 51, 49, 48, 36, 109
 BUNDLE_ID = "com.chernistry.omfk"
+TEST_HOST_NAME = "OMFKTestHost"
+TEST_HOST_BIN = OMFK_DIR / ".build" / "debug" / TEST_HOST_NAME
 
 
 def keyboard_callback(proxy, event_type, event, refcon):
@@ -190,12 +193,17 @@ def write_active_layouts(layouts):
 
 def stop_omfk():
     """Kill all OMFK instances."""
-    # Kill by process name
+    # Try graceful termination first to allow logs to flush.
+    subprocess.run(["pkill", "-15", "-f", ".build/debug/OMFK"], capture_output=True)
+    subprocess.run(["pkill", "-15", "-f", "OMFK.app"], capture_output=True)
+    subprocess.run(["pkill", "-15", "-f", "com.chernistry.omfk"], capture_output=True)
+    time.sleep(0.35)
+
+    # Then force kill any remaining.
     subprocess.run(["pkill", "-9", "-f", ".build/debug/OMFK"], capture_output=True)
     subprocess.run(["pkill", "-9", "-f", "OMFK.app"], capture_output=True)
-    # Also kill by bundle ID if running as app
     subprocess.run(["pkill", "-9", "-f", "com.chernistry.omfk"], capture_output=True)
-    time.sleep(0.2)
+    time.sleep(0.25)
     
     # Verify no instances remain
     r = subprocess.run(["pgrep", "-f", "OMFK"], capture_output=True, text=True)
@@ -205,6 +213,38 @@ def stop_omfk():
         for pid in pids:
             subprocess.run(["kill", "-9", pid], capture_output=True)
         time.sleep(0.2)
+
+def stop_test_host():
+    """Kill all OMFKTestHost instances."""
+    subprocess.run(["pkill", "-9", "-f", str(TEST_HOST_BIN)], capture_output=True)
+    subprocess.run(["pkill", "-9", "-x", TEST_HOST_NAME], capture_output=True)
+    time.sleep(0.15)
+
+def start_test_host():
+    """Start OMFKTestHost and bring it to front."""
+    stop_test_host()
+    if not TEST_HOST_BIN.exists():
+        raise RuntimeError(f"Test host binary not found: {TEST_HOST_BIN}")
+    env = os.environ.copy()
+    env.setdefault("OMFK_TEST_HOST_LOG", "1")
+    subprocess.Popen([str(TEST_HOST_BIN)], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    # Give the host time to create its value file and install event monitors.
+    for _ in range(25):
+        if TEST_HOST_VALUE_FILE.exists():
+            break
+        time.sleep(0.08)
+    time.sleep(0.60)
+    ensure_test_host_focused_auto(retries=30)
+
+    # Warm up: verify the host is actually accepting injected key events.
+    # This avoids first-test flakes where the window isn't ready yet.
+    for _ in range(3):
+        press_key_fast(KEY_DELETE, delay=0.004)
+    time.sleep(0.05)
+    type_char_real("x", "us", delay=0.01)
+    _ = wait_for_result("x", timeout=1.0, stable_for=0.08)
+    press_key_fast(KEY_DELETE, delay=0.004)
+    _ = wait_for_result("", timeout=1.0, stable_for=0.08)
 
 
 # ============== REAL TYPING FUNCTIONS ==============
@@ -268,9 +308,16 @@ def type_char_real(char: str, layout: str, delay: float = 0.008) -> bool:
     """
     # Emoji / non-BMP are more reliable via paste under PyObjC.
     if ord(char) > 0xFFFF:
+        # Ensure focus before paste
+        ensure_test_host_focused_auto(retries=5)
         clipboard_set(char)
         cmd_key(9)
-        time.sleep(max(0.10, delay))
+        time.sleep(0.25)  # Longer delay for paste operations
+        # Clear clipboard to avoid interference with subsequent typing
+        pb = NSPasteboard.generalPasteboard()
+        pb.clearContents()
+        # Verify focus after paste (paste can trigger focus loss)
+        ensure_test_host_focused_auto(retries=5)
         return True
 
     utf16_len = len(char.encode("utf-16-le")) // 2
@@ -292,10 +339,9 @@ def type_string_real(text: str, layout: str, char_delay: float = 0.008) -> tuple
 
 
 def type_word_and_space_real(word: str, layout: str, char_delay: float = 0.008, space_wait: float = 0.4) -> bool:
-    """Type word + space via AppleScript key codes, wait for OMFK to process."""
+    """Type word + space via key events, wait for OMFK to process."""
     type_string_real(word, layout, char_delay)
-    # Type space via key code
-    subprocess.run(['osascript', '-e', 'tell application "System Events" to key code 49'], capture_output=True)
+    press_key(KEY_SPACE)
     time.sleep(space_wait)
     return True
 
@@ -309,6 +355,18 @@ def press_key(keycode, flags=0):
     if flags: CGEventSetFlags(ev, flags)
     CGEventPost(kCGHIDEventTap, ev)
     time.sleep(0.015)
+
+def press_key_fast(keycode, flags=0, delay: float = 0.003):
+    ev = CGEventCreateKeyboardEvent(None, keycode, True)
+    if flags:
+        CGEventSetFlags(ev, flags)
+    CGEventPost(kCGHIDEventTap, ev)
+    time.sleep(delay)
+    ev = CGEventCreateKeyboardEvent(None, keycode, False)
+    if flags:
+        CGEventSetFlags(ev, flags)
+    CGEventPost(kCGHIDEventTap, ev)
+    time.sleep(delay)
 
 
 def press_option():
@@ -346,22 +404,22 @@ def get_text():
 
 def clear_field():
     # Prefer key-based clear (OMFK should observe Cmd+A+Delete and reset its context),
-    # but verify and fall back to direct TextEdit set if needed.
-    for _ in range(3):
-        cmd_key(0)  # Cmd+A
-        time.sleep(0.08)
-        press_key(KEY_DELETE)
-        time.sleep(0.08)
-        if wait_for_result("", timeout=0.6, stable_for=0.08) == "":
+    # but verify and fall back only if we're sure focus is correct.
+    for _ in range(4):
+        ensure_test_host_focused_auto(retries=30)
+        check_focus()
+
+        current = get_result()
+        if current == "":
             return
 
-    # Fallback: force-clear via AppleScript (more reliable if key events were dropped).
-    subprocess.run(
-        ["osascript", "-e", 'tell application "TextEdit" to set text of front document to ""'],
-        capture_output=True,
-        text=True,
-    )
-    time.sleep(0.08)
+        for _ in range(len(current)):
+            press_key_fast(KEY_DELETE, delay=0.002)
+
+        if wait_for_result("", timeout=1.2, stable_for=0.10) == "":
+            return
+
+    raise FocusLostError("Failed to clear field reliably (dropped events or focus loss)")
 
 
 def type_and_space(text):
@@ -390,17 +448,16 @@ def _normalize_osascript_stdout(text: str) -> str:
 
 
 def get_result():
-    """Get current TextEdit document text (preserve whitespace)."""
-    # AX readback preserves whitespace better; fallback to AppleScript if AX fails.
-    ax = get_text()
-    if ax:
-        return ax
-    r = subprocess.run(
-        ["osascript", "-e", 'tell application "TextEdit" to get text of front document'],
-        capture_output=True,
-        text=True,
-    )
-    return _normalize_osascript_stdout(r.stdout)
+    """Get current OMFKTestHost text (preserve whitespace)."""
+    # Prefer a direct file written by OMFKTestHost (more reliable than AX for NSTextView).
+    try:
+        if TEST_HOST_VALUE_FILE.exists():
+            return TEST_HOST_VALUE_FILE.read_text(encoding="utf-8")
+    except Exception:
+        pass
+
+    # Fallback: AX readback (may be empty for some roles).
+    return get_text() or ""
 
 
 def normalize_for_compare(actual: str, expected: str) -> str:
@@ -411,7 +468,7 @@ def normalize_for_compare(actual: str, expected: str) -> str:
     return actual
 
 def wait_for_result(expected: str | None, timeout: float = 1.2, stable_for: float = 0.12) -> str:
-    """Wait until TextEdit document text reaches a stable state (and optionally matches expected)."""
+    """Wait until the host text reaches a stable state (and optionally matches expected)."""
     start = time.time()
     last = None
     last_change = time.time()
@@ -437,7 +494,7 @@ def wait_for_result(expected: str | None, timeout: float = 1.2, stable_for: floa
     return last if last is not None else ""
 
 def wait_for_change(previous: str, timeout: float = 1.2, stable_for: float = 0.12) -> str:
-    """Wait until TextEdit document text changes from `previous`, then settles."""
+    """Wait until the host text changes from `previous`, then settles."""
     start = time.time()
     while time.time() - start < timeout:
         check_abort()
@@ -462,20 +519,20 @@ def run_single_test_real(input_text: str, expected: str) -> tuple[bool, str]:
     if not switch_system_layout(layout):
         return False, f"[failed to switch to {layout}]"
     
-    # Ensure TextEdit is focused before typing
-    ensure_textedit_focused_auto(retries=5)
+    # Ensure test host is focused before typing
+    ensure_test_host_focused_auto(retries=10)
     
     clear_field()
-    time.sleep(0.15)
+    time.sleep(0.25)
     
     # Type word(s) with spaces
     words = input_text.split()
     for i, word in enumerate(words):
         check_abort()  # Check for F10 abort between words
+        ensure_test_host_focused_auto(retries=10)
         _ = type_string_real(word, layout, char_delay=0.008)
 
-        # Type space via key code (so OMFK sees it)
-        subprocess.run(['osascript', '-e', 'tell application "System Events" to key code 49'], capture_output=True)
+        press_key(KEY_SPACE)
 
         # Give OMFK time to apply auto-correction before typing the next token.
         if i == len(words) - 1:
@@ -503,29 +560,12 @@ def start_omfk():
     time.sleep(1.0)  # Give OMFK more time to start and read config
 
 
-def open_textedit():
-    subprocess.run(["open", "-a", "TextEdit"])
-    time.sleep(0.5)
-    subprocess.run(["osascript", "-e", '''
-        tell application "TextEdit"
-            activate
-            if (count of documents) = 0 then make new document
-        end tell
-    '''], capture_output=True)
-    time.sleep(0.15)
-    
-    # Disable macOS autocorrect for this session
-    subprocess.run(["defaults", "write", "-g", "NSAutomaticSpellingCorrectionEnabled", "-bool", "false"], capture_output=True)
-    subprocess.run(["defaults", "write", "-g", "NSAutomaticTextCompletionEnabled", "-bool", "false"], capture_output=True)
-    subprocess.run(["defaults", "write", "-g", "NSAutomaticQuoteSubstitutionEnabled", "-bool", "false"], capture_output=True)
-    subprocess.run(["defaults", "write", "-g", "NSAutomaticDashSubstitutionEnabled", "-bool", "false"], capture_output=True)
+def open_test_host():
+    start_test_host()
 
 
-def close_textedit():
-    subprocess.run(["osascript", "-e", 'tell app "TextEdit" to quit saving no'], capture_output=True)
-    # Restore macOS autocorrect
-    subprocess.run(["defaults", "write", "-g", "NSAutomaticSpellingCorrectionEnabled", "-bool", "true"], capture_output=True)
-    subprocess.run(["defaults", "write", "-g", "NSAutomaticTextCompletionEnabled", "-bool", "true"], capture_output=True)
+def close_test_host():
+    stop_test_host()
 
 
 def get_frontmost_app() -> str:
@@ -537,46 +577,43 @@ def get_frontmost_app() -> str:
 
 
 class FocusLostError(Exception):
-    """Raised when TextEdit loses focus."""
+    """Raised when the test host loses focus."""
     pass
 
 
 def check_focus():
-    """Check if TextEdit is focused. Raise FocusLostError if not."""
+    """Check if OMFKTestHost is focused. Raise FocusLostError if not."""
     app = get_frontmost_app()
-    if app != "TextEdit":
+    if app != TEST_HOST_NAME:
         raise FocusLostError(f"Focus lost to: {app}")
 
-def ensure_textedit_focused_auto(retries: int = 30) -> None:
-    """Ensure TextEdit is frontmost (non-interactive)."""
-    script = r'''
-        tell application "TextEdit" to activate
+def ensure_test_host_focused_auto(retries: int = 30) -> None:
+    """Ensure OMFKTestHost is frontmost (non-interactive)."""
+    script = rf'''
         tell application "System Events"
-            if exists process "TextEdit" then
-                set frontmost of process "TextEdit" to true
+            if exists process "{TEST_HOST_NAME}" then
+                set frontmost of process "{TEST_HOST_NAME}" to true
             end if
         end tell
     '''
     for _ in range(max(1, retries)):
-        subprocess.run(["open", "-a", "TextEdit"], capture_output=True)
         subprocess.run(["osascript", "-e", script], capture_output=True)
         time.sleep(0.10)
-        if get_frontmost_app() == "TextEdit":
+        if get_frontmost_app() == TEST_HOST_NAME:
             return
     check_focus()
 
 
-def ensure_textedit_focused():
-    """Ensure TextEdit is frontmost. Pause and wait if not."""
+def ensure_test_host_focused():
+    """Ensure OMFKTestHost is frontmost. Pause and wait if not."""
     while True:
         app = get_frontmost_app()
-        if app == "TextEdit":
+        if app == TEST_HOST_NAME:
             return
         print(f"\n⚠️  Focus lost! Current app: {app}")
-        print("    Switch to TextEdit and press Enter to continue...")
+        print(f"    Switch to {TEST_HOST_NAME} and press Enter to continue...")
         input()
-        subprocess.run(["osascript", "-e", 'tell application "TextEdit" to activate'], capture_output=True)
-        time.sleep(0.15)
+        ensure_test_host_focused_auto(retries=30)
 
 
 # ============== TEST RUNNERS ==============
@@ -585,8 +622,8 @@ def run_single_test(input_text, expected):
     """Run single correction test."""
     check_abort()  # Check for F10 abort
 
-    # Ensure TextEdit is focused
-    ensure_textedit_focused_auto(retries=5)
+    # Ensure test host is focused
+    ensure_test_host_focused_auto(retries=30)
     
     clear_field()
     time.sleep(0.12)
@@ -595,11 +632,11 @@ def run_single_test(input_text, expected):
     cmd_key(9)  # Paste
     pasted = wait_for_result(input_text, timeout=0.8)
     if pasted != input_text:
-        # Retry once (TextEdit can be slow to accept the very first paste after launch/restart).
+        # Retry once (UI can be slow to accept the very first paste after launch/restart).
         clipboard_set(input_text)
         cmd_key(9)
         _ = wait_for_result(input_text, timeout=0.8)
-    ensure_textedit_focused_auto(retries=3)
+    ensure_test_host_focused_auto(retries=30)
     
     cmd_key(0)  # Select all
     time.sleep(0.15)
@@ -639,8 +676,7 @@ def run_cycling_test(input_text, alt_presses, expected_sequence=None):
     """Test Alt cycling through alternatives."""
     check_abort()
 
-    subprocess.run(["osascript", "-e", 'tell application "TextEdit" to activate'], capture_output=True)
-    time.sleep(0.1)
+    ensure_test_host_focused_auto(retries=10)
     check_focus()
 
     clear_field()
@@ -682,7 +718,7 @@ def run_cycling_test(input_text, alt_presses, expected_sequence=None):
 def run_whitespace_only_test(input_text: str, expected: str) -> tuple[bool, str]:
     """Type whitespace via real key events (paste would bypass OMFK)."""
     check_abort()
-    ensure_textedit_focused_auto()
+    ensure_test_host_focused_auto(retries=10)
 
     clear_field()
     time.sleep(0.12)
@@ -753,7 +789,7 @@ def run_test_category(category_name: str, category_data: dict, real_typing: bool
             time.sleep(0.08)
         except FocusLostError:
             failed += 1
-            ensure_textedit_focused_auto()
+            ensure_test_host_focused_auto(retries=30)
             print(f"  ✗ {case.get('desc','')} (focus lost)")
 
     return passed, failed
@@ -862,12 +898,12 @@ def main():
     write_active_layouts(base_layouts)
 
     start_omfk()
-    open_textedit()
+    open_test_host()
     
-    # Verify TextEdit is ready
+    # Verify host is ready
     time.sleep(0.5)
-    ensure_textedit_focused()
-    print("✓ TextEdit focused and ready")
+    ensure_test_host_focused()
+    print(f"✓ {TEST_HOST_NAME} focused and ready")
     
     total_passed = 0
     total_failed = 0
@@ -890,9 +926,8 @@ def main():
             start_omfk()
             current_layouts = dict(layouts)
             
-            # Restore focus to TextEdit after OMFK restart
-            subprocess.run(["osascript", "-e", 'tell application "TextEdit" to activate'], capture_output=True)
-            time.sleep(0.15)
+            # Restore focus after OMFK restart
+            ensure_test_host_focused_auto(retries=30)
 
     def run_input_expected_category(key, title):
         nonlocal total_passed, total_failed
@@ -1073,7 +1108,7 @@ def main():
         print("\n\n🛑 Test aborted by user (F10 or Ctrl+C)")
         
     finally:
-        close_textedit()
+        close_test_host()
         stop_omfk()
         
         # Restore original user layouts

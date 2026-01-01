@@ -205,6 +205,14 @@ actor CorrectionEngine {
             pendingWord = nil  // Clear pending regardless
         }
 
+        // Technical token guard:
+        // If this token is a known "technical" shape (paths, UUIDs, semver, numeric timestamps),
+        // never attempt smart splitting/correction in automatic mode.
+        if router.isTechnicalToken(text) {
+            logger.info("🛡️ Technical token - skipping correction: \(DecisionLogger.tokenSummary(text), privacy: .public)")
+            return CorrectionResult(corrected: nil, pendingCorrection: pendingCorrectionResult, pendingOriginal: pendingOriginalText)
+        }
+
         // Smart handling for tokens with internal punctuation/symbols:
         // - If punctuation is actually a mapped RU/HE letter (e.g. "k.,k.", "cj;fktyb."), whole-token conversion should win.
         // - If punctuation is a separator between multiple words (e.g. "ghbdtn.rfr"), split + per-word conversion should win.

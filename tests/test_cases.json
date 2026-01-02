@@ -139,6 +139,36 @@
       }
     ]
   },
+  "comma_period_single_words": {
+    "description": "Single words with comma/period (б/ю mapping)",
+    "cases": [
+      {
+        "input": "hf,jnftn",
+        "expected": "работает",
+        "desc": "работает"
+      },
+      {
+        "input": "k.,k.",
+        "expected": "люблю",
+        "desc": "люблю"
+      },
+      {
+        "input": ",tp",
+        "expected": "без",
+        "desc": "без"
+      },
+      {
+        "input": ",ele",
+        "expected": "буду",
+        "desc": "буду"
+      },
+      {
+        "input": "j,",
+        "expected": "об",
+        "desc": "об"
+      }
+    ]
+  },
   "real_paragraphs": {
     "description": "Real multi-sentence paragraphs as people actually type",
     "cases": [

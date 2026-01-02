@@ -538,7 +538,6 @@ def start_omfk():
     LOG_FILE.write_text("")
     
     env = os.environ.copy()
-    env["OMFK_DEBUG_LOG"] = "1"
     # Don't set OMFK_DISABLE_LAYOUT_AUTODETECT - it breaks conversion
     subprocess.Popen([str(OMFK_DIR / ".build/debug/OMFK")], env=env,
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,

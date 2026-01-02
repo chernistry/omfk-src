@@ -169,12 +169,10 @@ actor CorrectionEngine {
         // Determine the target language of current word (what it should become after correction)
         let currentTargetLang = decision.layoutHypothesis.targetLanguage
         
-        print("🔍 DEBUG: text='\(text)' pending=\(pendingWord?.text ?? "nil") currentTargetLang=\(currentTargetLang.rawValue)")
-        fflush(stdout)
+
         
         if let pending = pendingWord, pending.isValid {
-            print("📌 DEBUG: Checking pending word: '\(pending.text)' isFirst=\(pending.isFirstWord) conf=\(pending.adjustedConfidence)")
-            print("📌 DEBUG: Current word decision: lang=\(decision.language.rawValue) hyp=\(decision.layoutHypothesis.rawValue) conf=\(adjustedConfidence) targetLang=\(currentTargetLang.rawValue)")
+
             
             // Special handling for Russian prepositions
             if pending.text.count == 1,
@@ -186,7 +184,7 @@ actor CorrectionEngine {
                 _ = await applyCorrection(original: pending.text, corrected: corrected, from: .english, to: .russian, hypothesis: .ruFromEnLayout)
                 pendingCorrectionResult = corrected
                 pendingOriginalText = pending.text
-                print("✅ DEBUG: Preposition corrected: '\(pending.text)' → '\(corrected)'")
+
             }
             // Standard context boost: if current word is high confidence and same language as pending word's decision
             else if adjustedConfidence > threshold && currentTargetLang == pending.decision.layoutHypothesis.targetLanguage {
@@ -271,7 +269,7 @@ actor CorrectionEngine {
                     timestamp: Date(),
                     isFirstWord: isFirst
                 )
-                print("📌 DEBUG: Stored as pending word: '\(text)' conf=\(adjustedConfidence) isFirst=\(isFirst) prepositionCandidate=\(isPrepositionCandidate)")
+
             }
             
             return CorrectionResult(corrected: nil, pendingCorrection: pendingCorrectionResult, pendingOriginal: pendingOriginalText)
@@ -906,7 +904,9 @@ actor CorrectionEngine {
 
         let best: SmartCorrection
         if whole.hypothesis != nil {
-            if shouldPreferSplitOverWholeForDotCommaSeparator(original: token, split: split, whole: whole) {
+            // Only force-prefer split if we're not super confident in the whole-word correction.
+            // If we have high confidence (e.g. from comma boost), trust the whole-word result.
+            if confidence < 0.9 && shouldPreferSplitOverWholeForDotCommaSeparator(original: token, split: split, whole: whole) {
                 best = split
             } else {
             // When the router thinks whole-token correction is valid, only switch to split-mode

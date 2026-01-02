@@ -369,7 +369,7 @@ final class EventMonitor {
                 // Check if followed by letter (not at actual end)
                 let hasFollowingLetter = end < chars.count && chars[end].isLetter
                 
-                if hasPrecedingLetter && (end == chars.count || hasFollowingLetter) {
+                if hasPrecedingLetter {
                     break
                 }
             }
@@ -644,15 +644,7 @@ final class EventMonitor {
             // We need to delete: pendingOriginal.count + 1 (space) + wordLength + 1 (current space)
             let totalDeleteLength = pendingOriginal.count + 1 + text.count + parts.trailing.count
             let currentCorrected = result.corrected ?? text
-            var suffix = ""
-            if let last = text.last,
-               (last == "." || last == ","),
-               currentCorrected.last != last,
-               !parts.trailing.isEmpty,
-               parts.trailing.first?.isWhitespace == true {
-                suffix = String(last)
-            }
-            let replacement = pendingCorrected + " " + currentCorrected + suffix + parts.trailing
+            let replacement = pendingCorrected + " " + currentCorrected + parts.trailing
             DecisionLogger.shared.log("REPLACE_PENDING_APPLY: delete=\(totalDeleteLength) repl=\(DecisionLogger.tokenSummary(replacement))")
             logger.info("🔗 Delete \(totalDeleteLength) chars, replace with '\(replacement)' (\(replacement.count) chars)")
             await replaceText(with: replacement, originalLength: totalDeleteLength, proxy: proxy)
@@ -665,15 +657,7 @@ final class EventMonitor {
             // If the original token ended with '.' or ',' and that character was used as a mapped letter
             // during correction (common for RU layout: '.'→'ю', ','→'б'), also preserve the literal
             // punctuation at the end when the user finished the token with whitespace.
-            var suffix = ""
-            if let last = text.last,
-               (last == "." || last == ","),
-               corrected.last != last,
-               !parts.trailing.isEmpty,
-               parts.trailing.first?.isWhitespace == true {
-                suffix = String(last)
-            }
-            let replacement = parts.leading + corrected + suffix + parts.trailing
+            let replacement = parts.leading + corrected + parts.trailing
             DecisionLogger.shared.log("REPLACE_TOKEN_APPLY: delete=\(totalTypedLength) repl=\(DecisionLogger.tokenSummary(replacement))")
             await replaceText(with: replacement, originalLength: totalTypedLength, proxy: proxy)
             lastCorrectedLength = replacement.count

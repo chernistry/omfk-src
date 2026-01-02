@@ -795,7 +795,17 @@ actor ConfidenceRouter {
                 guard converted != token else { continue }
                 let targetWord = wordValidator.confidence(for: converted, language: target)
                 let targetFreq = frequencyScore(converted, language: target)
-                let q = qualityScore(converted, lang: target) - 0.05 + correctionPriorBonus(for: hyp) // small bias against corrections
+                let qRaw = qualityScore(converted, lang: target) - 0.05 + correctionPriorBonus(for: hyp) // small bias against corrections
+                var q = qRaw
+
+                // FIX: Boost confidence when token contains comma/period and maps to valid Russian word.
+                // This handles cases like "hf,jnftn" -> "работает" where comma maps to 'б' or 'ю'.
+                if target == .russian && (token.contains(",") || token.contains(".")) {
+                    if targetWord >= thresholds.targetWordMin || targetFreq >= 0.1 {
+                        q += 0.35
+                    }
+                }
+
                 let whitelisted = languageData.isWhitelisted(converted, language: target)
                 let sourceBuiltin = builtinValidator.confidence(for: token, language: source)
                 let targetBuiltin = builtinValidator.confidence(for: converted, language: target)
